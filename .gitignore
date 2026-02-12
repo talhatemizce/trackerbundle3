@@ -1,0 +1,13 @@
+# python
+__pycache__/
+*.py[cod]
+
+# venv / env
+venv/
+.env
+
+# logs
+*.log
+
+# local data (istersen sonra açarız)
+# app/data/isbns.json
