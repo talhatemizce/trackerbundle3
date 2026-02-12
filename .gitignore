@@ -1,16 +1,7 @@
-# python
-__pycache__/
-*.py[cod]
-
-# venv / env
 venv/
-.env
-
-# logs
+__pycache__/
+*.pyc
 *.log
-
-# local data (istersen sonra açarız)
-# app/data/isbns.json
-
-# local runtime data
-app/data/isbns.json
+.env
+.DS_Store
+isbns.json
