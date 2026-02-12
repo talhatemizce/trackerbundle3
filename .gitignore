@@ -1,7 +1,8 @@
-venv/
-__pycache__/
-*.pyc
+
 *.log
-.env
+*.pyc
 .DS_Store
+.env
+__pycache__/
 isbns.json
+venv/
