@@ -1,0 +1,18 @@
+[Unit]
+Description=TrackerBundle API (Uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+StartLimitIntervalSec=0
+User=ubuntu
+WorkingDirectory=/home/ubuntu/trackerbundle3
+Environment="PATH=/home/ubuntu/trackerbundle3/venv/bin"
+EnvironmentFile=/etc/trackerbundle.env
+ExecStart=/home/ubuntu/trackerbundle3/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=2
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
