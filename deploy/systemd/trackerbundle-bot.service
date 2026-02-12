@@ -1,0 +1,17 @@
+[Unit]
+Description=TrackerBundle Telegram Bot
+After=network-online.target trackerbundle-api.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/trackerbundle3
+Environment="PATH=/home/ubuntu/trackerbundle3/venv/bin"
+EnvironmentFile=/etc/trackerbundle.env
+Environment="API_BASE=http://127.0.0.1:8000"
+ExecStart=/home/ubuntu/trackerbundle3/venv/bin/python /home/ubuntu/trackerbundle3/bot.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
