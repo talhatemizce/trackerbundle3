@@ -1,0 +1,27 @@
+from fastapi import FastAPI
+import os
+from datetime import datetime, timezone
+
+app = FastAPI(title="TrackerBundle Panel API")
+
+@app.get("/")
+def root():
+    return {
+        "name": "TrackerBundle Panel API",
+        "docs": "/docs",
+        "health": "/health",
+        "status": "/status",
+    }
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.get("/status")
+def status():
+    return {
+        "ok": True,
+        "service": "trackerbundle-panel",
+        "time_utc": datetime.now(timezone.utc).isoformat(),
+        "has_bot_token": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+    }

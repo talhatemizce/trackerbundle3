@@ -1,36 +1,31 @@
 import os
-import requests
+import asyncio
+from datetime import datetime, timezone
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
+def now_utc():
+    return datetime.now(timezone.utc).isoformat()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "TrackerBundle Bot ✅\n"
-        "Komutlar:\n"
-        "/status - servis durumu\n"
-        "/health - health check"
-    )
+    await update.message.reply_text("TrackerBundle Bot ✅\nKomutlar: /status")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    r = requests.get(f"{API_BASE}/status", timeout=5)
-    await update.message.reply_text(r.text)
+    await update.message.reply_text(f"OK ✅\nUTC: {now_utc()}")
 
-async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    r = requests.get(f"{API_BASE}/health", timeout=5)
-    await update.message.reply_text(r.text)
-
-def main():
+async def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
-        raise SystemExit("TELEGRAM_BOT_TOKEN missing (check /etc/trackerbundle.env)")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN missing")
 
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("health", health))
-    app.run_polling(drop_pending_updates=True)
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    await app.updater.idle()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
