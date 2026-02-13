@@ -17,3 +17,16 @@ backups/
 *.BAD.*
 app/data/*.bak*
 rules*.bak*
+
+# secrets / env (never commit)
+.env
+*.env
+
+# local backups / junk
+_bak/
+backups/
+*.bak
+*.bak.*
+*.BAD.*
+app/data/*.bak*
+rules*.bak*
