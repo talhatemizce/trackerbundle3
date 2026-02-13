@@ -1,15 +1,13 @@
 from fastapi import FastAPI
-from app.rules_endpoints import router as rules_router
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 import os, json
 from pathlib import Path
 from typing import Optional, Dict
 
-from app.rules_store import load_rules, set_defaults, set_isbn_override, delete_isbn_override, effective_limit
+from app.rules_store import load_rules, set_defaults, set_isbn_rule, delete_isbn_rule, effective_limit
 
 app = FastAPI(title="TrackerBundle Panel API", version="0.1.0")
-app.include_router(rules_router)
 
 DATA_PATH = Path(os.getenv("ISBN_STORE", "/home/ubuntu/trackerbundle3/app/data/isbns.json"))
 
@@ -110,10 +108,10 @@ def get_isbn_rule(isbn: str):
 
 @app.put("/rules/{isbn}")
 def put_isbn_rule(isbn: str, payload: ISBNRulePayload):
-    data = set_isbn_override(isbn, payload.model_dump())
+    data = set_isbn_rule(isbn, payload.model_dump())
     return {"ok": True, **data}
 
 @app.delete("/rules/{isbn}")
 def del_isbn_rule(isbn: str):
-    data = delete_isbn_override(isbn)
+    data = delete_isbn_rule(isbn)
     return {"ok": True, **data}

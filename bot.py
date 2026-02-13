@@ -1,125 +1,112 @@
-import os
-import logging
+import os, json
 import httpx
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 
-logging.basicConfig(
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    level=logging.INFO,
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
 )
 
-API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN")
+API_BASE = (os.getenv("API_BASE_URL") or "http://127.0.0.1:8000").rstrip("/")
 
-def _help_text():
-    return (
-        "TrackerBundle Bot ✅\n"
-        "Komutlar:\n"
-        "/status\n"
-        "/health\n"
-        "/list\n"
-        "/add <isbn>\n"
-        "/del <isbn>\n"
+MENU = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton("📌 Status"), KeyboardButton("🩺 Health")],
+        [KeyboardButton("📚 List")],
+        [KeyboardButton("➕ Add ISBN"), KeyboardButton("🗑️ Del ISBN")],
+    ],
+    resize_keyboard=True,
+)
+
+def clean_isbn(s: str) -> str:
+    return s.replace("-", "").replace(" ", "").strip()
+
+def pretty(text: str) -> str:
+    try:
+        return json.dumps(json.loads(text), indent=2, ensure_ascii=False)
+    except Exception:
+        return text
+
+async def api(method: str, path: str, **kwargs):
+    url = f"{API_BASE}{path}"
+    async with httpx.AsyncClient(timeout=20) as c:
+        return await c.request(method, url, **kwargs)
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("awaiting", None)
+    await update.message.reply_text(
+        "TrackerBundle Bot ✅\nButonlardan seç.",
+        reply_markup=MENU,
+        parse_mode=None,
+        disable_web_page_preview=True,
     )
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(_help_text())
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    r = await api("GET", "/status")
+    await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", parse_mode=None)
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        async with httpx.AsyncClient(timeout=7.0) as client:
-            r = await client.get(f"{API_BASE}/status")
-            r.raise_for_status()
-            data = r.json()
-        await update.message.reply_text(
-            "OK ✅\n"
-            f"UTC: {data.get('time_utc')}\n"
-            f"ISBN count: {data.get('isbn_count')}\n"
-            f"API: {API_BASE}"
-        )
-    except Exception as e:
-        await update.message.reply_text(f"Status hata: {e}")
+async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    r = await api("GET", "/health")
+    await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", parse_mode=None)
 
-async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        async with httpx.AsyncClient(timeout=7.0) as client:
-            r = await client.get(f"{API_BASE}/health")
-            r.raise_for_status()
-            data = r.json()
-        await update.message.reply_text(f"API Health ✅\n{data}\nPanel: {API_BASE.replace('8000','')}/health")
-    except Exception as e:
-        await update.message.reply_text(f"Health hata: {e}")
+async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    r = await api("GET", "/isbns")
+    await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", parse_mode=None)
 
-async def list_isbns(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        async with httpx.AsyncClient(timeout=7.0) as client:
-            r = await client.get(f"{API_BASE}/isbns")
-            r.raise_for_status()
-            data = r.json()
-        items = data.get("items", [])
-        if not items:
-            await update.message.reply_text("Liste boş.")
-            return
-        # çok uzarsa kırp
-        preview = items[:50]
-        msg = "ISBN Listesi:\n" + "\n".join(preview)
-        if len(items) > len(preview):
-            msg += f"\n... (+{len(items)-len(preview)} daha)"
-        await update.message.reply_text(msg)
-    except Exception as e:
-        await update.message.reply_text(f"List hata: {e}")
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    txt = (update.message.text or "").strip()
 
-async def add_isbn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    isbn = " ".join(context.args).strip()
-    if not isbn:
-        await update.message.reply_text("Kullanım: /add <isbn>")
+    # Menü butonları
+    if txt == "📌 Status":
+        return await cmd_status(update, context)
+    if txt == "🩺 Health":
+        return await cmd_health(update, context)
+    if txt == "📚 List":
+        return await cmd_list(update, context)
+
+    # Add / Del akışı
+    if txt == "➕ Add ISBN":
+        context.user_data["awaiting"] = "add"
+        return await update.message.reply_text("ISBN gönder (örn: 9780132350884):", parse_mode=None)
+
+    if txt == "🗑️ Del ISBN":
+        context.user_data["awaiting"] = "del"
+        return await update.message.reply_text("Silinecek ISBN gönder (örn: 9780132350884):", parse_mode=None)
+
+    awaiting = context.user_data.get("awaiting")
+    if awaiting in ("add", "del"):
+        isbn = clean_isbn(txt)
+        if not isbn:
+            return await update.message.reply_text("ISBN boş geldi. Tekrar gönder.", parse_mode=None)
+
+        if awaiting == "add":
+            r = await api("POST", "/isbns", json={"isbn": isbn})
+        else:
+            r = await api("DELETE", f"/isbns/{isbn}")
+
+        context.user_data.pop("awaiting", None)
+        await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", parse_mode=None, reply_markup=MENU)
         return
-    try:
-        async with httpx.AsyncClient(timeout=7.0) as client:
-            r = await client.post(f"{API_BASE}/isbns", json={"isbn": isbn})
-            r.raise_for_status()
-            data = r.json()
-        await update.message.reply_text(
-            f"Add ✅\n"
-            f"isbn: {data.get('isbn')}\n"
-            f"added: {data.get('added')}\n"
-            f"count: {data.get('count')}"
-        )
-    except Exception as e:
-        await update.message.reply_text(f"Add hata: {e}")
 
-async def del_isbn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    isbn = " ".join(context.args).strip()
-    if not isbn:
-        await update.message.reply_text("Kullanım: /del <isbn>")
-        return
-    try:
-        async with httpx.AsyncClient(timeout=7.0) as client:
-            r = await client.delete(f"{API_BASE}/isbns/{isbn}")
-            r.raise_for_status()
-            data = r.json()
-        await update.message.reply_text(
-            f"Del ✅\n"
-            f"isbn: {data.get('isbn')}\n"
-            f"deleted: {data.get('deleted')}\n"
-            f"count: {data.get('count')}"
-        )
-    except Exception as e:
-        await update.message.reply_text(f"Del hata: {e}")
+    # Diğer her şey
+    await update.message.reply_text(
+        "Menüden seç: Status / Health / List / Add ISBN / Del ISBN",
+        reply_markup=MENU,
+        parse_mode=None,
+    )
 
 def main():
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN missing")
+    if not BOT_TOKEN:
+        raise SystemExit("TELEGRAM_BOT_TOKEN not set")
 
-    app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("health", health))
-    app.add_handler(CommandHandler("list", list_isbns))
-    app.add_handler(CommandHandler("add", add_isbn))
-    app.add_handler(CommandHandler("del", del_isbn))
-    app.run_polling(drop_pending_updates=True)
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.run_polling(close_loop=False)
 
 if __name__ == "__main__":
     main()

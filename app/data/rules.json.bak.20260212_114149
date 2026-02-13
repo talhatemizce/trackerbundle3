@@ -1,0 +1,12 @@
+{
+  "defaults": {
+    "new_max": 60.0,
+    "used_max": 25.0
+  },
+  "overrides": {
+    "9780132350884": {
+      "new_max": 80.0,
+      "used_max": 30.0
+    }
+  }
+}

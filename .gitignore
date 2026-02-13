@@ -6,3 +6,5 @@
 __pycache__/
 isbns.json
 venv/
+rules.json
+data/rules.json

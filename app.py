@@ -3,40 +3,73 @@ from pydantic import BaseModel
 import os, json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import List, Dict, Any
 
-APP_TITLE = "TrackerBundle Panel API"
-DATA_FILE = Path(__file__).with_name("isbns.json")
+app = FastAPI(title="TrackerBundle Panel API", version="0.1.0")
 
-app = FastAPI(title=APP_TITLE)
+BASE_DIR = Path(__file__).resolve().parent
+ISBN_FILE = BASE_DIR / "isbns.json"
+RULES_FILE = BASE_DIR / "rules.json"
 
-class ISBNIn(BaseModel):
+DEFAULT_RULES = {"new_max": 50.0, "used_max": 20.0}
+
+class ISBNItem(BaseModel):
     isbn: str
 
-def _load():
-    if not DATA_FILE.exists():
-        return []
+class RulesPayload(BaseModel):
+    new_max: float
+    used_max: float
+
+def _atomic_write_json(path: Path, data: Any) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+def _read_json(path: Path, default: Any):
     try:
-        return json.loads(DATA_FILE.read_text(encoding="utf-8") or "[]")
+        if not path.exists():
+            return default
+        raw = path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return default
+        return json.loads(raw)
     except Exception:
-        return []
+        return default
 
-def _save(items):
-    DATA_FILE.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+def load_isbns() -> List[str]:
+    data = _read_json(ISBN_FILE, [])
+    if isinstance(data, list):
+        return [str(x).strip() for x in data if str(x).strip()]
+    return []
 
-def _norm(isbn: str) -> str:
-    return "".join(ch for ch in isbn.strip() if ch.isdigit() or ch.upper() == "X")
+def save_isbns(isbns: List[str]) -> None:
+    _atomic_write_json(ISBN_FILE, isbns)
+
+def load_rules() -> Dict[str, float]:
+    data = _read_json(RULES_FILE, DEFAULT_RULES)
+    if not isinstance(data, dict):
+        data = DEFAULT_RULES
+    return {
+        "new_max": float(data.get("new_max", DEFAULT_RULES["new_max"])),
+        "used_max": float(data.get("used_max", DEFAULT_RULES["used_max"])),
+    }
+
+def save_rules(rules: Dict[str, float]) -> None:
+    _atomic_write_json(RULES_FILE, rules)
 
 @app.get("/")
 def home():
-    return {
-        "service": "trackerbundle-panel",
-        "docs": "/docs",
-        "health": "/health",
-        "status": "/status",
-        "isbn_list": "/isbns",
-        "isbn_add": "/isbns (POST)",
-        "isbn_del": "/isbns/{isbn} (DELETE)",
-    }
+    return (
+        "<h1>TrackerBundle Panel API</h1>"
+        "<p>OK ✅</p>"
+        "<ul>"
+        '<li><a href="/docs">Docs (Swagger)</a></li>'
+        '<li><a href="/status">Status</a></li>'
+        '<li><a href="/health">Health</a></li>'
+        '<li><a href="/rules">Rules</a></li>'
+        '<li><a href="/isbns">ISBNs</a></li>'
+        "</ul>"
+    )
 
 @app.get("/health")
 def health():
@@ -49,31 +82,68 @@ def status():
         "service": "trackerbundle-panel",
         "time_utc": datetime.now(timezone.utc).isoformat(),
         "has_bot_token": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
-        "isbn_count": len(_load()),
+        "isbn_count": len(load_isbns()),
     }
 
 @app.get("/isbns")
 def list_isbns():
-    return {"count": len(_load()), "items": _load()}
+    return {"ok": True, "items": load_isbns()}
 
 @app.post("/isbns")
-def add_isbn(payload: ISBNIn):
-    isbn = _norm(payload.isbn)
+def add_isbn(item: ISBNItem):
+    isbn = item.isbn.strip()
     if not isbn:
-        raise HTTPException(400, "isbn empty")
-    items = _load()
-    if isbn in items:
-        return {"ok": True, "added": False, "isbn": isbn, "count": len(items)}
-    items.append(isbn)
-    _save(items)
-    return {"ok": True, "added": True, "isbn": isbn, "count": len(items)}
+        raise HTTPException(status_code=400, detail="isbn empty")
+    items = load_isbns()
+    if isbn not in items:
+        items.append(isbn)
+        save_isbns(items)
+    return {"ok": True, "count": len(items), "items": items[-10:]}
 
 @app.delete("/isbns/{isbn}")
 def delete_isbn(isbn: str):
-    isbn = _norm(isbn)
-    items = _load()
-    if isbn not in items:
-        return {"ok": True, "deleted": False, "isbn": isbn, "count": len(items)}
-    items = [x for x in items if x != isbn]
-    _save(items)
-    return {"ok": True, "deleted": True, "isbn": isbn, "count": len(items)}
+    isbn = isbn.strip()
+    items = load_isbns()
+    new_items = [x for x in items if x != isbn]
+    if len(new_items) != len(items):
+        save_isbns(new_items)
+    return {"ok": True, "count": len(new_items)}
+
+@app.get("/rules")
+def get_rules():
+    r = load_rules()
+    return {"ok": True, **r}
+
+@app.put("/rules")
+def set_rules(payload: RulesPayload):
+    r = {"new_max": float(payload.new_max), "used_max": float(payload.used_max)}
+    save_rules(r)
+    return {"ok": True, **r}
+
+# ==== RULES API ====
+from pydantic import BaseModel, Field
+from typing import Optional, Literal, Dict, Any
+from rules_store import load_rules, get_isbn_rules, set_rule, delete_rule
+
+Condition = Literal["new","used_like_new","used_very_good","used_good","used_acceptable"]
+
+class RuleUpsert(BaseModel):
+    max_price: Optional[float] = Field(default=None, ge=0)
+
+@app.get("/rules")
+def rules_all() -> Dict[str, Any]:
+    return load_rules()
+
+@app.get("/rules/{isbn}")
+def rules_for_isbn(isbn: str) -> Dict[str, Any]:
+    return {"isbn": isbn, "rules": get_isbn_rules(isbn)}
+
+@app.put("/rules/{isbn}/{condition}")
+def rules_set(isbn: str, condition: Condition, body: RuleUpsert):
+    rules = set_rule(isbn, condition, body.max_price)
+    return {"ok": True, "isbn": isbn, "rules": rules}
+
+@app.delete("/rules/{isbn}/{condition}")
+def rules_del(isbn: str, condition: Condition):
+    rules = delete_rule(isbn, condition)
+    return {"ok": True, "isbn": isbn, "rules": rules}
