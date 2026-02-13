@@ -8,3 +8,12 @@ isbns.json
 venv/
 rules.json
 data/rules.json
+
+# local backups / junk
+_bak/
+backups/
+*.bak
+*.bak.*
+*.BAD.*
+app/data/*.bak*
+rules*.bak*
