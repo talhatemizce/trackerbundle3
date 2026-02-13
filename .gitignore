@@ -30,3 +30,6 @@ backups/
 *.BAD.*
 app/data/*.bak*
 rules*.bak*
+
+# old scratch
+_old/
