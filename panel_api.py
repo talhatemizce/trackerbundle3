@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from app.watchlist_endpoints import router as watchlist_router
 from pydantic import BaseModel
 import os, json
 from datetime import datetime, timezone
@@ -7,6 +8,14 @@ from typing import List, Dict, Any
 
 app = FastAPI(title="TrackerBundle Panel API", version="0.1.0")
 
+from app.ebay_pricing.router import router as ebay_router
+from app.ebay_pricing.watch_router import router as ebay_watch_router
+
+
+app.include_router(ebay_router)
+app.include_router(ebay_watch_router)
+
+app.include_router(watchlist_router)
 BASE_DIR = Path(__file__).resolve().parent
 ISBN_FILE = BASE_DIR / "isbns.json"
 RULES_FILE = BASE_DIR / "rules.json"
@@ -147,3 +156,17 @@ def rules_set(isbn: str, condition: Condition, body: RuleUpsert):
 def rules_del(isbn: str, condition: Condition):
     rules = delete_rule(isbn, condition)
     return {"ok": True, "isbn": isbn, "rules": rules}
+
+# ---- SP-API Offers endpoint (auto-added) ----
+from fastapi import HTTPException
+from spapi_offers_lib import get_top2_new_used
+
+@app.get("/spapi/offers/top2")
+def spapi_offers_top2(asin: str, marketplaceId: str | None = None):
+    try:
+        return get_top2_new_used(asin, marketplaceId)
+    except Exception as e:
+        # Not: secret/token loglama yok
+        raise HTTPException(status_code=400, detail=str(e))
+# ---- end SP-API Offers endpoint ----
+

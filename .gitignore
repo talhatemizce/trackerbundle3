@@ -37,3 +37,11 @@ _old/
 # local runtime data
 /data/
 *.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/
+*.log
+.env
+.env.*

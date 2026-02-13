@@ -9,10 +9,8 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from app.rules_store import load_rules, set_defaults, set_isbn_override, delete_isbn_override, effective_limit
-from app.decision_endpoints import router as decision_router
 
 app = FastAPI(title="TrackerBundle Panel API", version="0.1.0")
-app.include_router(decision_router)
 app.include_router(rules_router)
 
 DATA_PATH = Path(os.getenv("ISBN_STORE", "/home/ubuntu/trackerbundle3/app/data/isbns.json"))
@@ -122,14 +120,8 @@ def del_isbn_rule(isbn: str):
     data = delete_isbn_override(isbn)
     return {"ok": True, **data}
 
-
 @app.get("/offers/top2")
 async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
-    url = "http://127.0.0.1/spapi/offers/top2"
-    params = {"asin": asin, "marketplace_id": marketplace_id}
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.get(url, params=params)
-    try:
-        return r.json()
-    except Exception:
-        return {"upstream_status": r.status_code, "body": r.text}
+    """
+    Panel API üzerinden SPAPI verisini çekmek için proxy endpoint.
+    SPAPI nginx tarafında /spapi/ altında basic-auth korumalı; biz localhosttan
