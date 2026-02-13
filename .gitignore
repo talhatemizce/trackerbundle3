@@ -33,3 +33,7 @@ rules*.bak*
 
 # old scratch
 _old/
+
+# local runtime data
+/data/
+*.json

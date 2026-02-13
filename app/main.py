@@ -87,7 +87,7 @@ def delete_isbn(isbn: str):
     _save_isbns(isbns)
     return {"ok": True, "count": len(_load_isbns())}
 
-@app.get("/rules")
+@app.get("/rules", operation_id="get_rules_all")
 def get_rules():
     return {"ok": True, **load_rules()}
 
