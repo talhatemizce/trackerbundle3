@@ -14,6 +14,7 @@ from app.rules_store import get_rule, effective_limit
 from app import run_state
 from app.ebay_client import browse_search_isbn, finding_sold_stats, normalize_condition, item_total_price
 from app.alert_store import check_and_mark
+from app import sold_stats_store
 
 logger = logging.getLogger("trackerbundle.scheduler_ebay")
 
@@ -139,12 +140,52 @@ def _pick_candidates_under_limit(items: List[Dict[str, Any]], isbn: str) -> List
 
 
 async def _fetch_sold(client: httpx.AsyncClient, isbn: str) -> Dict[str, Any]:
-    """Sold stats çek — hata olursa boş dict döndür (scheduler durmasın)."""
+    """
+    Sold stats çek — hata olursa boş dict döndür (scheduler durmasın).
+    Başarılıysa sold_stats_store'a snapshot yazar (365d/3yr birikim için).
+    """
     try:
-        return await finding_sold_stats(client, isbn)
+        result = await finding_sold_stats(client, isbn)
     except Exception:
         logger.warning("ISBN %s sold stats fetch failed (non-fatal)", isbn)
         return {}
+
+    # ── Accumulator'a yaz (sold_avg hesaplaması için geçmiş veri biriktir) ───
+    # finding_sold_stats → tüm condition'lar için toplam + condition breakdown döner
+    # by_condition breakdown'u ayrı ayrı saklıyoruz (new/used kondisyon trendsı için)
+    try:
+        all_totals = _rebuild_totals_from_stats(result)
+        if all_totals:
+            sold_stats_store.append_snapshot(isbn, 90, None, all_totals)
+        # Condition breakdown
+        for bucket, stats in (result.get("by_condition") or {}).items():
+            cond_key = "new" if bucket == "brand_new" else "used"
+            cond_totals = _rebuild_totals_from_bucket(stats)
+            if cond_totals:
+                sold_stats_store.append_snapshot(isbn, 90, cond_key, cond_totals)
+    except Exception:
+        logger.debug("sold_stats_store append failed isbn=%s (non-fatal)", isbn)
+
+    return result
+
+
+def _rebuild_totals_from_stats(result: Dict[str, Any]) -> list:
+    """finding_sold_stats sonucundan approximated price list üret."""
+    avg = result.get("sold_avg")
+    count = result.get("sold_count") or 0
+    if avg is None or count == 0:
+        return []
+    # Ortalamayı count kez tekrar et (yaklaşım — gerçek dağılım bilinmiyor)
+    return [float(avg)] * min(count, 50)
+
+
+def _rebuild_totals_from_bucket(stats: Dict[str, Any]) -> list:
+    """by_condition bucket'ından approximated price list üret."""
+    avg = stats.get("avg")
+    count = stats.get("count") or 0
+    if avg is None or count == 0:
+        return []
+    return [float(avg)] * min(count, 30)
 
 
 async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:

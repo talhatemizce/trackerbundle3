@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.ebay_client import get_app_token, normalize_condition, BOOKS_CATEGORY_ID
 from app.core.config import get_settings
 from app import finding_cache
+from app import sold_stats_store
 
 logger = logging.getLogger("trackerbundle.suggested_price")
 router = APIRouter(tags=["suggested-price"])
@@ -183,8 +184,15 @@ async def _fetch_sold_in_range(
     except Exception:
         logger.exception("Finding parse error isbn=%s days=%d", isbn, days_back)
 
-    # ── Cache'e yaz (boş sonuç bile cache'lenir → rate limit baskısını azaltır) ──
+    # ── Disk cache'e yaz ─────────────────────────────────────────────────────
     finding_cache.set_cached(isbn, days_back, condition_filter, totals)
+
+    # ── Accumulator'a yaz (30d ve 90d — uzun pencere veri biriktirme) ────────
+    # 365d/1095d sorgularının zaten "tarihsiz" (90d max eBay) döndürdüğünü
+    # biliyoruz; bu snapshotları "365d" olarak saklamak yanlış etiketleme olur.
+    if totals and days_back <= _FINDING_MAX_DAYS:
+        sold_stats_store.append_snapshot(isbn, days_back, condition_filter, totals)
+
     return totals
 
 
@@ -201,25 +209,26 @@ def _volatility(vals: List[float]) -> Optional[float]:
 
 def _calc_suggested(
     avg_30: Optional[float],
-    avg_100: Optional[float],
+    avg_90: Optional[float],
     avg_365: Optional[float],
-    avg_fallback: Optional[float],
+    avg_fallback: Optional[float] = None,
 ) -> Optional[float]:
     """
-    Formül: avg_30*0.25 + avg_100*0.25 + avg_365*0.50
-    Eksik dönem → fallback ile doldur.
+    Ağırlıklı satış fiyatı tahmini.
+    Formül: avg_30 × 0.25 + avg_90 × 0.25 + avg_365 × 0.50
+    Eksik dönem normalize edilir (ağırlıkları mevcut dönemlere dağıt).
+    avg_fallback: eski API uyumluluğu için (genellikle avg_3yr).
     """
     a30  = avg_30  or avg_fallback
-    a100 = avg_100 or avg_fallback
+    a90  = avg_90  or avg_fallback
     a365 = avg_365 or avg_fallback
 
-    if not any([a30, a100, a365]):
+    if not any([a30, a90, a365]):
         return None
 
-    # Her eksik dönemi fallback ile doldur, ağırlıkları koru
     val = 0.0
     w_total = 0.0
-    for v, w in [(a30, 0.25), (a100, 0.25), (a365, 0.50)]:
+    for v, w in [(a30, 0.25), (a90, 0.25), (a365, 0.50)]:
         if v is not None:
             val += v * w
             w_total += w
@@ -227,7 +236,6 @@ def _calc_suggested(
     if w_total == 0:
         return None
 
-    # Eksik ağırlık varsa normalize et
     return round(val / w_total, 2)
 
 
@@ -291,54 +299,78 @@ async def get_suggested_price(
     async with httpx.AsyncClient(timeout=40) as client:
         for cond_key in ["new", "used"]:
             try:
-                # Paralel fetch: 30d, 100d, 365d, 1095d (3yıl)
-                d30_task  = asyncio.create_task(_fetch_sold_in_range(client, isbn_clean, 30,   cond_key))
-                d100_task = asyncio.create_task(_fetch_sold_in_range(client, isbn_clean, 100,  cond_key))
-                d365_task = asyncio.create_task(_fetch_sold_in_range(client, isbn_clean, 365,  cond_key))
-                d3y_task  = asyncio.create_task(_fetch_sold_in_range(client, isbn_clean, 1095, cond_key))
-
-                vals_30, vals_100, vals_365, vals_3y = await asyncio.gather(
-                    d30_task, d100_task, d365_task, d3y_task,
-                    return_exceptions=True,
+                # Finding API: sadece 30d ve 90d (eBay max 90 gün saklar)
+                # Her başarılı çağrı accumulator'a da yazar (uzun pencere için birikim)
+                d30_task = asyncio.create_task(
+                    _fetch_sold_in_range(client, isbn_clean, 30,  cond_key)
+                )
+                d90_task = asyncio.create_task(
+                    _fetch_sold_in_range(client, isbn_clean, 90,  cond_key)
+                )
+                vals_30, vals_90 = await asyncio.gather(
+                    d30_task, d90_task, return_exceptions=True,
                 )
 
-                # Exception'ları boş listeye çevir
                 def safe(v: Any) -> List[float]:
                     return v if isinstance(v, list) else []
 
-                v30  = safe(vals_30)
-                v100 = safe(vals_100)
-                v365 = safe(vals_365)
-                v3y  = safe(vals_3y)
+                v30 = safe(vals_30)
+                v90 = safe(vals_90)
+
+                # 365d ve 1095d: accumulator'dan (zamanla biriken gerçek tarihsel veri)
+                # Daha az güvenilir veri varken fallback: 90d Finding API sonucu
+                v365 = sold_stats_store.query_window(isbn_clean, 365,  cond_key)
+                v3y  = sold_stats_store.query_window(isbn_clean, 1095, cond_key)
+
+                # Fallback: accumulator boşsa mevcut en iyi veriyi kullan
+                if not v365:
+                    v365 = v90   # Henüz 365d birikim yok → 90d ile tahmini doldur
+                if not v3y:
+                    v3y = v365   # Henüz 3yr birikim yok → 365d ile tahmini doldur
 
                 avg_30  = _avg(v30)
-                avg_100 = _avg(v100)
+                avg_90  = _avg(v90)
                 avg_365 = _avg(v365)
                 avg_3y  = _avg(v3y)
 
-                suggested = _calc_suggested(avg_30, avg_100, avg_365, avg_3y)
+                # Suggested price formülü: ağırlıklı ortalama
+                suggested = _calc_suggested(avg_30, avg_90, avg_365, avg_3y)
 
-                # Volatility: en geniş veri setinden hesapla
-                all_vals = v3y or v365 or v100 or v30
+                # Volatility
+                all_vals = v3y or v365 or v90 or v30
                 vol = _volatility(all_vals)
+
+                # Trend analizi
+                trends = sold_stats_store.compute_trends(avg_30, avg_90, avg_365)
+
+                # Accumulator span — kullanıcıya veri güvenilirliği göstergesi
+                span_days = sold_stats_store.snapshot_span_days(isbn_clean, cond_key)
 
                 results[cond_key] = {
                     "suggested": round(suggested) if suggested else None,
                     "suggested_exact": suggested,
                     "periods": {
-                        "avg_30d":  {"avg": avg_30,  "count": len(v30)},
-                        "avg_100d": {"avg": avg_100, "count": len(v100)},
-                        "avg_365d": {"avg": avg_365, "count": len(v365)},
-                        "avg_3yr":  {"avg": avg_3y,  "count": len(v3y)},
+                        "avg_30d": {"avg": avg_30,  "count": len(v30)},
+                        "avg_90d": {"avg": avg_90,  "count": len(v90)},
+                        "avg_365d": {
+                            "avg": avg_365, "count": len(v365),
+                            "accumulated": sold_stats_store.snapshot_span_days(isbn_clean, cond_key) is not None,
+                        },
+                        "avg_3yr": {
+                            "avg": avg_3y, "count": len(v3y),
+                            "accumulated": (span_days or 0) > 180,
+                        },
                     },
                     "volatility": vol,
                     "volatile_warning": vol is not None and vol > 2.0,
+                    "trends": trends,
+                    "history_span_days": span_days,
                     "fallback_used": any([
                         avg_30  is None and avg_3y is not None,
-                        avg_100 is None and avg_3y is not None,
+                        avg_90  is None and avg_3y is not None,
                         avg_365 is None and avg_3y is not None,
                     ]),
-                    "formula": "avg_30d×0.25 + avg_100d×0.25 + avg_365d×0.50",
+                    "formula": "avg_30d×0.25 + avg_90d×0.25 + avg_365d×0.50",
                 }
 
             except Exception as e:

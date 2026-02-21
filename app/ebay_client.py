@@ -354,26 +354,127 @@ async def finding_sold_stats(
 
 def _isbn_strict_match(item: Dict[str, Any], variants: List[str]) -> bool:
     """
-    Item'ın gerçekten bu ISBN'e ait olduğunu doğrula.
-    1. GTIN/ISBN alanlarına bak (en güvenilir)
-    2. Title'da herhangi bir variant geçiyor mu kontrol et (post-filter fallback)
+    Summary-level (item_summary) alanlarına bakarak hızlı eşleşme dener.
+    UYARI: Browse search summary'de gtin/localizedAspects döndürülmez.
+    Güvenilir strict match için _product_isbn_match() + item detail kullan.
+    Yalnızca debug endpoint'inde (strict=True testinde) kullanılır.
     """
-    # Browse API bazen epid/gtin alanlarını döndürür
+    vs = {v.replace("-", "").replace(" ", "").upper() for v in variants}
+
+    # Browse summary bazen gtin/epid/isbn döndürür (GTIN search'te garantili)
     for field in ("gtin", "epid", "isbn"):
         val = (item.get(field) or "").replace("-", "").replace(" ", "").upper()
-        if val and any(val == v for v in variants):
+        if val and val in vs:
             return True
 
-    # additionalImages, localizedAspects gibi alanlarda da olabilir
+    # localizedAspects (GTIN search veya fieldgroups=EXTENDED ile döner)
     for aspect in (item.get("localizedAspects") or []):
-        if aspect.get("name", "").upper() in ("ISBN", "EAN", "GTIN"):
+        if aspect.get("name", "").upper() in ("ISBN", "EAN", "GTIN", "ISBN-10", "ISBN-13"):
             aval = (aspect.get("value") or "").replace("-", "").replace(" ", "").upper()
-            if any(aval == v for v in variants):
+            if aval in vs:
                 return True
 
-    # Son çare: title substring (en az bir variant geçmeli)
+    # Title substring (nadiren çalışır ama fallback)
     title = item.get("title", "").replace("-", "").replace(" ", "").upper()
-    return any(v in title for v in variants)
+    return any(v in title for v in vs)
+
+
+def _product_isbn_match(detail: Dict[str, Any], variants: List[str]) -> bool:
+    """
+    Item detail response'unda (fieldgroups=PRODUCT) ISBN eşleşmesi kontrol eder.
+    Kontrol edilen alanlar:
+      1. product.gtins[] — ePID varsa eBay otomatik doldurur
+      2. localizedAspects[] — satıcının girdiği "ISBN" / "EAN" / "GTIN" değerleri
+    GTIN search'ten gelen item'lar zaten kesin eşleşmedir, bu fonksiyon
+    yalnızca keyword fallback item'larını doğrulamak için kullanılır.
+    """
+    vs = {v.replace("-", "").replace(" ", "").upper() for v in variants}
+
+    # product.gtins (ePID matched items)
+    product = detail.get("product") or {}
+    for gtin in (product.get("gtins") or []):
+        if gtin.replace("-", "").upper() in vs:
+            return True
+
+    # localizedAspects (seller-provided)
+    for asp in (detail.get("localizedAspects") or []):
+        if asp.get("name", "").upper() in ("ISBN", "EAN", "GTIN", "ISBN-10", "ISBN-13", "UPC"):
+            val = (asp.get("value") or "").replace("-", "").replace(" ", "").upper()
+            if val in vs:
+                return True
+
+    return False
+
+
+async def _get_item_detail(
+    client: httpx.AsyncClient,
+    token: str,
+    item_id: str,
+) -> Dict[str, Any]:
+    """Item detail'ı fieldgroups=PRODUCT ile çeker (ISBN doğrulaması için)."""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+    }
+    r = await client.get(
+        f"{_browse_base()}/item/{item_id}",
+        params={"fieldgroups": "PRODUCT"},
+        headers=headers,
+        timeout=15,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+async def _strict_verify(
+    client: httpx.AsyncClient,
+    token: str,
+    items: List[Dict[str, Any]],
+    variants: List[str],
+    top_n: int = 20,
+    concurrency: int = 5,
+) -> List[Dict[str, Any]]:
+    """
+    En ucuz top_n item'ı item detail (fieldgroups=PRODUCT) ile doğrular.
+    product.gtins veya localizedAspects'te ISBN yoksa DROP edilir.
+    top_n'in ötesindeki item'lar doğrulama maliyeti göz önünde bulundurularak DROP edilir.
+    Network hatası durumunda fail-open (item dahil edilir).
+    """
+    if not items:
+        return []
+
+    def _price(it: Dict[str, Any]) -> float:
+        try:
+            return float(it.get("price", {}).get("value", 9999))
+        except Exception:
+            return 9999.0
+
+    sorted_items = sorted(items, key=_price)
+    to_verify = sorted_items[:top_n]
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _check(it: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        item_id = it.get("itemId") or ""
+        if not item_id:
+            return None
+        async with sem:
+            try:
+                detail = await _get_item_detail(client, token, item_id)
+                if _product_isbn_match(detail, variants):
+                    return it
+                logger.debug("isbn strict FAIL item=%s", item_id)
+                return None
+            except Exception as e:
+                # Network/auth hataları → fail-open (item'ı dahil et)
+                logger.warning("item=%s detail fetch error (%s) — fail-open", item_id, e)
+                return it
+
+    results = await asyncio.gather(*[_check(it) for it in to_verify])
+    verified = [r for r in results if r is not None]
+    dropped = len(to_verify) - len(verified)
+    if dropped:
+        logger.info("Strict verify: %d/%d passed, %d dropped (wrong ISBN)", len(verified), len(to_verify), dropped)
+    return verified
 
 
 async def _browse_fetch_one(
@@ -382,7 +483,7 @@ async def _browse_fetch_one(
     q: str,
     limit: int,
 ) -> List[Dict[str, Any]]:
-    """Tek bir q= sorgusu çeker."""
+    """Keyword q= sorgusu ile item summary çeker."""
     params = {
         "q": q,
         "limit": str(max(1, min(limit, 200))),
@@ -395,6 +496,33 @@ async def _browse_fetch_one(
     return r.json().get("itemSummaries") or []
 
 
+async def _browse_gtin_search(
+    client: httpx.AsyncClient,
+    token: str,
+    gtin: str,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """
+    GTIN parametre ile tam eşleşme araması — keyword noise'u tamamen ortadan kaldırır.
+    eBay bu aramada yalnızca GTIN'i eşleşen ürünleri döndürür (edition-exact).
+    """
+    params = {
+        "gtin": gtin,
+        "limit": str(max(1, min(limit, 200))),
+        "category_ids": BOOKS_CATEGORY_ID,
+        "filter": "buyingOptions:{FIXED_PRICE}",
+    }
+    headers = {"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"}
+    r = await client.get(
+        f"{_browse_base()}/item_summary/search",
+        params=params,
+        headers=headers,
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json().get("itemSummaries") or []
+
+
 async def browse_search_isbn(
     client: httpx.AsyncClient,
     isbn: str,
@@ -402,41 +530,61 @@ async def browse_search_isbn(
     strict: bool = False,
 ) -> List[Dict[str, Any]]:
     """
-    ISBN için eBay Browse API araması.
+    ISBN için eBay Browse API araması (GTIN-first, keyword fallback).
 
-    - Her iki ISBN formatını (10 ve 13 haneli) ayrı sorgularla çeker, birleştirir.
-    - strict=False (default): Sonuçlara güven; q=ISBN zaten ISBN'e özel arama yapar.
-    - strict=True: GTIN/localizedAspects/title'da ISBN bulunamayan item'ları düşürür.
-      UYARI: Browse item_summary/search, GTIN ve localizedAspects döndürmez (item
-      detail call gerektirir). Title'da ISBN nadiren yazar. Bu mod pratikte tüm
-      sonuçları düşürebilir — yalnızca özel test senaryolarında kullan.
-    - Shipping bilinmiyorsa item downstream'de None döner (item_total_price).
+    Arama stratejisi:
+    1. GTIN search: ?gtin=<isbn13> — edition-exact, keyword noise yok
+       GTIN eşleşmesi kesin olduğundan strict=True'da bile verify atlanır.
+    2. Keyword fallback: GTIN 0 sonuç dönünce her iki ISBN varyantı ile paralel
+       q= sorgusu yapılır (ISBN-13 + ISBN-10).
+
+    strict=False (default):
+      GTIN sonuçları zaten kesin; keyword sonuçları eBay aramasına güvenilir.
+    strict=True:
+      Keyword fallback sonuçları için item detail (fieldgroups=PRODUCT) ile
+      product.gtins + localizedAspects üzerinden ISBN doğrulaması yapılır.
+      GTIN search hit ise verify atlanır (zaten kesin).
+      Top 20 ucuz item'a uygulanır; ötesi DROP edilir.
     """
     token = await get_app_token(client)
     isbn_clean = isbn.replace("-", "").replace(" ", "").upper().strip()
     variants = isbn_variants(isbn_clean)
+    isbn13 = isbn_clean if len(isbn_clean) == 13 else isbn10_to_isbn13(isbn_clean)
 
-    # Her variant için paralel sorgu (10 + 13 hane)
-    tasks = [_browse_fetch_one(client, token, v, limit) for v in variants]
-    results_per_query = await asyncio.gather(*tasks, return_exceptions=True)
-
-    seen_ids: set[str] = set()
+    # ── Adım 1: GTIN search (en kesin) ────────────────────────────────────────
     combined: List[Dict[str, Any]] = []
-    for res in results_per_query:
-        if isinstance(res, Exception):
-            logger.warning("browse_search ISBN variant error: %s", res)
-            continue
-        for item in res:
-            item_id = item.get("itemId") or ""
-            if item_id and item_id not in seen_ids:
-                seen_ids.add(item_id)
-                combined.append(item)
+    gtin_hit = False
 
-    if strict:
-        before = len(combined)
-        combined = [it for it in combined if _isbn_strict_match(it, variants)]
-        filtered = before - len(combined)
-        if filtered:
-            logger.info("isbn=%s strict filter dropped %d/%d items", isbn_clean, filtered, before)
+    if isbn13:
+        try:
+            gtin_items = await _browse_gtin_search(client, token, isbn13, limit)
+            if gtin_items:
+                gtin_hit = True
+                combined = gtin_items
+                logger.info("isbn=%s GTIN search: %d items", isbn_clean, len(combined))
+        except Exception as e:
+            logger.warning("isbn=%s GTIN search error: %s — keyword fallback", isbn_clean, e)
+
+    # ── Adım 2: Keyword fallback (GTIN 0 sonuç döndürdüyse) ───────────────────
+    if not combined:
+        tasks = [_browse_fetch_one(client, token, v, limit) for v in variants]
+        results_per_query = await asyncio.gather(*tasks, return_exceptions=True)
+
+        seen_ids: set[str] = set()
+        for res in results_per_query:
+            if isinstance(res, Exception):
+                logger.warning("isbn=%s keyword search error: %s", isbn_clean, res)
+                continue
+            for item in res:
+                item_id = item.get("itemId") or ""
+                if item_id and item_id not in seen_ids:
+                    seen_ids.add(item_id)
+                    combined.append(item)
+
+        logger.info("isbn=%s keyword fallback: %d items (GTIN=0)", isbn_clean, len(combined))
+
+    # ── Adım 3: Strict verify (yalnızca keyword sonuçlarına) ──────────────────
+    if strict and combined and not gtin_hit:
+        combined = await _strict_verify(client, token, combined, variants)
 
     return combined
