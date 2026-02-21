@@ -40,11 +40,11 @@ def _cache_dir() -> Path:
     Cache dizinini döndür (lazy, ilk çağrıda hesaplanır).
 
     Öncelik sırası:
-    1. FINDING_cache_dir() env var (override)
+    1. FINDING_CACHE_DIR env var (override)
     2. get_settings().resolved_data_dir() / "finding_cache"  (proje data/ klasörü)
     3. Fallback: proje kök / data / finding_cache
     """
-    override = os.getenv("FINDING_cache_dir()", "").strip()
+    override = os.getenv("FINDING_CACHE_DIR", "").strip()
     if override:
         p = Path(override)
     else:
