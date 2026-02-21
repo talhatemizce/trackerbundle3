@@ -140,3 +140,15 @@ def delete_isbn_override(isbn: str) -> bool:
         save_rules(rules)
         return True
     return False
+
+
+def get_rule(isbn: str):
+    """
+    Compatibility shim for scheduler_ebay.py which calls get_rule(isbn)
+    to fetch per-ISBN interval_seconds.
+
+    Current rules_store does not support per-ISBN scan intervals
+    (intervals are global via SCHED_TICK_SECONDS env var).
+    Returning None causes the scheduler to fall back to the global tick.
+    """
+    return None
