@@ -276,7 +276,12 @@ async def finding_sold_stats(
         params=params,
         timeout=20,
     )
-    r.raise_for_status()
+    if not r.is_success:
+        logger.error(
+            "Finding API HTTP %d isbn=%s body=%s",
+            r.status_code, isbn_clean, r.text[:600],
+        )
+        r.raise_for_status()
     j = r.json()
 
     # Parse nested Finding API JSON

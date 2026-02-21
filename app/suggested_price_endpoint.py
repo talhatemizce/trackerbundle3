@@ -36,6 +36,11 @@ def _get_cache_lock() -> asyncio.Lock:
 
 # ── Finding API ile tarih filtreli sold sorgusu ──────────────────────────────
 
+# eBay Finding API maksimum 90 günlük satış verisi saklar.
+# EndTimeFrom bu limitin dışına çıkarsa HTTP 500 döner.
+_FINDING_MAX_DAYS = 90
+
+
 async def _fetch_sold_in_range(
     client: httpx.AsyncClient,
     isbn: str,
@@ -44,9 +49,16 @@ async def _fetch_sold_in_range(
     max_entries: int = 100,
 ) -> List[float]:
     """
-    eBay Finding API ile son `days_back` gündeki satış toplamlarını döndürür.
-    Disk cache kullanır (30d/100d → 2h TTL, 365d/3yr → 24h TTL).
-    Tarih: endTimeFrom = (now - days_back), endTimeTo = now
+    eBay Finding API ile satış toplamlarını döndürür. Disk cache kullanır.
+
+    eBay Finding API kısıtları:
+      - findCompletedItems maksimum 90 günlük veri saklar
+      - EndTimeFrom 90 günden eski bir tarihe ayarlanırsa HTTP 500 döner
+
+    Bu nedenle:
+      - days_back <= 90  → EndTimeFrom/EndTimeTo filtreleri kullanılır
+      - days_back  > 90  → Tarih filtresi kullanılmaz; eBay son 90 günü döndürür
+        (365d ve 1095d cache'leri aynı veriyi taşır, farklı TTL'lerle saklanır)
     """
     # ── Cache kontrol ────────────────────────────────────────────────────────
     cached = finding_cache.get_cached(isbn, days_back, condition_filter)
@@ -60,13 +72,11 @@ async def _fetch_sold_in_range(
         raise RuntimeError("EBAY_APP_ID eksik")
 
     now = datetime.now(timezone.utc)
-    start = now - timedelta(days=days_back)
+    isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
 
-    # eBay Finding API ISO format: 2024-01-15T00:00:00.000Z
+    # eBay Finding API ISO format
     def fmt(dt: datetime) -> str:
         return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-    isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
 
     params: Dict[str, str] = {
         "OPERATION-NAME": "findCompletedItems",
@@ -79,13 +89,26 @@ async def _fetch_sold_in_range(
         "paginationInput.entriesPerPage": str(max(1, min(max_entries, 100))),
         "itemFilter(0).name": "SoldItemsOnly",
         "itemFilter(0).value": "true",
-        "itemFilter(1).name": "EndTimeFrom",
-        "itemFilter(1).value": fmt(start),
-        "itemFilter(2).name": "EndTimeTo",
-        "itemFilter(2).value": fmt(now),
     }
 
-    filter_idx = 3
+    filter_idx = 1
+
+    # 90 günden kısa dönemler için tarih filtresi ekle
+    # Uzun dönemler (365d / 1095d) için ekleme: eBay zaten max 90 gün döndürür
+    if days_back <= _FINDING_MAX_DAYS:
+        start = now - timedelta(days=days_back)
+        params[f"itemFilter({filter_idx}).name"] = "EndTimeFrom"
+        params[f"itemFilter({filter_idx}).value"] = fmt(start)
+        filter_idx += 1
+        params[f"itemFilter({filter_idx}).name"] = "EndTimeTo"
+        params[f"itemFilter({filter_idx}).value"] = fmt(now)
+        filter_idx += 1
+    else:
+        logger.debug(
+            "isbn=%s days=%d > %d: date filter skipped (eBay 90d limit)",
+            isbn, days_back, _FINDING_MAX_DAYS,
+        )
+
     if condition_filter == "new":
         params[f"itemFilter({filter_idx}).name"] = "Condition"
         params[f"itemFilter({filter_idx}).value"] = "New"
@@ -102,6 +125,11 @@ async def _fetch_sold_in_range(
             params=params,
             timeout=25,
         )
+        if not r.is_success:
+            logger.error(
+                "Finding API HTTP %d isbn=%s days=%d cond=%s body=%s",
+                r.status_code, isbn, days_back, condition_filter, r.text[:600],
+            )
         r.raise_for_status()
     except Exception as api_err:
         # ── Rate-limit / network hatası: stale cache'e düş ──────────────────

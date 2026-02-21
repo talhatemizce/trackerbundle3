@@ -311,6 +311,99 @@ from app.ebay_client import (
 )
 
 
+@app.get("/ebay/debug/finding")
+async def ebay_debug_finding(isbn: str, days: int = 30, condition: Optional[str] = None):
+    """
+    Ham Finding API (findCompletedItems) yanıtını döndürür — hata teşhisi için.
+
+    Parametreler:
+      isbn      : 10 veya 13 haneli ISBN
+      days      : lookback gün (30 önerilen; >90 → tarih filtresi atlanır)
+      condition : "new" | "used" | None
+
+    Dönüş:
+      http_status   : eBay'den gelen HTTP kodu
+      ok            : 2xx ise True
+      body_raw      : ham yanıt (hata ayıklama için)
+      params_sent   : API'ye gönderilen query parametreleri (app_id maskelenir)
+      parsed_count  : JSON parse edilebilirse kaç item döndü
+    """
+    from app.core.config import get_settings as _cfg
+    from app.ebay_client import BOOKS_CATEGORY_ID as _CAT
+    from datetime import datetime, timedelta, timezone
+
+    s = _cfg()
+    app_id = s.ebay_app_id or s.ebay_client_id
+    if not app_id:
+        raise HTTPException(status_code=503, detail="EBAY_APP_ID eksik")
+
+    isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
+    now = datetime.now(timezone.utc)
+
+    def _fmt(dt: datetime) -> str:
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    params: dict = {
+        "OPERATION-NAME": "findCompletedItems",
+        "SERVICE-VERSION": "1.13.0",
+        "SECURITY-APPNAME": app_id,
+        "RESPONSE-DATA-FORMAT": "JSON",
+        "REST-PAYLOAD": "true",
+        "keywords": isbn_clean,
+        "categoryId": _CAT,
+        "paginationInput.entriesPerPage": "10",
+        "itemFilter(0).name": "SoldItemsOnly",
+        "itemFilter(0).value": "true",
+    }
+
+    fi = 1
+    if days <= 90:
+        start = now - timedelta(days=days)
+        params[f"itemFilter({fi}).name"] = "EndTimeFrom"
+        params[f"itemFilter({fi}).value"] = _fmt(start)
+        fi += 1
+        params[f"itemFilter({fi}).name"] = "EndTimeTo"
+        params[f"itemFilter({fi}).value"] = _fmt(now)
+        fi += 1
+
+    if condition == "new":
+        params[f"itemFilter({fi}).name"] = "Condition"
+        params[f"itemFilter({fi}).value"] = "New"
+    elif condition == "used":
+        params[f"itemFilter({fi}).name"] = "Condition"
+        for i, v in enumerate(["Used", "Good", "Very Good", "Acceptable", "Like New"]):
+            params[f"itemFilter({fi}).value({i})"] = v
+
+    # Maskelenmiş params (app_id gizle)
+    safe_params = {k: ("***" if k == "SECURITY-APPNAME" else v) for k, v in params.items()}
+
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.get("https://svcs.ebay.com/services/search/FindingService/v1", params=params)
+
+    body_text = r.text
+    parsed = None
+    parsed_count = None
+    try:
+        parsed = r.json()
+        resp0 = (parsed.get("findCompletedItemsResponse") or [{}])[0]
+        sr = (resp0.get("searchResult") or [{}])[0]
+        parsed_count = len(sr.get("item") or [])
+    except Exception:
+        pass
+
+    return {
+        "http_status": r.status_code,
+        "ok": r.is_success,
+        "isbn": isbn_clean,
+        "days_requested": days,
+        "date_filter_applied": days <= 90,
+        "condition": condition,
+        "params_sent": safe_params,
+        "parsed_count": parsed_count,
+        "body_raw": body_text[:3000],
+    }
+
+
 @app.get("/ebay/debug/search")
 async def ebay_debug_search(isbn: str, limit: int = 5, strict: bool = False):
     """
