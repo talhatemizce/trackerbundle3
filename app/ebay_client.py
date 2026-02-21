@@ -1,39 +1,151 @@
 from __future__ import annotations
 
-import os
-import json
-import time
 import asyncio
-from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-import base64
+import logging
+import time
+from typing import Any, Dict, List, Optional
+
 import httpx
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-TOKEN_FILE = DATA_DIR / "ebay_app_token.json"
+from app.core.config import get_settings
+from app.core.json_store import read_json, write_json
 
-EBAY_ENV = os.getenv("EBAY_ENV", "production").strip().lower()
-EBAY_CLIENT_ID = os.getenv("EBAY_CLIENT_ID", "").strip()
-EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET", "").strip()
-EBAY_APP_ID = os.getenv("EBAY_APP_ID", "").strip()  # Finding API
+logger = logging.getLogger("trackerbundle.ebay_client")
 
-# ── Token concurrency guard (architecture rule §2) ────────────────────────────
-# asyncio.Lock prevents duplicate refreshes when multiple coroutines call
-# get_app_token concurrently. Memory cache avoids file I/O on every request.
-_token_refresh_lock: Optional[asyncio.Lock] = None
-_token_memory_cache: Optional[Dict[str, Any]] = None  # {"access_token":..., "expires_at":...}
+BOOKS_CATEGORY_ID = "267"
+
+_token_lock = asyncio.Lock()
+_token_cache: Dict[str, Any] = {}
 
 
-def _get_token_lock() -> asyncio.Lock:
-    """Lazy-init so the lock belongs to the running event loop."""
-    global _token_refresh_lock
-    if _token_refresh_lock is None:
-        _token_refresh_lock = asyncio.Lock()
-    return _token_refresh_lock
+def _oauth_url() -> str:
+    s = get_settings()
+    return "https://api.sandbox.ebay.com/identity/v1/oauth2/token" if s.ebay_env == "sandbox" else "https://api.ebay.com/identity/v1/oauth2/token"
+
 
 def _browse_base() -> str:
-    # production: https://api.ebay.com , sandbox: https://api.sandbox.ebay.com
-    return "https://api.sandbox.ebay.com" if EBAY_ENV == "sandbox" else "https://api.ebay.com"
+    s = get_settings()
+    return "https://api.sandbox.ebay.com/buy/browse/v1" if s.ebay_env == "sandbox" else "https://api.ebay.com/buy/browse/v1"
+
+
+def _token_valid(tok: Dict[str, Any]) -> bool:
+    return bool(tok.get("access_token")) and float(tok.get("expires_at", 0)) > time.time() + 60
+
+
+def _load_token_from_disk() -> Dict[str, Any]:
+    try:
+        s = get_settings()
+        return read_json(s.resolved_ebay_token_file(), default={})
+    except Exception:
+        return {}
+
+
+def _save_token_to_disk(tok: Dict[str, Any]) -> None:
+    try:
+        s = get_settings()
+        write_json(s.resolved_ebay_token_file(), tok)
+    except Exception as e:
+        logger.warning("Token disk'e yazılamadı: %s", e)
+
+
+async def get_app_token(client: httpx.AsyncClient) -> str:
+    global _token_cache
+
+    if _token_valid(_token_cache):
+        return _token_cache["access_token"]
+
+    async with _token_lock:
+        if _token_valid(_token_cache):
+            return _token_cache["access_token"]
+
+        disk_tok = _load_token_from_disk()
+        if _token_valid(disk_tok):
+            _token_cache = disk_tok
+            return _token_cache["access_token"]
+
+        s = get_settings()
+        if not s.ebay_client_id or not s.ebay_client_secret:
+            raise RuntimeError("EBAY_CLIENT_ID / EBAY_CLIENT_SECRET eksik")
+
+        r = await client.post(
+            _oauth_url(),
+            data={"grant_type": "client_credentials", "scope": "https://api.ebay.com/oauth/api_scope"},
+            auth=(s.ebay_client_id, s.ebay_client_secret),
+            timeout=20,
+        )
+        r.raise_for_status()
+        j = r.json()
+
+        new_tok = {
+            "access_token": j["access_token"],
+            "expires_at": time.time() + int(j.get("expires_in", 7200)),
+        }
+        _token_cache = new_tok
+
+    _save_token_to_disk(new_tok)
+    logger.info("Yeni eBay token alındı")
+    return new_tok["access_token"]
+
+
+def normalize_condition(cond_text: Optional[str], condition_id: Optional[int | str]) -> str:
+    # conditionId öncelikli
+    try:
+        cid = int(condition_id) if condition_id is not None else None
+    except (ValueError, TypeError):
+        cid = None
+
+    if cid is not None:
+        mapping = {
+            1000: "brand_new",
+            1500: "brand_new",
+            1750: "brand_new",
+            2000: "like_new",
+            2500: "like_new",
+            2750: "like_new",
+            3000: "very_good",
+            4000: "good",
+            5000: "acceptable",
+            6000: "acceptable",
+        }
+        if cid in mapping:
+            return mapping[cid]
+
+    t = (cond_text or "").lower().strip()
+    if not t:
+        return "used_all"
+    if "brand" in t and "new" in t:
+        return "brand_new"
+    if "like new" in t:
+        return "like_new"
+    if "very good" in t:
+        return "very_good"
+    if "good" in t:
+        return "good"
+    if "acceptable" in t:
+        return "acceptable"
+    if "used" in t or "pre-owned" in t:
+        return "used_all"
+    if "new" in t:
+        return "brand_new"
+    return "used_all"
+
+
+def item_total_price(item: Dict[str, Any]) -> Optional[float]:
+    try:
+        price = float(item.get("price", {}).get("value", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+
+    ship = 0.0
+    try:
+        opts = item.get("shippingOptions") or []
+        if opts:
+            ship = float(opts[0].get("shippingCost", {}).get("value", 0) or 0)
+    except Exception:
+        ship = 0.0
+
+    return round(price + ship, 2)
+
 
 def _safe_int(x: Any) -> Optional[int]:
     try:
@@ -41,220 +153,150 @@ def _safe_int(x: Any) -> Optional[int]:
     except Exception:
         return None
 
-def _read_token() -> Optional[Dict[str, Any]]:
-    try:
-        if TOKEN_FILE.exists():
-            return json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return None
 
-def _write_token(data: Dict[str, Any]) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    TOKEN_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-def _token_valid(tok: Dict[str, Any]) -> bool:
-    # tok: {"access_token": "...", "expires_at": epoch_seconds}
-    try:
-        return bool(tok.get("access_token")) and int(tok.get("expires_at", 0)) > int(time.time()) + 60
-    except Exception:
-        return False
-
-async def get_app_token(client: httpx.AsyncClient) -> str:
+async def finding_sold_stats(
+    client: httpx.AsyncClient,
+    isbn: str,
+    *,
+    condition_filter: Optional[str] = None,
+    max_entries: int = 50,
+) -> Dict[str, Any]:
     """
-    Returns a valid eBay OAuth2 app token.
-    Checks memory cache first, then disk file, refreshes only when needed.
-    Protected by asyncio.Lock so concurrent coroutines don't double-refresh.
-    """
-    global _token_memory_cache
+    Finding API (findCompletedItems) ile satılmış item istatistikleri.
+    condition_filter: None=hepsi, "used"=sadece used, "new"=sadece new.
 
-    lock = _get_token_lock()
-    async with lock:
-        # 1. Check in-memory cache (fastest path, no disk I/O)
-        if _token_memory_cache and _token_valid(_token_memory_cache):
-            return str(_token_memory_cache["access_token"])
-
-        # 2. Check on-disk cache
-        tok = _read_token()
-        if tok and _token_valid(tok):
-            _token_memory_cache = tok
-            return str(tok["access_token"])
-
-        # 3. Refresh from eBay
-        if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
-            raise RuntimeError("EBAY_CLIENT_ID/EBAY_CLIENT_SECRET not set")
-
-        auth = base64.b64encode(
-            f"{EBAY_CLIENT_ID}:{EBAY_CLIENT_SECRET}".encode("utf-8")
-        ).decode("ascii")
-
-        url = f"{_browse_base()}/identity/v1/oauth2/token"
-        headers = {
-            "Authorization": f"Basic {auth}",
-            "Content-Type":  "application/x-www-form-urlencoded",
+    Returns:
+        {
+            "isbn": str,
+            "sold_count": int,
+            "sold_min": int|None,
+            "sold_max": int|None,
+            "sold_avg": int|None,
+            "by_condition": {bucket: {"count": N, "avg": M, "min": X, "max": Y}},
         }
-        data = {
-            "grant_type": "client_credentials",
-            "scope":      "https://api.ebay.com/oauth/api_scope",
-        }
-
-        r = await client.post(url, headers=headers, data=data)
-        r.raise_for_status()
-        j = r.json()
-        access_token = j.get("access_token")
-        expires_in   = int(j.get("expires_in", 0))
-        if not access_token or expires_in <= 0:
-            raise RuntimeError("Could not obtain eBay app token")
-
-        tok = {
-            "access_token": access_token,
-            "expires_at":   int(time.time()) + expires_in,
-        }
-        _write_token(tok)
-        _token_memory_cache = tok
-        return access_token
-
-async def browse_get_item(client: httpx.AsyncClient, item_id: str) -> Dict[str, Any]:
     """
-    Returns normalized payload:
-    {site, item_id, title, url, price, ship, total, currency, available}
-    All prices are int-rounded (telegram style)
-    """
-    token = await get_app_token(client)
-    url = f"{_browse_base()}/buy/browse/v1/item/{item_id}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    r = await client.get(url, headers=headers)
-    j = r.json() if r.text else {}
-    if r.status_code < 200 or r.status_code >= 300:
-        return {
-            "site": "ebay",
-            "item_id": item_id,
-            "error": f"http_{r.status_code}",
-            "raw": j if isinstance(j, dict) else None,
-        }
+    s = get_settings()
+    app_id = s.ebay_app_id or s.ebay_client_id
+    if not app_id:
+        raise RuntimeError("EBAY_APP_ID (veya EBAY_CLIENT_ID) eksik")
 
-    title = j.get("title")
-    item_web_url = j.get("itemWebUrl") or j.get("itemWebUrl".lower())
-    price_val = None
-    currency = None
-    try:
-        price = (j.get("price") or {})
-        price_val = price.get("value")
-        currency = price.get("currency")
-    except Exception:
-        pass
+    isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
 
-    ship_val = None
-    try:
-        ship = (j.get("shippingOptions") or [])
-        # pick cheapest shipping option if exists
-        best = None
-        for opt in ship:
-            s = ((opt or {}).get("shippingCost") or {}).get("value")
-            if s is None:
-                continue
-            try:
-                v = float(s)
-                best = v if best is None else min(best, v)
-            except Exception:
-                continue
-        ship_val = best
-    except Exception:
-        ship_val = None
-
-    # availability heuristic
-    available = True
-    try:
-        avail = (j.get("availability") or {}).get("availabilityStatus")
-        if isinstance(avail, str) and avail.upper() not in ("IN_STOCK", "AVAILABLE"):
-            available = False
-    except Exception:
-        pass
-
-    price_i = _safe_int(price_val)
-    ship_i = _safe_int(ship_val) if ship_val is not None else 0
-    total_i = None if price_i is None else int(price_i + (ship_i or 0))
-
-    return {
-        "site": "ebay",
-        "item_id": item_id,
-        "title": title,
-        "url": item_web_url,
-        "price": price_i,
-        "ship": ship_i,
-        "total": total_i,
-        "currency": currency,
-        "available": available,
-    }
-
-async def finding_sold_stats(client: httpx.AsyncClient, keywords: str) -> Dict[str, Any]:
-    """
-    Finding API (findCompletedItems) with AppID.
-    Returns: {site, keywords, sold_count, sold_min, sold_max, sold_avg}
-    """
-    if not EBAY_APP_ID:
-        raise RuntimeError("EBAY_APP_ID not set")
-
-    base = "https://svcs.ebay.com/services/search/FindingService/v1"
-    params = {
+    params: Dict[str, str] = {
         "OPERATION-NAME": "findCompletedItems",
         "SERVICE-VERSION": "1.13.0",
-        "SECURITY-APPNAME": EBAY_APP_ID,
+        "SECURITY-APPNAME": app_id,
         "RESPONSE-DATA-FORMAT": "JSON",
         "REST-PAYLOAD": "true",
-        "keywords": keywords,
-        "paginationInput.entriesPerPage": "50",
-        # Sold items only:
+        "keywords": isbn_clean,
+        "categoryId": BOOKS_CATEGORY_ID,
+        "paginationInput.entriesPerPage": str(max(1, min(max_entries, 100))),
         "itemFilter(0).name": "SoldItemsOnly",
         "itemFilter(0).value": "true",
     }
 
-    r = await client.get(base, params=params)
-    j = r.json() if r.text else {}
-    if r.status_code < 200 or r.status_code >= 300:
-        return {"site": "ebay", "keywords": keywords, "error": f"http_{r.status_code}", "raw": j}
+    # condition filtre (opsiyonel)
+    filter_idx = 1
+    if condition_filter == "new":
+        params[f"itemFilter({filter_idx}).name"] = "Condition"
+        params[f"itemFilter({filter_idx}).value"] = "New"
+        filter_idx += 1
+    elif condition_filter == "used":
+        params[f"itemFilter({filter_idx}).name"] = "Condition"
+        params[f"itemFilter({filter_idx}).value(0)"] = "Used"
+        params[f"itemFilter({filter_idx}).value(1)"] = "Good"
+        params[f"itemFilter({filter_idx}).value(2)"] = "Very Good"
+        params[f"itemFilter({filter_idx}).value(3)"] = "Acceptable"
+        filter_idx += 1
 
-    # Parse JSON structure (Finding JSON is nested)
-    totals = []
+    r = await client.get(
+        "https://svcs.ebay.com/services/search/FindingService/v1",
+        params=params,
+        timeout=20,
+    )
+    r.raise_for_status()
+    j = r.json()
+
+    # Parse nested Finding API JSON
+    totals: List[float] = []
+    by_cond: Dict[str, List[float]] = {}
+
     try:
-        resp = (j.get("findCompletedItemsResponse") or [])[0]
-        sr = (resp.get("searchResult") or [])[0]
+        resp = (j.get("findCompletedItemsResponse") or [{}])[0]
+        sr = (resp.get("searchResult") or [{}])[0]
         items = sr.get("item") or []
-        for it in items:
-            selling = (it.get("sellingStatus") or [])[0]
-            cur = (selling.get("currentPrice") or [])[0]
-            v = cur.get("__value__")
-            if v is None:
-                continue
-            try:
-                totals.append(float(v))
-            except Exception:
-                continue
-    except Exception:
-        totals = []
 
-    if not totals:
-        return {
-            "site": "ebay",
-            "keywords": keywords,
-            "sold_count": 0,
-            "sold_min": None,
-            "sold_max": None,
-            "sold_avg": None,
+        for it in items:
+            # selling price
+            selling = (it.get("sellingStatus") or [{}])[0]
+            cur = (selling.get("currentPrice") or [{}])[0]
+            price_val = cur.get("__value__")
+            if price_val is None:
+                continue
+
+            try:
+                price_f = float(price_val)
+            except (TypeError, ValueError):
+                continue
+
+            # shipping
+            ship_f = 0.0
+            try:
+                ship_info = (it.get("shippingInfo") or [{}])[0]
+                ship_cost = (ship_info.get("shippingServiceCost") or [{}])[0]
+                sv = ship_cost.get("__value__")
+                if sv is not None:
+                    ship_f = float(sv)
+            except Exception:
+                ship_f = 0.0
+
+            total_f = price_f + ship_f
+            totals.append(total_f)
+
+            # condition bucket
+            cond_raw = ""
+            try:
+                cond_info = (it.get("condition") or [{}])[0]
+                cond_raw = (cond_info.get("conditionDisplayName") or [""]) [0]
+            except Exception:
+                pass
+            bucket = normalize_condition(cond_raw, None)
+            by_cond.setdefault(bucket, []).append(total_f)
+    except Exception:
+        logger.exception("Finding API parse error for isbn=%s", isbn)
+
+    result: Dict[str, Any] = {
+        "isbn": isbn_clean,
+        "sold_count": len(totals),
+        "sold_min": _safe_int(min(totals)) if totals else None,
+        "sold_max": _safe_int(max(totals)) if totals else None,
+        "sold_avg": _safe_int(sum(totals) / len(totals)) if totals else None,
+        "by_condition": {},
+    }
+
+    for bucket, vals in by_cond.items():
+        result["by_condition"][bucket] = {
+            "count": len(vals),
+            "avg": _safe_int(sum(vals) / len(vals)),
+            "min": _safe_int(min(vals)),
+            "max": _safe_int(max(vals)),
         }
 
-    sold_min = _safe_int(min(totals))
-    sold_max = _safe_int(max(totals))
-    sold_avg = _safe_int(sum(totals) / len(totals))
+    return result
 
-    return {
-        "site": "ebay",
-        "keywords": keywords,
-        "sold_count": int(len(totals)),
-        "sold_min": sold_min,
-        "sold_max": sold_max,
-        "sold_avg": sold_avg,
+
+async def browse_search_isbn(client: httpx.AsyncClient, isbn: str, limit: int = 50) -> List[Dict[str, Any]]:
+    token = await get_app_token(client)
+    isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
+
+    params = {
+        "q": isbn_clean,
+        "limit": str(max(1, min(limit, 200))),
+        "category_ids": BOOKS_CATEGORY_ID,
+        "filter": "buyingOptions:{FIXED_PRICE}",
     }
+    headers = {"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"}
+
+    r = await client.get(f"{_browse_base()}/item_summary/search", params=params, headers=headers, timeout=20)
+    r.raise_for_status()
+    return r.json().get("itemSummaries") or []

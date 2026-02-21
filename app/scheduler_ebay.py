@@ -1,358 +1,262 @@
-"""
-eBay ISBN scanner — runs as trackerbundle-ebay-scheduler.service
-Usage: python -m app.scheduler_ebay
-
-Scans each tracked ISBN against eBay Browse API (FIXED_PRICE listings).
-Applies condition-based price limits from rules_store.
-Sends compact Telegram alerts for BUY/OFFER decisions.
-Deduplicates alerts via app/data/ebay_alerts_sent.json (atomic file).
-
-Env vars (loaded from /etc/trackerbundle.env):
-  EBAY_CLIENT_ID, EBAY_CLIENT_SECRET   Browse API OAuth2
-  EBAY_APP_ID                          Finding API (used by suggested_price)
-  EBAY_ENV                             "production" | "sandbox"
-  TELEGRAM_BOT_TOKEN
-  TELEGRAM_CHAT_ID
-  ISBN_STORE                           path to isbns.json
-  EBAY_SCAN_INTERVAL_SECONDS           seconds between full scans (default 300)
-  EBAY_SCAN_BATCH_PAUSE_SECONDS        pause between ISBNs (default 3)
-  EBAY_OFFER_MULTIPLIER                offer ceiling = limit * multiplier (default 1.30)
-"""
 from __future__ import annotations
 
-import os
-import json
-import time
 import asyncio
 import logging
-from pathlib import Path
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Tuple
 
 import httpx
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from app.ebay_client import get_app_token, _browse_base  # token helpers
-from app.rules_store import effective_limit, USED_CONDITIONS
+from app.core.config import get_settings
+from app import isbn_store
+from app.rules_store import get_rule
+from app import run_state
+from app.ebay_client import browse_search_isbn, finding_sold_stats, normalize_condition, item_total_price
+from app.alert_store import check_and_mark
 
-# ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [ebay-sched] %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-)
-log = logging.getLogger(__name__)
-
-# ── Config ────────────────────────────────────────────────────────────────────
-SCAN_INTERVAL   = int(os.getenv("EBAY_SCAN_INTERVAL_SECONDS", "300"))
-BATCH_PAUSE     = float(os.getenv("EBAY_SCAN_BATCH_PAUSE_SECONDS", "3"))
-OFFER_MULT      = float(os.getenv("EBAY_OFFER_MULTIPLIER", "1.30"))
-
-ISBN_STORE      = Path(os.getenv("ISBN_STORE",
-    "/home/ubuntu/trackerbundle3/app/data/isbns.json"))
-DATA_DIR        = Path(__file__).resolve().parent / "data"
-ALERTS_FILE     = DATA_DIR / "ebay_alerts_sent.json"
-
-TELEGRAM_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT   = os.getenv("TELEGRAM_CHAT_ID", "")
-
-# ── Condition normalisation ───────────────────────────────────────────────────
-# Maps eBay conditionId (or partial conditionDisplayName) to rules_store keys.
-_COND_ID_MAP: Dict[str, str] = {
-    "1000": "brand_new",
-    "1500": "brand_new",     # New other
-    "1750": "brand_new",     # New with defects
-    "2000": "like_new",
-    "2500": "like_new",
-    "3000": "very_good",
-    "4000": "good",
-    "5000": "acceptable",
-    "6000": "acceptable",    # For parts / not working
-    "7000": "acceptable",
-}
-
-_COND_NAME_MAP: Dict[str, str] = {
-    "new":          "brand_new",
-    "like new":     "like_new",
-    "very good":    "very_good",
-    "good":         "good",
-    "acceptable":   "acceptable",
-    "poor":         "acceptable",
-}
+logger = logging.getLogger("trackerbundle.scheduler_ebay")
 
 
-def _map_condition(cond_id: Optional[str], cond_name: Optional[str]) -> str:
-    if cond_id:
-        mapped = _COND_ID_MAP.get(str(cond_id).strip())
-        if mapped:
-            return mapped
-    if cond_name:
-        for key, val in _COND_NAME_MAP.items():
-            if key in cond_name.lower():
-                return val
-    return "good"  # safe default
+def _build_limits() -> Dict[str, float]:
+    s = get_settings()
+    base = float(s.default_good_limit)
+    return {
+        "brand_new": float(s.default_new_limit),
+        "like_new": round(base * 1.15, 2),
+        "very_good": round(base * 1.10, 2),
+        "good": base,
+        "acceptable": round(base * 0.80, 2),
+        "used_all": base,
+    }
 
 
-# ── ISBN store (read-only here) ───────────────────────────────────────────────
+async def _send_telegram(message: str) -> bool:
+    s = get_settings()
+    if not s.telegram_bot_token or not s.telegram_chat_id:
+        logger.warning("Telegram token/chat_id missing")
+        return False
 
-def load_isbns() -> List[str]:
+    url = f"https://api.telegram.org/bot{s.telegram_bot_token}/sendMessage"
+    payload = {
+        "chat_id": s.telegram_chat_id,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+
     try:
-        if ISBN_STORE.exists():
-            raw  = ISBN_STORE.read_text(encoding="utf-8").strip()
-            data = json.loads(raw or "[]")
-            if isinstance(data, list):
-                return [str(x).strip() for x in data if str(x).strip()]
-    except Exception as exc:
-        log.warning("load_isbns error: %s", exc)
-    return []
-
-
-# ── Alert dedup (atomic check-and-mark) ──────────────────────────────────────
-_dedup_lock = asyncio.Lock()
-
-
-def _read_alerts_unsafe() -> Dict[str, Any]:
-    try:
-        if ALERTS_FILE.exists():
-            raw = ALERTS_FILE.read_text(encoding="utf-8").strip()
-            return json.loads(raw or "{}")
+        async with httpx.AsyncClient(timeout=12) as c:
+            r = await c.post(url, json=payload)
+            r.raise_for_status()
+            return True
     except Exception:
-        pass
-    return {}
+        logger.exception("Telegram sendMessage failed")
+        return False
 
 
-def _write_alerts_unsafe(data: Dict[str, Any]) -> None:
-    import os as _os
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = ALERTS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    _os.replace(tmp, ALERTS_FILE)
-
-
-async def _should_alert(isbn: str, item_id: str) -> bool:
-    """Return True and mark as sent (atomic). False if already sent."""
-    async with _dedup_lock:
-        sent = _read_alerts_unsafe()
-        key  = f"{isbn}::{item_id}"
-        if key in sent:
-            return False
-        sent[key] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        _write_alerts_unsafe(sent)
-        return True
-
-
-# ── eBay Browse API search ────────────────────────────────────────────────────
-
-async def _browse_search_isbn(
-    client: httpx.AsyncClient,
+def _format_message(
     isbn: str,
-    limit: int = 50,
-) -> List[Dict[str, Any]]:
-    """
-    Search eBay Browse API for FIXED_PRICE book listings by ISBN.
-    Returns list of normalised items:
-      {item_id, title, url, condition, condition_id, item_price, ship, total,
-       currency, make_offer_enabled}
-    All prices are floats.
-    """
-    token = await get_app_token(client)
-    base  = _browse_base()
-    url   = f"{base}/buy/browse/v1/item_summary/search"
+    item: Dict[str, Any],
+    bucket: str,
+    total: float,
+    limit: float,
+    sold_avg: int | None = None,
+    sold_count: int | None = None,
+) -> str:
+    title = (item.get("title") or "")[:90]
+    url = item.get("itemWebUrl") or ""
+    make_offer = "BEST_OFFER" in (item.get("buyingOptions") or [])
 
-    params = {
-        "q":              isbn,
-        "category_ids":   "267",
-        "filter":         "buyingOptions:{FIXED_PRICE}",
-        "limit":          str(limit),
-        "fieldgroups":    "MATCHING_ITEMS",
-    }
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type":  "application/json",
-        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-    }
+    label = {
+        "brand_new": "New",
+        "like_new": "Like New",
+        "very_good": "Very Good",
+        "good": "Good",
+        "acceptable": "Acceptable",
+        "used_all": "Used",
+    }.get(bucket, bucket)
 
-    try:
-        r = await client.get(url, params=params, headers=headers, timeout=20)
-    except Exception as exc:
-        log.error("browse_search network error for isbn=%s: %s", isbn, exc)
-        return []
+    total_i = int(round(total))
+    limit_i = int(round(limit))
 
-    if r.status_code != 200:
-        log.warning("browse_search status=%s for isbn=%s", r.status_code, isbn)
-        return []
+    # BUY / OFFER / SKIP kararı
+    if make_offer:
+        decision = "OFFER"
+        offer_target = int(round(limit / float(get_settings().make_offer_multiplier)))
+        decision_str = f"🟡 OFFER ~${offer_target}"
+    else:
+        decision = "BUY"
+        decision_str = "🟢 BUY"
 
-    try:
-        j = r.json()
-    except Exception:
-        return []
+    offer_str = " · Make Offer" if make_offer else ""
 
-    results: List[Dict[str, Any]] = []
-    for it in (j.get("itemSummaries") or []):
-        item_id    = it.get("itemId", "")
-        title      = it.get("title", "")
-        item_url   = it.get("itemWebUrl", "")
-        cond_id    = (it.get("condition") or {}).get("conditionId")
-        cond_name  = (it.get("condition") or {}).get("conditionDisplayName")
-        condition  = _map_condition(cond_id, cond_name)
+    msg = (
+        f"📚 <b>{title}</b>\n"
+        f"ISBN: {isbn} | {label}{offer_str}\n"
+        f"Total: <b>${total_i}</b> (limit ${limit_i}) → {decision_str}\n"
+    )
 
-        buying_opts = it.get("buyingOptions") or []
-        make_offer  = "BEST_OFFER" in buying_opts
+    # Sold stats satırı
+    if sold_avg is not None:
+        sold_str = f"Sold avg: ${sold_avg}"
+        if sold_count is not None:
+            sold_str += f" ({sold_count} sold)"
 
-        price_struct = it.get("price") or {}
-        try:
-            item_price = float(price_struct.get("value") or 0)
-        except Exception:
-            item_price = 0.0
-        currency = price_struct.get("currency", "USD")
+        # overpriced uyarısı: aktif fiyat ucuz ama sold avg çok düşükse
+        if sold_avg < total_i:
+            sold_str += " ⚠️ sold avg < listing"
+        msg += f"{sold_str}\n"
 
-        ship = 0.0
-        for sopt in (it.get("shippingOptions") or []):
-            sc = (sopt.get("shippingCost") or {}).get("value")
-            if sc is not None:
-                try:
-                    v = float(sc)
-                    ship = min(ship, v) if ship != 0 else v
-                except Exception:
-                    pass
-
-        total = round(item_price + ship, 2)
-
-        results.append({
-            "item_id":            item_id,
-            "title":              title,
-            "url":                item_url,
-            "condition":          condition,
-            "condition_id":       cond_id,
-            "condition_name":     cond_name,
-            "item_price":         item_price,
-            "ship":               ship,
-            "total":              total,
-            "currency":           currency,
-            "make_offer_enabled": make_offer,
-        })
-
-    return results
-
-
-# ── Telegram notification ─────────────────────────────────────────────────────
-
-async def _send_telegram(text: str) -> None:
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT:
-        log.debug("Telegram not configured, skipping notification")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            await c.post(url, json={
-                "chat_id":    TELEGRAM_CHAT,
-                "text":       text,
-                "parse_mode": "HTML",
-            })
-    except Exception as exc:
-        log.warning("Telegram send error: %s", exc)
-
-
-def _fmt_alert(isbn: str, item: Dict[str, Any], decision: str) -> str:
-    """Compact Telegram message — no decimals, no verbose JSON."""
-    cond   = (item.get("condition_name") or item.get("condition") or "").title()
-    price  = int(round(item["item_price"]))
-    ship   = int(round(item["ship"]))
-    total  = int(round(item["total"]))
-    title  = (item.get("title") or "")[:60]
-    url    = item.get("url", "")
-    emoji  = "🛒" if decision == "BUY" else "🤝"
-
-    lines = [
-        f"{emoji} <b>{decision}</b> — ISBN {isbn}",
-        f"📚 {title}",
-        f"🏷 Condition: {cond}",
-        f"💵 ${price} + ship ${ship} = <b>${total}</b>",
-    ]
     if url:
-        lines.append(f'<a href="{url}">View listing</a>')
-    return "\n".join(lines)
+        msg += f'<a href="{url}">eBay</a>'
+    return msg
 
 
-# ── Core scan logic ───────────────────────────────────────────────────────────
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=2, max=20),
+    retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError)),
+)
+async def _fetch(client: httpx.AsyncClient, isbn: str) -> List[Dict[str, Any]]:
+    return await browse_search_isbn(client, isbn, limit=50)
 
-async def scan_isbn(client: httpx.AsyncClient, isbn: str) -> int:
-    """Scan one ISBN. Returns count of alerts fired."""
-    listings = await _browse_search_isbn(client, isbn)
-    if not listings:
+
+def _pick_candidates_under_limit(items: List[Dict[str, Any]], limits: Dict[str, float]) -> List[Tuple[Dict[str, Any], str, float, float]]:
+    """
+    Returns list of (item, bucket, total, limit) only for items where total <= limit.
+    Sort by total ascending, keep only 2 cheapest.
+    """
+    s = get_settings()
+    out: List[Tuple[Dict[str, Any], str, float, float]] = []
+
+    for it in items:
+        total = item_total_price(it)
+        if total is None:
+            continue
+
+        bucket = normalize_condition(it.get("condition"), it.get("conditionId"))
+        limit = float(limits.get(bucket, limits["good"]))
+
+        if "BEST_OFFER" in (it.get("buyingOptions") or []):
+            limit = float(round(limit * float(s.make_offer_multiplier), 2))
+
+        if total <= limit:
+            out.append((it, bucket, float(total), float(limit)))
+
+    out.sort(key=lambda x: x[2])
+    return out[:2]
+
+
+async def _fetch_sold(client: httpx.AsyncClient, isbn: str) -> Dict[str, Any]:
+    """Sold stats çek — hata olursa boş dict döndür (scheduler durmasın)."""
+    try:
+        return await finding_sold_stats(client, isbn)
+    except Exception:
+        logger.warning("ISBN %s sold stats fetch failed (non-fatal)", isbn)
+        return {}
+
+
+async def _check_isbn(client: httpx.AsyncClient, isbn: str, limits: Dict[str, float]) -> int:
+    sent = 0
+    try:
+        items = await _fetch(client, isbn)
+    except Exception:
+        logger.exception("ISBN %s fetch failed", isbn)
         return 0
 
-    alerts_fired = 0
-    for item in listings:
-        condition = item["condition"]
-        total     = item["total"]
+    candidates = _pick_candidates_under_limit(items, limits)
+    logger.info("isbn=%s candidates=%d (limit altı)", isbn, len(candidates))
 
-        rule        = effective_limit(isbn, condition)
-        price_limit = float(rule.get("limit") or 0)
+    if not candidates:
+        return 0
 
-        if price_limit <= 0:
-            continue
+    # Sold stats'ı sadece candidate varsa çek (API çağrısını boşa harcamayalım)
+    sold = await _fetch_sold(client, isbn)
+    sold_overall_avg = sold.get("sold_avg")
+    sold_overall_count = sold.get("sold_count")
+    sold_by_cond = sold.get("by_condition", {})
 
-        decision = None
-        if total <= price_limit:
-            decision = "BUY"
-        elif item["make_offer_enabled"] and total <= price_limit * OFFER_MULT:
-            decision = "OFFER"
-
-        if decision is None:
-            continue
-
-        item_id = item["item_id"]
+    for it, bucket, total, limit in candidates:
+        item_id = str(it.get("itemId") or "")
         if not item_id:
             continue
 
-        if not await _should_alert(isbn, item_id):
+        already = check_and_mark(isbn, item_id)
+        if already:
+            logger.info("isbn=%s item=%s skip=already_notified", isbn, item_id)
             continue
 
-        log.info("ALERT %s isbn=%s item=%s total=%s limit=%s",
-                 decision, isbn, item_id, total, price_limit)
+        # Condition bazlı sold avg varsa onu kullan, yoksa genel avg
+        cond_stats = sold_by_cond.get(bucket, {})
+        avg_for_msg = cond_stats.get("avg") if cond_stats.get("avg") is not None else sold_overall_avg
+        count_for_msg = cond_stats.get("count") if cond_stats.get("count") is not None else sold_overall_count
 
-        msg = _fmt_alert(isbn, item, decision)
-        await _send_telegram(msg)
-        alerts_fired += 1
+        msg = _format_message(isbn, it, bucket, total, limit, sold_avg=avg_for_msg, sold_count=count_for_msg)
+        ok = await _send_telegram(msg)
+        if ok:
+            sent += 1
 
-    return alerts_fired
+    return sent
 
 
-# ── Main loop ─────────────────────────────────────────────────────────────────
+def _interval_for_isbn(isbn: str) -> int:
+    """Per-ISBN interval. Missing/None -> default tick."""
+    r = get_rule(isbn)
+    if not r:
+        return int(get_settings().sched_tick_seconds)
+    sec = getattr(r, "interval_seconds", None)
+    if sec is None:
+        return int(get_settings().sched_tick_seconds)
+    try:
+        sec_i = int(sec)
+        if sec_i <= 0:
+            return int(get_settings().sched_tick_seconds)
+        return sec_i
+    except Exception:
+        return int(get_settings().sched_tick_seconds)
 
-async def main_loop() -> None:
-    log.info("eBay scheduler starting (interval=%ss, offer_mult=%.2f)",
-             SCAN_INTERVAL, OFFER_MULT)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Token lock mirroring architecture rule: token refresh guarded by asyncio.Lock
-    # (handled inside get_app_token via ebay_client module)
+async def run_once() -> None:
+    s = get_settings()
+    isbns = isbn_store.list_isbns()
+    if not isbns:
+        logger.info("Watchlist empty")
+        return
+
+    now = time.time()
+    due_isbns: List[str] = []
+    for isbn in isbns:
+        interval = _interval_for_isbn(isbn)
+        if run_state.due(isbn, interval, now=now):
+            due_isbns.append(isbn)
+
+    logger.info("Checking %d/%d ISBN (due)", len(due_isbns), len(isbns))
+    if not due_isbns:
+        return
+
+    limits = _build_limits()
+    async with httpx.AsyncClient(timeout=20) as client:
+        for isbn in due_isbns:
+            sent = await _check_isbn(client, isbn, limits)
+            run_state.set_last_run(isbn, ts=now)
+            logger.info("isbn=%s alerts=%d", isbn, sent)
+
+
+async def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    s = get_settings()
+    tick = int(s.sched_tick_seconds)
+    logger.info("Scheduler start tick=%ss ebay_env=%s", tick, s.ebay_env)
 
     while True:
-        isbns = load_isbns()
-        log.info("Scan cycle: %d ISBNs", len(isbns))
-
-        if isbns:
-            async with httpx.AsyncClient(timeout=25) as client:
-                for isbn in isbns:
-                    try:
-                        fired = await scan_isbn(client, isbn)
-                        if fired:
-                            log.info("isbn=%s: %d alert(s) fired", isbn, fired)
-                    except Exception as exc:
-                        log.error("isbn=%s scan error: %s", isbn, exc)
-                    await asyncio.sleep(BATCH_PAUSE)
-
-        log.info("Scan cycle complete. Sleeping %ss", SCAN_INTERVAL)
-        await asyncio.sleep(SCAN_INTERVAL)
-
-
-def main() -> None:
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        log.info("Shutting down")
+        try:
+            await run_once()
+        except Exception:
+            logger.exception("run_once crash")
+        await asyncio.sleep(tick)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

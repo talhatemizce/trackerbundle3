@@ -1,129 +1,190 @@
-import httpx
+"""
+TrackerBundle Domain API
+========================
+Bot'un (port 8000) bağlandığı ana API.
+ISBN yönetimi, rules, watchlist endpointleri.
+"""
+from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
-from app.rules_endpoints import router as rules_router
-from pydantic import BaseModel, Field
+import os
 from datetime import datetime, timezone
-import os, json
-from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional
 
-from app.rules_store import load_rules, set_defaults, set_isbn_override, delete_isbn_override, effective_limit
-from app.decision_endpoints import router as decision_router
-from app.suggested_price import get_suggested_price, bust_cache as _bust_price_cache
+import httpx
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="TrackerBundle Panel API", version="0.1.0")
-app.include_router(decision_router)
-app.include_router(rules_router)
+from app import isbn_store
+from app import rules_store
 
-DATA_PATH = Path(os.getenv("ISBN_STORE", "/home/ubuntu/trackerbundle3/app/data/isbns.json"))
+app = FastAPI(title="TrackerBundle API", version="0.2.0")
 
-def _load_isbns():
-    if not DATA_PATH.exists():
-        return []
-    try:
-        raw = DATA_PATH.read_text(encoding="utf-8").strip()
-        data = json.loads(raw or "[]")
-        if isinstance(data, list):
-            return [str(x).strip() for x in data if str(x).strip()]
-        return []
-    except Exception:
-        return []
+# CORS (panel dev mode port 3000 + production)
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def _save_isbns(isbns):
-    DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DATA_PATH.write_text(json.dumps(sorted(set(isbns)), indent=2), encoding="utf-8")
 
+# ---- Models ----
 class ISBNItem(BaseModel):
     isbn: str = Field(min_length=1)
 
-class DefaultsPayload(BaseModel):
+
+class IntervalPayload(BaseModel):
+    interval_seconds: int = Field(gt=0)
+
+
+class OverridePayload(BaseModel):
     new_max: Optional[float] = Field(default=None, gt=0)
     used_all_max: Optional[float] = Field(default=None, gt=0)
-    used: Optional[Dict[str, Optional[float]]] = None
-    multipliers: Optional[Dict[str, float]] = None
 
-class ISBNRulePayload(BaseModel):
-    new_max: Optional[float] = Field(default=None, gt=0)
-    used_all_max: Optional[float] = Field(default=None, gt=0)
-    used: Optional[Dict[str, Optional[float]]] = None
 
+# ---- Core routes (bot talks to these) ----
 @app.get("/")
 def home():
     return {
-        "name": "TrackerBundle Panel API",
+        "name": "TrackerBundle API",
         "version": app.version,
         "docs": "/docs",
-        "health": "/health",
-        "status": "/status",
-        "isbns": "/isbns",
-        "rules": "/rules",
-        "effective": "/rules/effective?isbn=...&condition=brand_new|good|very_good|like_new|acceptable|used_all",
+        "endpoints": ["/health", "/status", "/isbns", "/rules/*"],
     }
+
 
 @app.get("/health")
 def health():
     return {"ok": True}
 
+
 @app.get("/status")
 def status():
+    isbns = isbn_store.list_isbns()
     return {
         "ok": True,
-        "service": "trackerbundle-panel",
+        "service": "trackerbundle-api",
         "time_utc": datetime.now(timezone.utc).isoformat(),
         "has_bot_token": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+        "isbn_count": len(isbns),
     }
 
+
+# ---- ISBN endpoints (file_lock + atomic write via isbn_store) ----
 @app.get("/isbns")
-def list_isbns():
-    items = _load_isbns()
+def list_isbns_endpoint():
+    items = isbn_store.list_isbns()
     return {"ok": True, "count": len(items), "items": items}
 
+
 @app.post("/isbns")
-def add_isbn(item: ISBNItem):
-    isbns = _load_isbns()
-    isbns.append(item.isbn.strip())
-    _save_isbns(isbns)
-    return {"ok": True, "count": len(_load_isbns())}
+def add_isbn_endpoint(item: ISBNItem):
+    isbn = item.isbn.strip()
+    if not isbn:
+        raise HTTPException(status_code=400, detail="isbn empty")
+
+    added = isbn_store.add_isbn(isbn)
+    count = len(isbn_store.list_isbns())
+    return {"ok": True, "added": added, "isbn": isbn, "count": count}
+
 
 @app.delete("/isbns/{isbn}")
-def delete_isbn(isbn: str):
-    isbns = [x for x in _load_isbns() if x != isbn]
-    _save_isbns(isbns)
-    return {"ok": True, "count": len(_load_isbns())}
+def delete_isbn_endpoint(isbn: str):
+    isbn = isbn.strip()
+    deleted = isbn_store.delete_isbn(isbn)
+    count = len(isbn_store.list_isbns())
+    return {"ok": True, "deleted": deleted, "isbn": isbn, "count": count}
 
-@app.get("/rules", operation_id="get_rules_all")
+
+# ---- Rules endpoints (interval + overrides, file_lock via rules_store) ----
+@app.get("/rules")
 def get_rules():
-    return {"ok": True, **load_rules()}
+    return {"ok": True, "intervals": rules_store.list_intervals()}
 
-@app.put("/rules/defaults")
-def put_defaults(payload: DefaultsPayload):
-    data = set_defaults(payload.model_dump())
-    return {"ok": True, **data}
-
-# IMPORTANT: this must be BEFORE /rules/{isbn}
-@app.get("/rules/effective")
-def get_effective(isbn: Optional[str] = None, condition: str = "used_all"):
-    eff = effective_limit(isbn, condition)
-    return {"ok": True, "isbn": isbn, "condition": condition, "effective": eff}
 
 @app.get("/rules/{isbn}")
 def get_isbn_rule(isbn: str):
-    data = load_rules()
-    ov = data["overrides"].get(isbn)
-    return {"ok": True, "isbn": isbn, "override": ov}
-
-@app.put("/rules/{isbn}")
-def put_isbn_rule(isbn: str, payload: ISBNRulePayload):
-    data = set_isbn_override(isbn, payload.model_dump())
-    return {"ok": True, **data}
-
-@app.delete("/rules/{isbn}")
-def del_isbn_rule(isbn: str):
-    data = delete_isbn_override(isbn)
-    return {"ok": True, **data}
+    r = rules_store.get_rule(isbn)
+    return {
+        "ok": True,
+        "isbn": isbn,
+        "interval_seconds": r.interval_seconds,
+        "new_max": r.new_max,
+        "used_all_max": r.used_all_max,
+    }
 
 
+@app.put("/rules/{isbn}/interval")
+def set_isbn_interval(isbn: str, payload: IntervalPayload):
+    rules_store.set_interval(isbn, payload.interval_seconds)
+    return {"ok": True, "isbn": isbn, "interval_seconds": payload.interval_seconds}
+
+
+@app.put("/rules/{isbn}/override")
+def set_isbn_override_endpoint(isbn: str, payload: OverridePayload):
+    rules_store.set_override(isbn, new_max=payload.new_max, used_all_max=payload.used_all_max)
+    r = rules_store.get_rule(isbn)
+    return {
+        "ok": True,
+        "isbn": isbn,
+        "new_max": r.new_max,
+        "used_all_max": r.used_all_max,
+    }
+
+
+# ---- Alert stats & clear (panel dashboard) ----
+from app import alert_store as _alert_store
+
+@app.get("/alerts/stats")
+def alerts_stats():
+    return {"ok": True, "stats": _alert_store.get_stats()}
+
+@app.delete("/alerts/{isbn}")
+def clear_alerts(isbn: str):
+    count = _alert_store.clear_isbn(isbn)
+    return {"ok": True, "isbn": isbn, "cleared": count}
+
+
+# ---- Run state (scheduler son tarama zamanları, panel dashboard) ----
+from app.core.json_store import _read_unsafe
+from app.core.config import get_settings as _get_settings
+
+@app.get("/run-state")
+def run_state_endpoint():
+    p = _get_settings().resolved_data_dir() / "last_run.json"
+    data = _read_unsafe(p, default={"by_isbn": {}})
+    return {"ok": True, "by_isbn": data.get("by_isbn", {})}
+
+
+# ---- Suggested price router (panel pricing tab) ----
+from app.suggested_price_endpoint import router as suggested_router
+app.include_router(suggested_router)
+
+
+# ---- Amazon SP-API: top2 new + used with A/M label ----
+from app import amazon_client as _amz
+
+@app.get("/amazon/prices/{asin}")
+async def amazon_prices(asin: str):
+    """Top 2 New + Used fiyatlar, A (FBA) / M (FBM) label ile."""
+    try:
+        data = await _amz.get_top2_prices(asin)
+        return {"ok": True, **data}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@app.get("/amazon/prices/{asin}/telegram")
+async def amazon_prices_telegram(asin: str):
+    """Telegram-ready formatted string."""
+    try:
+        data = await _amz.get_top2_prices(asin)
+        return {"ok": True, "text": _amz.format_telegram(data)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ---- SP-API offers proxy (legacy, nginx panel_api) ----
 @app.get("/offers/top2")
 async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
     url = "http://127.0.0.1/spapi/offers/top2"
@@ -136,39 +197,16 @@ async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
         return {"upstream_status": r.status_code, "body": r.text}
 
 
-# ── Suggested price ────────────────────────────────────────────────────────────
-# GET  /suggested-price/{isbn}           — compute / return cached suggestion
-# DELETE /suggested-price/{isbn}/cache   — bust cache for fresh fetch
+# ---- Static files: serve React panel build (production) ----
+from pathlib import Path as _Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
-@app.get("/suggested-price/{isbn}", tags=["Pricing"])
-async def suggested_price(isbn: str):
-    """
-    Returns weighted suggested buy price based on eBay sold stats.
+_panel_dist = _Path(__file__).resolve().parent.parent / "panel" / "dist"
+if _panel_dist.exists():
+    app.mount("/assets", StaticFiles(directory=str(_panel_dist / "assets")), name="panel-assets")
 
-    Response fields:
-      isbn             : str
-      suggested        : int | null        weighted avg (30d×0.25 + 100d×0.25 + 365d×0.50)
-      avgs             : {30d, 100d, 365d, 3yr}  int | null
-      trend            : "up" | "down" | "flat" | "unknown"
-      delta_pct        : float | null      (avg_30d - avg_365d) / avg_365d × 100
-      price_shift_flag : bool              true when |delta_pct| > 40%
-      fetched_at       : ISO-8601 UTC
-
-    Cache TTL:
-      30d / 100d  → refreshed every SGPRICE_SHORT_TTL_HOURS (default 2h)
-      365d / 3yr  → refreshed every SGPRICE_LONG_TTL_HOURS  (default 6h)
-    """
-    try:
-        result = await get_suggested_price(isbn.strip())
-        return {"ok": True, **result}
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.delete("/suggested-price/{isbn}/cache", tags=["Pricing"])
-async def bust_suggested_price_cache(isbn: str):
-    """Invalidate cached sold-stats for an ISBN so next GET fetches fresh data."""
-    await _bust_price_cache(isbn.strip())
-    return {"ok": True, "isbn": isbn, "msg": "cache cleared"}
+    @app.get("/panel")
+    @app.get("/panel/{rest:path}")
+    def serve_panel(rest: str = ""):
+        return FileResponse(str(_panel_dist / "index.html"))
