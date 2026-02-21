@@ -1,17 +1,48 @@
 """
 Rules storage and logic for TrackerBundle
-JSON-based price limit configuration with ISBN overrides
+JSON-based price limit + scan-interval configuration with per-ISBN overrides.
+
+JSON structure (app/data/rules.json):
+{
+  "defaults": {
+    "new_max": 50.0,
+    "used_all_max": 20.0,
+    "interval_seconds": 300,
+    "used": {
+      "acceptable": 15.0,
+      "good": 18.0,
+      "very_good": 19.8,
+      "like_new": 21.78
+    }
+  },
+  "overrides": {
+    "<isbn>": {
+      "new_max": 30.0,          # optional
+      "used_all_max": 15.0,     # optional
+      "interval_seconds": 600,  # optional
+      "used": { ... }           # optional per-condition prices
+    }
+  }
+}
 """
-import json
-from typing import Dict, Any, Optional
+import os
+from types import SimpleNamespace
+from typing import Any, Dict, Optional
 from pathlib import Path
 
 # Keep rules under app/data to match current repo convention
 RULES_FILE = Path(__file__).resolve().parent / "data" / "rules.json"
 USED_CONDITIONS = ["acceptable", "good", "very_good", "like_new"]
 
+# Global fallback interval (overridden by env var or rules.json defaults)
+_DEFAULT_INTERVAL = int(os.getenv("SCHED_TICK_SECONDS", "300"))
+
+
+# ── Internal helpers ───────────────────────────────────────────────────────────
+
 def _normalize_isbn(isbn: str) -> str:
     return (isbn or "").replace("-", "").replace(" ", "").strip()
+
 
 def _normalize_condition(condition: str) -> Optional[str]:
     if not condition:
@@ -25,30 +56,40 @@ def _normalize_condition(condition: str) -> Optional[str]:
         return "used_all"
     return None
 
+
+# ── File I/O ───────────────────────────────────────────────────────────────────
+
 def save_rules(rules: Dict[str, Any]) -> None:
+    import json
     RULES_FILE.parent.mkdir(parents=True, exist_ok=True)
     RULES_FILE.write_text(json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
 
+
 def load_rules() -> Dict[str, Any]:
+    import json
     if not RULES_FILE.exists():
         default_rules = {
             "defaults": {
                 "new_max": 50.0,
                 "used_all_max": 20.0,
+                "interval_seconds": _DEFAULT_INTERVAL,
                 "used": {
                     "acceptable": 15.0,
                     "good": 18.0,
                     "very_good": 19.8,
-                    "like_new": 21.78
-                }
+                    "like_new": 21.78,
+                },
             },
-            "overrides": {}
+            "overrides": {},
         }
         save_rules(default_rules)
         return default_rules
 
     raw = RULES_FILE.read_text(encoding="utf-8").strip()
     return json.loads(raw or "{}")
+
+
+# ── Price limit resolution (used by scheduler) ─────────────────────────────────
 
 def effective_limit(isbn: Optional[str], condition: str) -> Dict[str, Any]:
     rules = load_rules()
@@ -78,10 +119,101 @@ def effective_limit(isbn: Optional[str], condition: str) -> Dict[str, Any]:
 
     return {"kind": "used", "condition": used_cond or "used_all", "limit": float(defaults.get("used_all_max", 0.0)), "source": "defaults.used_all_max"}
 
+
+# ── Panel/API interface ────────────────────────────────────────────────────────
+
+def list_intervals() -> Dict[str, Any]:
+    """
+    Return a dict of all per-ISBN rules for the panel watchlist table.
+    {
+      isbn: {
+        "interval_seconds": int,
+        "new_max": float | None,
+        "used_all_max": float | None,
+      },
+      ...
+    }
+    """
+    rules = load_rules()
+    defaults = rules.get("defaults", {})
+    overrides = rules.get("overrides", {})
+    default_interval = int(defaults.get("interval_seconds", _DEFAULT_INTERVAL))
+
+    result: Dict[str, Any] = {}
+    for isbn, ov in overrides.items():
+        result[isbn] = {
+            "interval_seconds": int(ov.get("interval_seconds") or default_interval),
+            "new_max": float(ov["new_max"]) if ov.get("new_max") is not None else None,
+            "used_all_max": float(ov["used_all_max"]) if ov.get("used_all_max") is not None else None,
+        }
+    return result
+
+
+def get_rule(isbn: str) -> SimpleNamespace:
+    """
+    Return rule for a single ISBN as a SimpleNamespace with attributes:
+      .interval_seconds  int
+      .new_max           float
+      .used_all_max      float
+    Falls back to defaults when no per-ISBN override is present.
+    """
+    rules = load_rules()
+    defaults = rules.get("defaults", {})
+    overrides = rules.get("overrides", {})
+
+    normalized = _normalize_isbn(isbn)
+    ov = overrides.get(normalized, {})
+
+    interval_seconds = int(
+        ov.get("interval_seconds")
+        or defaults.get("interval_seconds")
+        or _DEFAULT_INTERVAL
+    )
+    new_max = float(
+        ov["new_max"] if ov.get("new_max") is not None
+        else defaults.get("new_max", 50.0)
+    )
+    used_all_max = float(
+        ov["used_all_max"] if ov.get("used_all_max") is not None
+        else defaults.get("used_all_max", 20.0)
+    )
+
+    return SimpleNamespace(
+        interval_seconds=interval_seconds,
+        new_max=new_max,
+        used_all_max=used_all_max,
+    )
+
+
+def set_interval(isbn: str, interval_seconds: int) -> None:
+    """Persist per-ISBN scan interval in overrides."""
+    rules = load_rules()
+    rules.setdefault("overrides", {})
+    normalized = _normalize_isbn(isbn)
+    rules["overrides"].setdefault(normalized, {})
+    rules["overrides"][normalized]["interval_seconds"] = int(interval_seconds)
+    save_rules(rules)
+
+
+def set_override(
+    isbn: str,
+    new_max: Optional[float] = None,
+    used_all_max: Optional[float] = None,
+) -> None:
+    """
+    Persist per-ISBN price override.
+    Thin wrapper that delegates to set_isbn_override for consistency.
+    """
+    set_isbn_override(isbn, new_max=new_max, used_all_max=used_all_max)
+
+
+# ── Fine-grained setters (used by /rules/* endpoints and direct callers) ───────
+
 def set_defaults(
     new_max: Optional[float] = None,
     used_all_max: Optional[float] = None,
-    used_conditions: Optional[Dict[str, float]] = None
+    interval_seconds: Optional[int] = None,
+    used_conditions: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     rules = load_rules()
     rules.setdefault("defaults", {})
@@ -92,6 +224,8 @@ def set_defaults(
         rules["defaults"]["new_max"] = float(new_max)
     if used_all_max is not None:
         rules["defaults"]["used_all_max"] = float(used_all_max)
+    if interval_seconds is not None:
+        rules["defaults"]["interval_seconds"] = int(interval_seconds)
 
     if used_conditions:
         for cond, price in used_conditions.items():
@@ -102,11 +236,12 @@ def set_defaults(
     save_rules(rules)
     return rules["defaults"]
 
+
 def set_isbn_override(
     isbn: str,
     new_max: Optional[float] = None,
     used_all_max: Optional[float] = None,
-    used_conditions: Optional[Dict[str, float]] = None
+    used_conditions: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     rules = load_rules()
     rules.setdefault("defaults", {})
@@ -131,6 +266,7 @@ def set_isbn_override(
     save_rules(rules)
     return override
 
+
 def delete_isbn_override(isbn: str) -> bool:
     rules = load_rules()
     rules.setdefault("overrides", {})
@@ -140,15 +276,3 @@ def delete_isbn_override(isbn: str) -> bool:
         save_rules(rules)
         return True
     return False
-
-
-def get_rule(isbn: str):
-    """
-    Compatibility shim for scheduler_ebay.py which calls get_rule(isbn)
-    to fetch per-ISBN interval_seconds.
-
-    Current rules_store does not support per-ISBN scan intervals
-    (intervals are global via SCHED_TICK_SECONDS env var).
-    Returning None causes the scheduler to fall back to the global tick.
-    """
-    return None

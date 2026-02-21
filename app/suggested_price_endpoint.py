@@ -1,11 +1,9 @@
 # app/suggested_price_endpoint.py
-# Bu dosyayı app/ klasörüne koy, sonra main.py'e ekle:
-#   from app.suggested_price_endpoint import router as suggested_router
-#   app.include_router(suggested_router)
-
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +15,22 @@ from app.core.config import get_settings
 
 logger = logging.getLogger("trackerbundle.suggested_price")
 router = APIRouter(tags=["suggested-price"])
+
+# ── In-memory response cache ──────────────────────────────────────────────────
+# Key: isbn_clean.  Value: {"ts": float, "data": dict}
+# TTL driven by SGPRICE_SHORT_TTL_HOURS (default 2 h).
+# Lock is lazy-created inside the running event loop to stay compatible with Python 3.9.
+import os as _os
+_RESPONSE_CACHE: Dict[str, Dict[str, Any]] = {}
+_CACHE_TTL_SECONDS = int(float(_os.getenv("SGPRICE_SHORT_TTL_HOURS", "2")) * 3600)
+_cache_lock: Optional[asyncio.Lock] = None
+
+
+def _get_cache_lock() -> asyncio.Lock:
+    global _cache_lock
+    if _cache_lock is None:
+        _cache_lock = asyncio.Lock()
+    return _cache_lock
 
 
 # ── Finding API ile tarih filtreli sold sorgusu ──────────────────────────────
@@ -161,12 +175,26 @@ def _calc_suggested(
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
+@router.get("/suggested-price/{isbn}/cache/clear", tags=["suggested-price"])
+async def clear_suggested_price_cache(isbn: str):
+    """Cache'i bu ISBN için sıfırla (panel'den manuel tetikleme)."""
+    isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
+    async with _get_cache_lock():
+        removed = isbn_clean in _RESPONSE_CACHE
+        _RESPONSE_CACHE.pop(isbn_clean, None)
+    return {"ok": True, "isbn": isbn_clean, "removed": removed}
+
+
 @router.get("/suggested-price/{isbn}")
 async def get_suggested_price(
     isbn: str,
     condition: str = Query(
         default="used",
         description="'new' veya 'used'. Her ikisi için de hesaplar.",
+    ),
+    force_refresh: bool = Query(
+        default=False,
+        description="True ise cache bypass edilerek fresh veri çekilir.",
     ),
 ):
     """
@@ -180,15 +208,31 @@ async def get_suggested_price(
     Ek metrikler:
       - volatility: max/min oranı (>2 ise fiyat tutarsız uyarısı)
       - sample_count: kaç satış baz alındı
+      - cached: True ise cache'den döndü
+      - cache_age_seconds: cache ne kadar yaşlı
     """
     isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
+
+    # ── Cache check ──────────────────────────────────────────────────────────
+    lock = _get_cache_lock()
+    if not force_refresh:
+        async with lock:
+            entry = _RESPONSE_CACHE.get(isbn_clean)
+            if entry:
+                age = time.time() - entry["ts"]
+                if age < _CACHE_TTL_SECONDS:
+                    cached_data = dict(entry["data"])
+                    cached_data["cached"] = True
+                    cached_data["cache_age_seconds"] = int(age)
+                    return cached_data
+
+    # ── Fresh fetch ───────────────────────────────────────────────────────────
     results: Dict[str, Any] = {"isbn": isbn_clean, "new": None, "used": None}
 
     async with httpx.AsyncClient(timeout=40) as client:
         for cond_key in ["new", "used"]:
             try:
                 # Paralel fetch: 30d, 100d, 365d, 1095d (3yıl)
-                import asyncio
                 d30_task  = asyncio.create_task(_fetch_sold_in_range(client, isbn_clean, 30,   cond_key))
                 d100_task = asyncio.create_task(_fetch_sold_in_range(client, isbn_clean, 100,  cond_key))
                 d365_task = asyncio.create_task(_fetch_sold_in_range(client, isbn_clean, 365,  cond_key))
@@ -200,17 +244,13 @@ async def get_suggested_price(
                 )
 
                 # Exception'ları boş listeye çevir
-                def safe(v):
+                def safe(v: Any) -> List[float]:
                     return v if isinstance(v, list) else []
 
                 v30  = safe(vals_30)
                 v100 = safe(vals_100)
                 v365 = safe(vals_365)
                 v3y  = safe(vals_3y)
-
-                # 100d ve 365d içinde 30d da var, overlap'i çıkar
-                # (Finding API tarih aralığı non-overlapping kullanmak daha doğru
-                #  ama API limit nedeniyle cumulative kullanıyoruz — avg zaten yeterli)
 
                 avg_30  = _avg(v30)
                 avg_100 = _avg(v100)
@@ -246,4 +286,10 @@ async def get_suggested_price(
                 logger.exception("suggested_price error isbn=%s cond=%s", isbn_clean, cond_key)
                 results[cond_key] = {"error": str(e)}
 
-    return {"ok": True, **results}
+    response = {"ok": True, **results, "cached": False, "cache_age_seconds": 0}
+
+    # ── Store in cache ────────────────────────────────────────────────────────
+    async with lock:
+        _RESPONSE_CACHE[isbn_clean] = {"ts": time.time(), "data": response}
+
+    return response

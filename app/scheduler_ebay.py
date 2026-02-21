@@ -10,25 +10,12 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from app.core.config import get_settings
 from app import isbn_store
-from app.rules_store import get_rule
+from app.rules_store import get_rule, effective_limit
 from app import run_state
 from app.ebay_client import browse_search_isbn, finding_sold_stats, normalize_condition, item_total_price
 from app.alert_store import check_and_mark
 
 logger = logging.getLogger("trackerbundle.scheduler_ebay")
-
-
-def _build_limits() -> Dict[str, float]:
-    s = get_settings()
-    base = float(s.default_good_limit)
-    return {
-        "brand_new": float(s.default_new_limit),
-        "like_new": round(base * 1.15, 2),
-        "very_good": round(base * 1.10, 2),
-        "good": base,
-        "acceptable": round(base * 0.80, 2),
-        "used_all": base,
-    }
 
 
 async def _send_telegram(message: str) -> bool:
@@ -123,10 +110,11 @@ async def _fetch(client: httpx.AsyncClient, isbn: str) -> List[Dict[str, Any]]:
     return await browse_search_isbn(client, isbn, limit=50)
 
 
-def _pick_candidates_under_limit(items: List[Dict[str, Any]], limits: Dict[str, float]) -> List[Tuple[Dict[str, Any], str, float, float]]:
+def _pick_candidates_under_limit(items: List[Dict[str, Any]], isbn: str) -> List[Tuple[Dict[str, Any], str, float, float]]:
     """
     Returns list of (item, bucket, total, limit) only for items where total <= limit.
-    Sort by total ascending, keep only 2 cheapest.
+    Uses per-ISBN price overrides from rules_store (effective_limit), falling back to
+    global defaults.  Sort by total ascending, keep only 2 cheapest.
     """
     s = get_settings()
     out: List[Tuple[Dict[str, Any], str, float, float]] = []
@@ -137,7 +125,8 @@ def _pick_candidates_under_limit(items: List[Dict[str, Any]], limits: Dict[str, 
             continue
 
         bucket = normalize_condition(it.get("condition"), it.get("conditionId"))
-        limit = float(limits.get(bucket, limits["good"]))
+        lim_info = effective_limit(isbn, bucket)
+        limit = float(lim_info["limit"])
 
         if "BEST_OFFER" in (it.get("buyingOptions") or []):
             limit = float(round(limit * float(s.make_offer_multiplier), 2))
@@ -158,7 +147,7 @@ async def _fetch_sold(client: httpx.AsyncClient, isbn: str) -> Dict[str, Any]:
         return {}
 
 
-async def _check_isbn(client: httpx.AsyncClient, isbn: str, limits: Dict[str, float]) -> int:
+async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
     sent = 0
     try:
         items = await _fetch(client, isbn)
@@ -166,7 +155,7 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str, limits: Dict[str, fl
         logger.exception("ISBN %s fetch failed", isbn)
         return 0
 
-    candidates = _pick_candidates_under_limit(items, limits)
+    candidates = _pick_candidates_under_limit(items, isbn)
     logger.info("isbn=%s candidates=%d (limit altı)", isbn, len(candidates))
 
     if not candidates:
@@ -202,20 +191,12 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str, limits: Dict[str, fl
 
 
 def _interval_for_isbn(isbn: str) -> int:
-    """Per-ISBN interval. Missing/None -> default tick."""
+    """Per-ISBN interval from rules_store, falling back to global sched_tick_seconds."""
     r = get_rule(isbn)
-    if not r:
-        return int(get_settings().sched_tick_seconds)
-    sec = getattr(r, "interval_seconds", None)
-    if sec is None:
-        return int(get_settings().sched_tick_seconds)
-    try:
-        sec_i = int(sec)
-        if sec_i <= 0:
-            return int(get_settings().sched_tick_seconds)
-        return sec_i
-    except Exception:
-        return int(get_settings().sched_tick_seconds)
+    sec = r.interval_seconds
+    if isinstance(sec, int) and sec > 0:
+        return sec
+    return int(get_settings().sched_tick_seconds)
 
 
 async def run_once() -> None:
@@ -236,10 +217,9 @@ async def run_once() -> None:
     if not due_isbns:
         return
 
-    limits = _build_limits()
     async with httpx.AsyncClient(timeout=20) as client:
         for isbn in due_isbns:
-            sent = await _check_isbn(client, isbn, limits)
+            sent = await _check_isbn(client, isbn)
             run_state.set_last_run(isbn, ts=now)
             logger.info("isbn=%s alerts=%d", isbn, sent)
 
