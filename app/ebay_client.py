@@ -130,19 +130,81 @@ def normalize_condition(cond_text: Optional[str], condition_id: Optional[int | s
     return "used_all"
 
 
+# ── ISBN-10 ↔ ISBN-13 dönüşüm ──────────────────────────────────────────────────
+
+def isbn10_to_isbn13(isbn10: str) -> Optional[str]:
+    """ISBN-10'u ISBN-13'e (978-prefix) çevir. Checksum doğrulanır."""
+    s = isbn10.replace("-", "").replace(" ", "").upper().strip()
+    if len(s) != 10:
+        return None
+    raw = "978" + s[:9]
+    total = sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(raw))
+    check = (10 - (total % 10)) % 10
+    return raw + str(check)
+
+
+def isbn13_to_isbn10(isbn13: str) -> Optional[str]:
+    """978-prefix'li ISBN-13'ü ISBN-10'a çevir. Checksum doğrulanır."""
+    s = isbn13.replace("-", "").replace(" ", "").strip()
+    if len(s) != 13 or not s.startswith("978"):
+        return None
+    body = s[3:12]
+    total = sum(int(c) * (10 - i) for i, c in enumerate(body))
+    check = (11 - (total % 11)) % 11
+    check_char = "X" if check == 10 else str(check)
+    return body + check_char
+
+
+def isbn_variants(isbn: str) -> List[str]:
+    """ISBN için tüm normalize formları döndür (13 varsa 10'unu da ekle, vs.)."""
+    s = isbn.replace("-", "").replace(" ", "").upper().strip()
+    variants = {s}
+    if len(s) == 13:
+        alt = isbn13_to_isbn10(s)
+        if alt:
+            variants.add(alt)
+    elif len(s) == 10:
+        alt = isbn10_to_isbn13(s)
+        if alt:
+            variants.add(alt)
+    return list(variants)
+
+
+# ── Shipping-aware total price ────────────────────────────────────────────────
+
 def item_total_price(item: Dict[str, Any]) -> Optional[float]:
+    """
+    Item toplam fiyatı = fiyat + shipping.
+    Shipping 'Calculated' veya bilinmiyorsa None döner → item SKIP edilir.
+    """
     try:
         price = float(item.get("price", {}).get("value", 0) or 0)
     except (TypeError, ValueError):
         return None
 
+    opts = item.get("shippingOptions")
+
+    # shippingOptions field tamamen yok → bilinmiyor, skip
+    if opts is None:
+        return None
+
     ship = 0.0
-    try:
-        opts = item.get("shippingOptions") or []
-        if opts:
-            ship = float(opts[0].get("shippingCost", {}).get("value", 0) or 0)
-    except Exception:
-        ship = 0.0
+    if opts:
+        opt = opts[0]
+        # "Calculated" veya "LOCAL_PICKUP" → kesin maliyet yok, skip
+        ship_type = (opt.get("shippingServiceType") or opt.get("shippingType") or "").upper()
+        if "CALCULATED" in ship_type or "LOCAL" in ship_type or "PICKUP" in ship_type:
+            return None
+
+        cost_val = opt.get("shippingCost", {}).get("value")
+        if cost_val is None:
+            # Opsiyon var ama fiyat yok → bilinmiyor, skip
+            return None
+        try:
+            ship = float(cost_val)
+        except (TypeError, ValueError):
+            return None
+    # opts == [] → free shipping (Browse API davranışı)
 
     return round(price + ship, 2)
 
@@ -285,18 +347,87 @@ async def finding_sold_stats(
     return result
 
 
-async def browse_search_isbn(client: httpx.AsyncClient, isbn: str, limit: int = 50) -> List[Dict[str, Any]]:
-    token = await get_app_token(client)
-    isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
+def _isbn_strict_match(item: Dict[str, Any], variants: List[str]) -> bool:
+    """
+    Item'ın gerçekten bu ISBN'e ait olduğunu doğrula.
+    1. GTIN/ISBN alanlarına bak (en güvenilir)
+    2. Title'da herhangi bir variant geçiyor mu kontrol et (post-filter fallback)
+    """
+    # Browse API bazen epid/gtin alanlarını döndürür
+    for field in ("gtin", "epid", "isbn"):
+        val = (item.get(field) or "").replace("-", "").replace(" ", "").upper()
+        if val and any(val == v for v in variants):
+            return True
 
+    # additionalImages, localizedAspects gibi alanlarda da olabilir
+    for aspect in (item.get("localizedAspects") or []):
+        if aspect.get("name", "").upper() in ("ISBN", "EAN", "GTIN"):
+            aval = (aspect.get("value") or "").replace("-", "").replace(" ", "").upper()
+            if any(aval == v for v in variants):
+                return True
+
+    # Son çare: title substring (en az bir variant geçmeli)
+    title = item.get("title", "").replace("-", "").replace(" ", "").upper()
+    return any(v in title for v in variants)
+
+
+async def _browse_fetch_one(
+    client: httpx.AsyncClient,
+    token: str,
+    q: str,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """Tek bir q= sorgusu çeker."""
     params = {
-        "q": isbn_clean,
+        "q": q,
         "limit": str(max(1, min(limit, 200))),
         "category_ids": BOOKS_CATEGORY_ID,
         "filter": "buyingOptions:{FIXED_PRICE}",
     }
     headers = {"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"}
-
     r = await client.get(f"{_browse_base()}/item_summary/search", params=params, headers=headers, timeout=20)
     r.raise_for_status()
     return r.json().get("itemSummaries") or []
+
+
+async def browse_search_isbn(
+    client: httpx.AsyncClient,
+    isbn: str,
+    limit: int = 50,
+    strict: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    ISBN için eBay Browse API araması.
+
+    - Her iki ISBN formatını (10 ve 13 haneli) ayrı sorgularla çeker, birleştirir.
+    - strict=True ise title veya GTIN'de ISBN bulunamayan item'ları filtreler (edition noise engellenir).
+    - Shipping bilinmiyorsa item downstream'de None döner (item_total_price).
+    """
+    token = await get_app_token(client)
+    isbn_clean = isbn.replace("-", "").replace(" ", "").upper().strip()
+    variants = isbn_variants(isbn_clean)
+
+    # Her variant için paralel sorgu (10 + 13 hane)
+    tasks = [_browse_fetch_one(client, token, v, limit) for v in variants]
+    results_per_query = await asyncio.gather(*tasks, return_exceptions=True)
+
+    seen_ids: set[str] = set()
+    combined: List[Dict[str, Any]] = []
+    for res in results_per_query:
+        if isinstance(res, Exception):
+            logger.warning("browse_search ISBN variant error: %s", res)
+            continue
+        for item in res:
+            item_id = item.get("itemId") or ""
+            if item_id and item_id not in seen_ids:
+                seen_ids.add(item_id)
+                combined.append(item)
+
+    if strict:
+        before = len(combined)
+        combined = [it for it in combined if _isbn_strict_match(it, variants)]
+        filtered = before - len(combined)
+        if filtered:
+            logger.info("isbn=%s strict filter dropped %d/%d items", isbn_clean, filtered, before)
+
+    return combined

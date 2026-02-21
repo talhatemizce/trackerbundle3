@@ -16,9 +16,37 @@ def _clean(isbn: str) -> str:
     return re.sub(r"[^0-9X]", "", (isbn or "").upper()).strip()
 
 
+def _check_isbn10(s: str) -> bool:
+    """ISBN-10 modulo-11 check digit validation."""
+    if len(s) != 10:
+        return False
+    total = 0
+    for i, c in enumerate(s):
+        if i == 9 and c == "X":
+            val = 10
+        elif c.isdigit():
+            val = int(c)
+        else:
+            return False
+        total += (10 - i) * val
+    return total % 11 == 0
+
+
+def _check_isbn13(s: str) -> bool:
+    """ISBN-13 (EAN-13) check digit validation."""
+    if len(s) != 13 or not s.isdigit():
+        return False
+    total = sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(s))
+    return total % 10 == 0
+
+
 def _validate(isbn: str) -> bool:
     s = _clean(isbn)
-    return len(s) in (10, 13)
+    if len(s) == 10:
+        return _check_isbn10(s)
+    if len(s) == 13:
+        return _check_isbn13(s)
+    return False
 
 
 def _coerce(data: Any) -> Dict[str, List[str]]:
@@ -42,7 +70,7 @@ def list_isbns() -> List[str]:
         s: set[str] = set()
         for x in data["isbns"]:
             cx = _clean(x)
-            if len(cx) in (10, 13):
+            if _validate(cx):
                 s.add(cx)
 
         out = sorted(s)

@@ -40,6 +40,26 @@ _DEFAULT_INTERVAL = int(os.getenv("SCHED_TICK_SECONDS", "300"))
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
+_PRICE_MIN = 0.01
+_PRICE_MAX = 9_999.0
+_INTERVAL_MIN = 60        # 1 dakika
+_INTERVAL_MAX = 86_400 * 30  # 30 gün
+
+
+def _valid_price(value: float, name: str) -> float:
+    v = float(value)
+    if not (_PRICE_MIN <= v <= _PRICE_MAX):
+        raise ValueError(f"{name} must be between {_PRICE_MIN} and {_PRICE_MAX}, got {v}")
+    return round(v, 2)
+
+
+def _valid_interval(value: int, name: str = "interval_seconds") -> int:
+    v = int(value)
+    if not (_INTERVAL_MIN <= v <= _INTERVAL_MAX):
+        raise ValueError(f"{name} must be between {_INTERVAL_MIN}s and {_INTERVAL_MAX}s, got {v}")
+    return v
+
+
 def _normalize_isbn(isbn: str) -> str:
     return (isbn or "").replace("-", "").replace(" ", "").strip()
 
@@ -187,11 +207,12 @@ def get_rule(isbn: str) -> SimpleNamespace:
 
 def set_interval(isbn: str, interval_seconds: int) -> None:
     """Persist per-ISBN scan interval in overrides."""
+    validated = _valid_interval(interval_seconds)
     rules = load_rules()
     rules.setdefault("overrides", {})
     normalized = _normalize_isbn(isbn)
     rules["overrides"].setdefault(normalized, {})
-    rules["overrides"][normalized]["interval_seconds"] = int(interval_seconds)
+    rules["overrides"][normalized]["interval_seconds"] = validated
     save_rules(rules)
 
 
@@ -221,17 +242,17 @@ def set_defaults(
     rules.setdefault("overrides", {})
 
     if new_max is not None:
-        rules["defaults"]["new_max"] = float(new_max)
+        rules["defaults"]["new_max"] = _valid_price(new_max, "new_max")
     if used_all_max is not None:
-        rules["defaults"]["used_all_max"] = float(used_all_max)
+        rules["defaults"]["used_all_max"] = _valid_price(used_all_max, "used_all_max")
     if interval_seconds is not None:
-        rules["defaults"]["interval_seconds"] = int(interval_seconds)
+        rules["defaults"]["interval_seconds"] = _valid_interval(interval_seconds)
 
     if used_conditions:
         for cond, price in used_conditions.items():
             norm_cond = _normalize_condition(cond)
             if norm_cond in USED_CONDITIONS:
-                rules["defaults"]["used"][norm_cond] = float(price)
+                rules["defaults"]["used"][norm_cond] = _valid_price(price, f"used.{norm_cond}")
 
     save_rules(rules)
     return rules["defaults"]
@@ -252,16 +273,16 @@ def set_isbn_override(
     override = rules["overrides"][normalized_isbn]
 
     if new_max is not None:
-        override["new_max"] = float(new_max)
+        override["new_max"] = _valid_price(new_max, "new_max")
     if used_all_max is not None:
-        override["used_all_max"] = float(used_all_max)
+        override["used_all_max"] = _valid_price(used_all_max, "used_all_max")
 
     if used_conditions:
         override.setdefault("used", {})
         for cond, price in used_conditions.items():
             norm_cond = _normalize_condition(cond)
             if norm_cond in USED_CONDITIONS:
-                override["used"][norm_cond] = float(price)
+                override["used"][norm_cond] = _valid_price(price, f"used.{norm_cond}")
 
     save_rules(rules)
     return override

@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.ebay_client import get_app_token, normalize_condition, BOOKS_CATEGORY_ID
 from app.core.config import get_settings
+from app import finding_cache
 
 logger = logging.getLogger("trackerbundle.suggested_price")
 router = APIRouter(tags=["suggested-price"])
@@ -44,8 +45,15 @@ async def _fetch_sold_in_range(
 ) -> List[float]:
     """
     eBay Finding API ile son `days_back` gündeki satış toplamlarını döndürür.
+    Disk cache kullanır (30d/100d → 2h TTL, 365d/3yr → 24h TTL).
     Tarih: endTimeFrom = (now - days_back), endTimeTo = now
     """
+    # ── Cache kontrol ────────────────────────────────────────────────────────
+    cached = finding_cache.get_cached(isbn, days_back, condition_filter)
+    if cached is not None:
+        logger.debug("Finding cache HIT isbn=%s days=%d cond=%s", isbn, days_back, condition_filter)
+        return cached
+
     s = get_settings()
     app_id = s.ebay_app_id or s.ebay_client_id
     if not app_id:
@@ -127,6 +135,8 @@ async def _fetch_sold_in_range(
     except Exception:
         logger.exception("Finding parse error isbn=%s days=%d", isbn, days_back)
 
+    # ── Cache'e yaz (boş sonuç bile cache'lenir → rate limit baskısını azaltır) ──
+    finding_cache.set_cached(isbn, days_back, condition_filter, totals)
     return totals
 
 
@@ -177,12 +187,13 @@ def _calc_suggested(
 
 @router.get("/suggested-price/{isbn}/cache/clear", tags=["suggested-price"])
 async def clear_suggested_price_cache(isbn: str):
-    """Cache'i bu ISBN için sıfırla (panel'den manuel tetikleme)."""
+    """In-memory + disk cache'i bu ISBN için sıfırla (panel'den manuel tetikleme)."""
     isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
     async with _get_cache_lock():
         removed = isbn_clean in _RESPONSE_CACHE
         _RESPONSE_CACHE.pop(isbn_clean, None)
-    return {"ok": True, "isbn": isbn_clean, "removed": removed}
+    disk_removed = finding_cache.clear_isbn(isbn_clean)
+    return {"ok": True, "isbn": isbn_clean, "removed": removed, "disk_entries_removed": disk_removed}
 
 
 @router.get("/suggested-price/{isbn}")

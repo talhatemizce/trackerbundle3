@@ -1,10 +1,16 @@
-import os, json, re
+import os, json, re, time, logging
 import httpx
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
+logger = logging.getLogger("trackerbundle.bot")
+
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN")
 API_BASE  = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+
+# Kullanıcı "➕ Add ISBN" dedikten sonra cevap beklenebilecek maksimum süre (saniye).
+# Bu süre geçince awaiting state otomatik sıfırlanır.
+AWAITING_TIMEOUT = int(os.getenv("BOT_AWAITING_TIMEOUT", "300"))
 
 MENU = ReplyKeyboardMarkup(
     [
@@ -99,90 +105,214 @@ def format_decision_short(text: str) -> str:
     )
 
 async def api(method: str, path: str, **kwargs):
-    async with httpx.AsyncClient(timeout=25) as c:
-        return await c.request(method, f"{API_BASE}{path}", **kwargs)
+    """API çağrısı — ağ/timeout hatası olursa HTTPStatusError benzeri obje döndürür."""
+    try:
+        async with httpx.AsyncClient(timeout=25) as c:
+            return await c.request(method, f"{API_BASE}{path}", **kwargs)
+    except httpx.TimeoutException:
+        logger.warning("API timeout: %s %s", method, path)
+        raise RuntimeError("API timeout — sunucu cevap vermedi (>25s)")
+    except httpx.ConnectError:
+        logger.warning("API connect error: %s %s", method, path)
+        raise RuntimeError("API'ye bağlanılamadı — servis çalışıyor mu?")
+    except httpx.RequestError as exc:
+        logger.warning("API request error: %s %s — %s", method, path, exc)
+        raise RuntimeError(f"Ağ hatası: {exc}")
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("awaiting", None)
     await update.message.reply_text("TrackerBundle Bot ✅\nMenüden seç.", reply_markup=MENU, parse_mode=None)
 
+async def _reply(update: Update, text: str) -> None:
+    """Ortak reply helper — metin çok uzunsa kesiyor."""
+    await update.message.reply_text(text[:4000], reply_markup=MENU, parse_mode=None)
+
+
+async def _api_reply(update: Update, method: str, path: str, **kwargs) -> bool:
+    """API çağır, sonucu kullanıcıya gönder. Hata olursa Türkçe mesaj ver. True = başarı."""
+    try:
+        r = await api(method, path, **kwargs)
+        text = f"HTTP {r.status_code}\n{pretty(r.text)}"
+        await _reply(update, text)
+        return r.status_code < 400
+    except RuntimeError as e:
+        await _reply(update, f"⚠️ {e}")
+        return False
+
+
 async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    r = await api("GET", "/health")
-    await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", reply_markup=MENU, parse_mode=None)
+    await _api_reply(update, "GET", "/health")
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    r = await api("GET", "/status")
-    await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", reply_markup=MENU, parse_mode=None)
+    await _api_reply(update, "GET", "/status")
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    r = await api("GET", "/isbns")
-    await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", reply_markup=MENU, parse_mode=None)
+    await _api_reply(update, "GET", "/isbns")
+
+def _awaiting_expired(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Awaiting durumu AWAITING_TIMEOUT saniyeden eskiyse True döner ve state'i temizler."""
+    ts = context.user_data.get("awaiting_ts", 0)
+    if ts and (time.time() - ts) > AWAITING_TIMEOUT:
+        context.user_data.clear()
+        return True
+    return False
+
+
+def _set_awaiting(context: ContextTypes.DEFAULT_TYPE, state: str) -> None:
+    context.user_data["awaiting"] = state
+    context.user_data["awaiting_ts"] = time.time()
+
+
+def _parse_price(txt: str):
+    """'50', '50.5', boş → None (varsayılan kullanılacak). Hatalı → ValueError."""
+    txt = txt.strip()
+    if not txt or txt.lower() in ("skip", "-", "default", "varsayılan", "v"):
+        return None
+    try:
+        v = float(txt)
+        if v <= 0 or v > 9999:
+            raise ValueError(f"Fiyat 0-9999 arasında olmalı, aldım: {v}")
+        return round(v, 2)
+    except ValueError:
+        raise ValueError(f"Geçersiz fiyat: '{txt}'. Sayı gir (örn: 45) ya da boş bırak.")
+
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (update.message.text or "").strip()
 
-    # Menü
+    # ── İptal komutu ────────────────────────────────────────────────────────
+    if txt.lower() in ("/cancel", "iptal", "cancel"):
+        context.user_data.clear()
+        return await _reply(update, "İşlem iptal edildi.")
+
+    # ── Menü butonları ───────────────────────────────────────────────────────
     if txt == "📌 Status":
+        context.user_data.clear()
         return await cmd_status(update, context)
     if txt == "🩺 Health":
+        context.user_data.clear()
         return await cmd_health(update, context)
     if txt == "📚 List":
+        context.user_data.clear()
         return await cmd_list(update, context)
 
-    # Add / Del / Decide akışı
+    # ── Awaiting timeout kontrolü ────────────────────────────────────────────
+    if _awaiting_expired(context):
+        await _reply(update, "⏰ İşlem zaman aşımına uğradı, sıfırlandı. Tekrar seç.")
+
+    # ── Yeni akış başlatma ───────────────────────────────────────────────────
     if txt == "➕ Add ISBN":
-        context.user_data["awaiting"] = "add"
-        return await update.message.reply_text("ISBN gönder (10 veya 13 hane) (örn: 9780132350884):", reply_markup=MENU, parse_mode=None)
+        _set_awaiting(context, "add_isbn")
+        return await _reply(update, "ISBN gönder (10 veya 13 hane, tire kabul edilir):\nörn: 9780132350884 ya da 978-0132350884")
 
     if txt == "🗑️ Del ISBN":
-        context.user_data["awaiting"] = "del"
-        return await update.message.reply_text("Silinecek ISBN gönder (10 veya 13 hane):", reply_markup=MENU, parse_mode=None)
+        _set_awaiting(context, "del")
+        return await _reply(update, "Silinecek ISBN gönder:")
 
     if txt == "🧠 Decide ASIN":
-        context.user_data["awaiting"] = "decide"
-        return await update.message.reply_text("ASIN gönder (10 karakter) (örn: 0821551051):", reply_markup=MENU, parse_mode=None)
+        _set_awaiting(context, "decide")
+        return await _reply(update, "ASIN gönder (10 karakter):")
 
     awaiting = context.user_data.get("awaiting")
 
-    if awaiting == "add":
-        isbn = clean_isbn(txt)
-        if not is_valid_isbn(isbn):
-            return await update.message.reply_text("ISBN yanlış. 10 veya 13 hane olmalı.", reply_markup=MENU, parse_mode=None)
-        r = await api("POST", "/isbns", json={"isbn": isbn})
-        context.user_data.pop("awaiting", None)
-        return await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", reply_markup=MENU, parse_mode=None)
-
+    # ── Del ISBN ─────────────────────────────────────────────────────────────
     if awaiting == "del":
         isbn = clean_isbn(txt)
         if not is_valid_isbn(isbn):
-            return await update.message.reply_text("ISBN yanlış. 10 veya 13 hane olmalı.", reply_markup=MENU, parse_mode=None)
-        r = await api("DELETE", f"/isbns/{isbn}")
-        context.user_data.pop("awaiting", None)
-        return await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", reply_markup=MENU, parse_mode=None)
+            return await _reply(update, "ISBN yanlış. 10 veya 13 hane olmalı.")
+        try:
+            r = await api("DELETE", f"/isbns/{isbn}")
+            context.user_data.clear()
+            return await _reply(update, f"HTTP {r.status_code}\n{pretty(r.text)}")
+        except RuntimeError as e:
+            context.user_data.clear()
+            return await _reply(update, f"⚠️ {e}")
 
+    # ── Decide ASIN ──────────────────────────────────────────────────────────
     if awaiting == "decide":
         asin = clean_asin(txt)
         if not is_valid_asin(asin):
-            return await update.message.reply_text("ASIN yanlış. 10 karakter olmalı.", reply_markup=MENU, parse_mode=None)
-        r = await api("GET", "/decide/asin", params={"asin": asin})
-        context.user_data.pop("awaiting", None)
-        if r.status_code == 200:
-            return await update.message.reply_text(format_decision_short(r.text), reply_markup=MENU, parse_mode=None)
-        return await update.message.reply_text(f"HTTP {r.status_code}\n{pretty(r.text)}", reply_markup=MENU, parse_mode=None)
+            return await _reply(update, "ASIN yanlış. 10 karakter olmalı.")
+        try:
+            r = await api("GET", "/decide/asin", params={"asin": asin})
+            context.user_data.clear()
+            if r.status_code == 200:
+                return await _reply(update, format_decision_short(r.text))
+            return await _reply(update, f"HTTP {r.status_code}\n{pretty(r.text)}")
+        except RuntimeError as e:
+            context.user_data.clear()
+            return await _reply(update, f"⚠️ {e}")
 
-    # Diğer her şey
-    await update.message.reply_text(
-        "Menüden seç: Status / Health / List / Add ISBN / Del ISBN / Decide ASIN",
-        reply_markup=MENU,
-        parse_mode=None,
-    )
+    # ── Add ISBN — çok adımlı akış ──────────────────────────────────────────
+    # Adım 1: ISBN al
+    if awaiting == "add_isbn":
+        isbn = clean_isbn(txt)
+        if not is_valid_isbn(isbn):
+            return await _reply(update, "ISBN yanlış (checksum hatası veya uzunluk). Tekrar gönder.")
+        context.user_data["pending_isbn"] = isbn
+        _set_awaiting(context, "add_new_max")
+        return await _reply(update, f"ISBN: {isbn} ✓\n\nNew (sıfır/yeni) için max fiyat? (USD)\nörnk: 50 — boş bırakırsan varsayılan (50) kullanılır.")
+
+    # Adım 2: New max
+    if awaiting == "add_new_max":
+        try:
+            new_max = _parse_price(txt)
+        except ValueError as e:
+            return await _reply(update, f"⚠️ {e}")
+        context.user_data["pending_new_max"] = new_max
+        _set_awaiting(context, "add_used_max")
+        default_hint = "30" if new_max is None else str(int(round(new_max * 0.60)))
+        return await _reply(update, f"Used (kullanılmış) Good kondisyon için max fiyat? (USD)\nörnk: {default_hint} — boş bırakırsan varsayılan (30) kullanılır.\n\nNot: Acceptable={int(round(float(default_hint)*0.8))}, VeryGood={int(round(float(default_hint)*1.1))}, LikeNew={int(round(float(default_hint)*1.15))} otomatik türetilir.")
+
+    # Adım 3: Used max → kaydet
+    if awaiting == "add_used_max":
+        try:
+            used_max = _parse_price(txt)
+        except ValueError as e:
+            return await _reply(update, f"⚠️ {e}")
+
+        isbn = context.user_data.get("pending_isbn")
+        new_max = context.user_data.get("pending_new_max")
+        context.user_data.clear()
+
+        if not isbn:
+            return await _reply(update, "⚠️ Oturum hatası, tekrar başlat.")
+
+        try:
+            # 1. ISBN watchlist'e ekle
+            r = await api("POST", "/isbns", json={"isbn": isbn})
+            added = r.status_code == 200 and r.json().get("added", False)
+
+            # 2. Limitleri kaydet (varsa)
+            if new_max is not None or used_max is not None:
+                await api("PUT", f"/rules/{isbn}/override", json={
+                    "new_max": new_max,
+                    "used_all_max": used_max,
+                })
+
+            lines = [f"✅ ISBN {isbn} {'eklendi' if added else 'zaten vardı'}"]
+            if new_max is not None:
+                lines.append(f"  New max: ${new_max}")
+            if used_max is not None:
+                lines.append(f"  Used max: ${used_max}")
+            lines.append("(Limitler güncellendi)" if (new_max or used_max) else "(Varsayılan limitler)")
+            return await _reply(update, "\n".join(lines))
+
+        except RuntimeError as e:
+            return await _reply(update, f"⚠️ {e}")
+
+    # ── Bilinmiyor ───────────────────────────────────────────────────────────
+    await _reply(update, "Menüden seç: Status / Health / List / Add ISBN / Del ISBN / Decide ASIN\n(/cancel ile işlem iptal edilir)")
+
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not BOT_TOKEN:
         raise SystemExit("TELEGRAM_BOT_TOKEN not set")
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("cancel", lambda u, c: handle_text(u, c)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling(close_loop=False)
 

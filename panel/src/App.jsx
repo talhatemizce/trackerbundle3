@@ -1,10 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
 
 const BASE = import.meta.env.PROD ? "" : "/api";
-const req = async (path, opts = {}) => {
-  const r = await fetch(BASE + path, { headers: { "Content-Type": "application/json" }, ...opts });
-  if (!r.ok) { const e = await r.json().catch(() => ({ detail: r.statusText })); throw new Error(e.detail || "API error"); }
-  return r.json();
+const req = async (path, opts = {}, timeoutMs = 15000) => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(BASE + path, { headers: { "Content-Type": "application/json" }, signal: ctrl.signal, ...opts });
+    if (!r.ok) { const e = await r.json().catch(() => ({ detail: r.statusText })); throw new Error(e.detail || "API error"); }
+    return r.json();
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("İstek zaman aşımına uğradı (>15s)");
+    throw e;
+  } finally { clearTimeout(timer); }
 };
 
 const DARK = {
@@ -76,7 +83,7 @@ function PeriodBar({ label, avg, count, weight, C, isBase }) {
   );
 }
 
-function SuggestedCard({ data, label, color, C }) {
+function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
   if (!data) return null;
   if (data.error) return <div style={{padding:12,background:C.surface2,borderRadius:8,color:C.red,fontSize:11}}>{label}: {data.error}</div>;
 
@@ -95,6 +102,11 @@ function SuggestedCard({ data, label, color, C }) {
           <div style={{fontSize:10,color:C.muted3,marginTop:4}}>avg_30d×0.25 + avg_100d×0.25 + avg_365d×0.50</div>
         </div>
         <div style={{textAlign:"right"}}>
+          {cached && (
+            <div style={{background:"rgba(96,165,250,.1)",border:`1px solid ${C.blue}`,borderRadius:6,padding:"3px 8px",fontSize:10,color:C.blue,marginBottom:6}}>
+              ⚡ cache · {cacheAge ? `${Math.round(cacheAge/60)}dk önce` : ""}
+            </div>
+          )}
           {data.volatile_warning && (
             <div style={{background:"rgba(251,146,60,.12)",border:`1px solid ${C.orange}`,borderRadius:6,padding:"4px 10px",fontSize:10,color:C.orange,marginBottom:6}}>
               ⚠️ Fiyat tutarsız
@@ -142,13 +154,14 @@ function PricingTab({ isbns, C, push }) {
     {label:"Acceptable",color:C.orange,limit:limits.acceptable},
   ];
 
-  const fetchSuggested = async () => {
+  const fetchSuggested = async (forceRefresh = false) => {
     if (!selected) return;
     setLoading(true);
     try {
-      const res = await req(`/suggested-price/${selected}`);
+      const url = `/suggested-price/${selected}${forceRefresh ? "?force_refresh=true" : ""}`;
+      const res = await req(url, {}, 60000);
       setSuggestedResult(res);
-      push("Sorgulama tamamlandı", "success");
+      push(res.cached ? `Cache'den döndü (${Math.round(res.cache_age_seconds/60)}dk önce)` : "Sorgulama tamamlandı", "success");
     } catch(e) {
       push("Hata: " + e.message, "error");
     } finally { setLoading(false); }
@@ -196,13 +209,18 @@ function PricingTab({ isbns, C, push }) {
           <select className="inp" value={selected} onChange={e=>setSelected(e.target.value)} style={{flex:1,maxWidth:300}}>
             {isbns.length===0 ? <option value="">Önce watchlist'e ISBN ekle</option> : isbns.map(isbn=><option key={isbn} value={isbn}>{isbn}</option>)}
           </select>
-          <button className="add-btn" onClick={fetchSuggested} disabled={loading||!selected}>
+          <button className="add-btn" onClick={()=>fetchSuggested(false)} disabled={loading||!selected}>
             {loading ? (
               <span style={{display:"flex",alignItems:"center",gap:6}}>
                 <span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Hesaplanıyor…
               </span>
             ) : "📊 Hesapla"}
           </button>
+          {suggestedResult && !loading && (
+            <button onClick={()=>fetchSuggested(true)} disabled={loading} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:"pointer"}} title="Cache'i atla, fresh veri çek">
+              ↻ Yenile
+            </button>
+          )}
         </div>
 
         {loading && (
@@ -216,8 +234,8 @@ function PricingTab({ isbns, C, push }) {
           <div>
             <div style={{fontSize:11,color:C.muted,marginBottom:12}}>ISBN: {suggestedResult.isbn}</div>
             <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-              <SuggestedCard data={suggestedResult.used} label="Kullanılmış" color={C.accent} C={C}/>
-              <SuggestedCard data={suggestedResult.new}  label="Yeni"        color={C.green}  C={C}/>
+              <SuggestedCard data={suggestedResult.used} label="Kullanılmış" color={C.accent} C={C} cached={suggestedResult.cached} cacheAge={suggestedResult.cache_age_seconds}/>
+              <SuggestedCard data={suggestedResult.new}  label="Yeni"        color={C.green}  C={C} cached={suggestedResult.cached} cacheAge={suggestedResult.cache_age_seconds}/>
             </div>
 
             {/* Limit karşılaştırması */}
@@ -283,6 +301,10 @@ export default function App() {
   const [newInterval, setNewInterval] = useState("4h");
   const [editing, setEditing] = useState(null);
   const [editVal, setEditVal] = useState("");
+  const [isbnFilter, setIsbnFilter] = useState("");
+  const [csvText, setCsvText] = useState("");
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -327,6 +349,18 @@ export default function App() {
   const clearAlerts = async (isbn) => {
     try { await req(`/alerts/${isbn}`,{method:"DELETE"}); setAlertStats(p=>{const r={...p};delete r[isbn];return r;}); push("Alertler temizlendi","success"); }
     catch(e){ push("Temizlenemedi: "+e.message,"error"); }
+  };
+
+  const importCsv = async () => {
+    if (!csvText.trim()) return;
+    setCsvImporting(true);
+    try {
+      const res = await req("/isbns/import", {method:"POST", body:JSON.stringify({csv_text: csvText})});
+      push(`${res.added} ISBN eklendi, ${res.skipped_duplicates} zaten vardı`, "success");
+      if (res.errors?.length) push(`Uyarı: ${res.errors[0]}`, "error");
+      setCsvText(""); setShowCsvImport(false); load();
+    } catch(e){ push("Import hatası: "+e.message,"error"); }
+    finally { setCsvImporting(false); }
   };
 
   const totalAlerts=Object.values(alertStats).reduce((s,n)=>s+n,0);
@@ -408,20 +442,65 @@ export default function App() {
 
             {tab==="watchlist"&&(
               <div>
-                <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:20,marginBottom:24}}>
+                {/* Tek ISBN Ekle */}
+                <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:20,marginBottom:16}}>
                   <ST C={C} style={{marginBottom:14}}>ISBN Ekle</ST>
                   <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                    <input className="inp" placeholder="ISBN (örn: 9780132350884)" value={newIsbn} onChange={e=>setNewIsbn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addIsbn()} style={{...inp,width:240}}/>
+                    <input className="inp" placeholder="ISBN (örn: 9780132350884 veya 978-0132350884)" value={newIsbn} onChange={e=>setNewIsbn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addIsbn()} style={{...inp,width:260}}/>
                     <select className="inp" value={newInterval} onChange={e=>setNewInterval(e.target.value)} style={{...inp,width:130}}>
                       {[["30m","30 dk"],["1h","1 saat"],["4h","4 saat"],["8h","8 saat"],["12h","12 saat"],["24h","1 gün"],["48h","2 gün"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}
                     </select>
                     <button className="add-btn" onClick={addIsbn} disabled={!newIsbn.trim()}>+ Ekle</button>
+                    <button onClick={()=>setShowCsvImport(p=>!p)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:"pointer"}}>
+                      {showCsvImport ? "▲ CSV Kapat" : "📄 Toplu CSV"}
+                    </button>
                   </div>
                 </div>
-                <ST C={C}>{isbns.length} ISBN izleniyor</ST>
+
+                {/* CSV Toplu Import */}
+                {showCsvImport && (
+                  <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:20,marginBottom:16}}>
+                    <ST C={C} style={{marginBottom:8}}>Toplu CSV Import</ST>
+                    <div style={{fontSize:10,color:C.muted3,marginBottom:10,lineHeight:1.7}}>
+                      Başlık satırı zorunlu: <code style={{color:C.accent}}>isbn,new_max,used_all_max,interval</code><br/>
+                      Örn: <code style={{color:C.muted}}>9780132350884,50,30,4h</code> (boş hücreler varsayılan kullanır)
+                    </div>
+                    <textarea
+                      className="inp"
+                      rows={6}
+                      placeholder={"isbn,new_max,used_all_max,interval\n9780132350884,50,30,4h\n9780974769431,,25,"}
+                      value={csvText}
+                      onChange={e=>setCsvText(e.target.value)}
+                      style={{...inp,width:"100%",fontFamily:"var(--mono)",fontSize:11,resize:"vertical"}}
+                    />
+                    <div style={{display:"flex",gap:10,marginTop:10}}>
+                      <button className="add-btn" onClick={importCsv} disabled={csvImporting||!csvText.trim()}>
+                        {csvImporting ? "İçe aktarılıyor…" : "⬆ İçe Aktar"}
+                      </button>
+                      <button onClick={()=>{setCsvText("");setShowCsvImport(false);}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"6px 14px",cursor:"pointer"}}>İptal</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Arama + Filtre */}
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                  <input
+                    className="inp"
+                    placeholder="ISBN ara…"
+                    value={isbnFilter}
+                    onChange={e=>setIsbnFilter(e.target.value)}
+                    style={{...inp,width:220,fontSize:12}}
+                  />
+                  <span style={{fontSize:11,color:C.muted}}>
+                    {isbnFilter ? `${isbns.filter(i=>i.includes(isbnFilter.replace(/-/g,""))).length} / ${isbns.length}` : `${isbns.length} ISBN izleniyor`}
+                  </span>
+                </div>
+
                 {isbns.length===0
                   ? <div style={{border:`1px dashed ${C.border}`,borderRadius:8,padding:32,textAlign:"center",color:C.muted3,fontSize:12}}>Henüz ISBN yok.</div>
-                  : isbns.map(isbn=>(
+                  : isbns
+                      .filter(isbn => !isbnFilter || isbn.includes(isbnFilter.replace(/-/g,"")))
+                      .map(isbn=>(
                     <div key={isbn} className="row-item" style={{...row}}>
                       <div style={{flex:1}}>
                         <div style={{display:"flex",alignItems:"center",gap:8}}>
