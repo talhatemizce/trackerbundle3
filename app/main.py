@@ -1,6 +1,6 @@
 import httpx
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from app.rules_endpoints import router as rules_router
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
@@ -10,6 +10,7 @@ from typing import Optional, Dict
 
 from app.rules_store import load_rules, set_defaults, set_isbn_override, delete_isbn_override, effective_limit
 from app.decision_endpoints import router as decision_router
+from app.suggested_price import get_suggested_price, bust_cache as _bust_price_cache
 
 app = FastAPI(title="TrackerBundle Panel API", version="0.1.0")
 app.include_router(decision_router)
@@ -133,3 +134,41 @@ async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
         return r.json()
     except Exception:
         return {"upstream_status": r.status_code, "body": r.text}
+
+
+# ── Suggested price ────────────────────────────────────────────────────────────
+# GET  /suggested-price/{isbn}           — compute / return cached suggestion
+# DELETE /suggested-price/{isbn}/cache   — bust cache for fresh fetch
+
+@app.get("/suggested-price/{isbn}", tags=["Pricing"])
+async def suggested_price(isbn: str):
+    """
+    Returns weighted suggested buy price based on eBay sold stats.
+
+    Response fields:
+      isbn             : str
+      suggested        : int | null        weighted avg (30d×0.25 + 100d×0.25 + 365d×0.50)
+      avgs             : {30d, 100d, 365d, 3yr}  int | null
+      trend            : "up" | "down" | "flat" | "unknown"
+      delta_pct        : float | null      (avg_30d - avg_365d) / avg_365d × 100
+      price_shift_flag : bool              true when |delta_pct| > 40%
+      fetched_at       : ISO-8601 UTC
+
+    Cache TTL:
+      30d / 100d  → refreshed every SGPRICE_SHORT_TTL_HOURS (default 2h)
+      365d / 3yr  → refreshed every SGPRICE_LONG_TTL_HOURS  (default 6h)
+    """
+    try:
+        result = await get_suggested_price(isbn.strip())
+        return {"ok": True, **result}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.delete("/suggested-price/{isbn}/cache", tags=["Pricing"])
+async def bust_suggested_price_cache(isbn: str):
+    """Invalidate cached sold-stats for an ISBN so next GET fetches fresh data."""
+    await _bust_price_cache(isbn.strip())
+    return {"ok": True, "isbn": isbn, "msg": "cache cleared"}

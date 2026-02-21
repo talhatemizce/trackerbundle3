@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import time
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 import base64
@@ -15,6 +16,20 @@ EBAY_ENV = os.getenv("EBAY_ENV", "production").strip().lower()
 EBAY_CLIENT_ID = os.getenv("EBAY_CLIENT_ID", "").strip()
 EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET", "").strip()
 EBAY_APP_ID = os.getenv("EBAY_APP_ID", "").strip()  # Finding API
+
+# ── Token concurrency guard (architecture rule §2) ────────────────────────────
+# asyncio.Lock prevents duplicate refreshes when multiple coroutines call
+# get_app_token concurrently. Memory cache avoids file I/O on every request.
+_token_refresh_lock: Optional[asyncio.Lock] = None
+_token_memory_cache: Optional[Dict[str, Any]] = None  # {"access_token":..., "expires_at":...}
+
+
+def _get_token_lock() -> asyncio.Lock:
+    """Lazy-init so the lock belongs to the running event loop."""
+    global _token_refresh_lock
+    if _token_refresh_lock is None:
+        _token_refresh_lock = asyncio.Lock()
+    return _token_refresh_lock
 
 def _browse_base() -> str:
     # production: https://api.ebay.com , sandbox: https://api.sandbox.ebay.com
@@ -46,39 +61,58 @@ def _token_valid(tok: Dict[str, Any]) -> bool:
         return False
 
 async def get_app_token(client: httpx.AsyncClient) -> str:
-    tok = _read_token()
-    if tok and _token_valid(tok):
-        return str(tok["access_token"])
+    """
+    Returns a valid eBay OAuth2 app token.
+    Checks memory cache first, then disk file, refreshes only when needed.
+    Protected by asyncio.Lock so concurrent coroutines don't double-refresh.
+    """
+    global _token_memory_cache
 
-    if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
-        raise RuntimeError("EBAY_CLIENT_ID/EBAY_CLIENT_SECRET not set")
+    lock = _get_token_lock()
+    async with lock:
+        # 1. Check in-memory cache (fastest path, no disk I/O)
+        if _token_memory_cache and _token_valid(_token_memory_cache):
+            return str(_token_memory_cache["access_token"])
 
-    auth = base64.b64encode(f"{EBAY_CLIENT_ID}:{EBAY_CLIENT_SECRET}".encode("utf-8")).decode("ascii")
+        # 2. Check on-disk cache
+        tok = _read_token()
+        if tok and _token_valid(tok):
+            _token_memory_cache = tok
+            return str(tok["access_token"])
 
-    url = f"{_browse_base()}/identity/v1/oauth2/token"
-    headers = {
-        "Authorization": f"Basic {auth}",
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-    data = {
-        "grant_type": "client_credentials",
-        "scope": "https://api.ebay.com/oauth/api_scope",
-    }
+        # 3. Refresh from eBay
+        if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
+            raise RuntimeError("EBAY_CLIENT_ID/EBAY_CLIENT_SECRET not set")
 
-    r = await client.post(url, headers=headers, data=data)
-    r.raise_for_status()
-    j = r.json()
-    access_token = j.get("access_token")
-    expires_in = int(j.get("expires_in", 0))  # seconds
-    if not access_token or expires_in <= 0:
-        raise RuntimeError("Could not obtain eBay app token")
+        auth = base64.b64encode(
+            f"{EBAY_CLIENT_ID}:{EBAY_CLIENT_SECRET}".encode("utf-8")
+        ).decode("ascii")
 
-    tok = {
-        "access_token": access_token,
-        "expires_at": int(time.time()) + expires_in,
-    }
-    _write_token(tok)
-    return access_token
+        url = f"{_browse_base()}/identity/v1/oauth2/token"
+        headers = {
+            "Authorization": f"Basic {auth}",
+            "Content-Type":  "application/x-www-form-urlencoded",
+        }
+        data = {
+            "grant_type": "client_credentials",
+            "scope":      "https://api.ebay.com/oauth/api_scope",
+        }
+
+        r = await client.post(url, headers=headers, data=data)
+        r.raise_for_status()
+        j = r.json()
+        access_token = j.get("access_token")
+        expires_in   = int(j.get("expires_in", 0))
+        if not access_token or expires_in <= 0:
+            raise RuntimeError("Could not obtain eBay app token")
+
+        tok = {
+            "access_token": access_token,
+            "expires_at":   int(time.time()) + expires_in,
+        }
+        _write_token(tok)
+        _token_memory_cache = tok
+        return access_token
 
 async def browse_get_item(client: httpx.AsyncClient, item_id: str) -> Dict[str, Any]:
     """
