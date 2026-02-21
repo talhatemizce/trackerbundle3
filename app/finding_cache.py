@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
@@ -32,10 +33,30 @@ _SHORT_TTL = int(float(os.getenv("SGPRICE_SHORT_TTL_HOURS", "24")) * 3600)
 # 365d/3yr: ayda 1 kez yenile (30 gün) — tarihsel data nadiren değişir
 _LONG_TTL  = int(float(os.getenv("SGPRICE_LONG_TTL_DAYS",  "30")) * 86400)
 
-# Cache dosyaları bu dizine yazılır
-_CACHE_DIR = Path(os.getenv("FINDING_CACHE_DIR", "")) or (
-    Path(__file__).resolve().parent / "data" / "finding_cache"
-)
+
+@lru_cache(maxsize=1)
+def _cache_dir() -> Path:
+    """
+    Cache dizinini döndür (lazy, ilk çağrıda hesaplanır).
+
+    Öncelik sırası:
+    1. FINDING_cache_dir() env var (override)
+    2. get_settings().resolved_data_dir() / "finding_cache"  (proje data/ klasörü)
+    3. Fallback: proje kök / data / finding_cache
+    """
+    override = os.getenv("FINDING_cache_dir()", "").strip()
+    if override:
+        p = Path(override)
+    else:
+        try:
+            from app.core.config import get_settings
+            p = get_settings().resolved_data_dir() / "finding_cache"
+        except Exception:
+            # Config henüz yüklenemedi → fallback (import sırasında güvenli)
+            p = Path(__file__).resolve().parent.parent / "data" / "finding_cache"
+    p.mkdir(parents=True, exist_ok=True)
+    logger.debug("Finding cache dir: %s", p)
+    return p
 
 
 def _ttl_for(days_back: int) -> int:
@@ -46,8 +67,7 @@ def _ttl_for(days_back: int) -> int:
 def _cache_path(isbn: str, days_back: int, condition: Optional[str]) -> Path:
     key = f"{isbn}:{days_back}:{condition or 'all'}"
     h = hashlib.sha1(key.encode()).hexdigest()[:16]
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return _CACHE_DIR / f"{h}.json"
+    return _cache_dir() / f"{h}.json"
 
 
 def get_cached(isbn: str, days_back: int, condition: Optional[str]) -> Optional[List[float]]:
@@ -116,7 +136,7 @@ def clear_isbn(isbn: str) -> int:
     """Bir ISBN'e ait tüm cache dosyalarını sil. Silinen sayı döner."""
     removed = 0
     try:
-        for path in _CACHE_DIR.glob("*.json"):
+        for path in _cache_dir().glob("*.json"):
             try:
                 entry = json.loads(path.read_text(encoding="utf-8"))
                 if entry.get("isbn") == isbn:
@@ -132,7 +152,7 @@ def clear_isbn(isbn: str) -> int:
 def cache_stats() -> dict:
     """Toplam cache dosya sayısı ve toplam boyut (bytes)."""
     try:
-        files = list(_CACHE_DIR.glob("*.json"))
+        files = list(_cache_dir().glob("*.json"))
         total_bytes = sum(f.stat().st_size for f in files if f.exists())
         return {"files": len(files), "bytes": total_bytes}
     except Exception:

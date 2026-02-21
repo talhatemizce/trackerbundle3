@@ -301,6 +301,77 @@ async def amazon_prices_telegram(asin: str):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+# ---- eBay debug (raw Browse results inspection) ----
+from app.ebay_client import (
+    browse_search_isbn as _browse_search,
+    isbn_variants as _isbn_variants,
+    item_total_price as _item_total_price,
+    normalize_condition as _norm_cond,
+    _isbn_strict_match as _strict_match,
+)
+
+
+@app.get("/ebay/debug/search")
+async def ebay_debug_search(isbn: str, limit: int = 5, strict: bool = False):
+    """
+    Ham Browse API sonuçlarını döndürür — field keşfi ve filtre testi için.
+
+    Parametreler:
+      isbn  : 10 veya 13 haneli ISBN (zorunlu)
+      limit : kaç item dönülsün (max 20, varsayılan 5)
+      strict: strict_filter debug'ı için (varsayılan False)
+
+    Dönüş:
+      variants        : test edilen ISBN varyantları
+      raw_count       : eBay'den dönen toplam item sayısı
+      items           : her item için ham fields + hesaplanan değerler
+    """
+    limit = max(1, min(limit, 20))
+    variants = _isbn_variants(isbn)
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        raw_items = await _browse_search(client, isbn, limit=limit, strict=strict)
+
+    items_out = []
+    for it in raw_items:
+        total = _item_total_price(it)
+        bucket = _norm_cond(it.get("condition"), it.get("conditionId"))
+        strict_pass = _strict_match(it, variants)
+
+        items_out.append({
+            # Kimlik / başlık
+            "itemId": it.get("itemId"),
+            "title": it.get("title"),
+            # Fiyat
+            "price": it.get("price"),
+            "shippingOptions": it.get("shippingOptions"),
+            "computed_total": total,
+            # Condition
+            "condition": it.get("condition"),
+            "conditionId": it.get("conditionId"),
+            "condition_bucket": bucket,
+            # ISBN tanımlama (strict filter için)
+            "gtin": it.get("gtin"),
+            "epid": it.get("epid"),
+            "isbn_field": it.get("isbn"),
+            "localizedAspects": it.get("localizedAspects"),  # search'te genellikle None
+            "strict_filter_pass": strict_pass,
+            # Alım seçenekleri
+            "buyingOptions": it.get("buyingOptions"),
+            # Debug: tüm keys
+            "_all_keys": sorted(it.keys()),
+        })
+
+    return {
+        "ok": True,
+        "isbn": isbn,
+        "variants": variants,
+        "raw_count": len(raw_items),
+        "strict": strict,
+        "items": items_out,
+    }
+
+
 # ---- SP-API offers proxy (legacy, nginx panel_api) ----
 @app.get("/offers/top2")
 async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):

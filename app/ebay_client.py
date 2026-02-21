@@ -394,13 +394,17 @@ async def browse_search_isbn(
     client: httpx.AsyncClient,
     isbn: str,
     limit: int = 50,
-    strict: bool = True,
+    strict: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     ISBN için eBay Browse API araması.
 
     - Her iki ISBN formatını (10 ve 13 haneli) ayrı sorgularla çeker, birleştirir.
-    - strict=True ise title veya GTIN'de ISBN bulunamayan item'ları filtreler (edition noise engellenir).
+    - strict=False (default): Sonuçlara güven; q=ISBN zaten ISBN'e özel arama yapar.
+    - strict=True: GTIN/localizedAspects/title'da ISBN bulunamayan item'ları düşürür.
+      UYARI: Browse item_summary/search, GTIN ve localizedAspects döndürmez (item
+      detail call gerektirir). Title'da ISBN nadiren yazar. Bu mod pratikte tüm
+      sonuçları düşürebilir — yalnızca özel test senaryolarında kullan.
     - Shipping bilinmiyorsa item downstream'de None döner (item_total_price).
     """
     token = await get_app_token(client)
