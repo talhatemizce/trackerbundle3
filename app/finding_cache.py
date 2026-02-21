@@ -3,13 +3,16 @@ Finding API tiered disk cache.
 
 eBay Finding API rate limit'ini aşmak için period bazlı disk cache.
 TTL katmanları:
-  - 30d ve 100d period  → SHORT_TTL_HOURS  (varsayılan 2 saat)
-  - 365d ve 1095d period → LONG_TTL_HOURS  (varsayılan 24 saat)
+  - 30d ve 100d period  → SHORT_TTL_HOURS  (varsayılan 24 saat — günlük kota)
+  - 365d ve 1095d period → LONG_TTL_DAYS   (varsayılan 30 gün — aylık yenileme)
 
 Cache anahtarı: isbn_clean + period_days + condition_filter
 JSON formatı: {"ts": float, "totals": [float, ...]}
 
 Thread/process güvenli: atomic write (tmp + os.replace).
+
+Rate-limit fallback: get_stale() TTL'i yok sayarak cache'den okur.
+Eğer eBay rate-limit verirse stale cache kullanılır, hiç cache yoksa boş liste döner.
 """
 from __future__ import annotations
 
@@ -24,8 +27,10 @@ from typing import List, Optional
 logger = logging.getLogger("trackerbundle.finding_cache")
 
 # ── Ayarlar ───────────────────────────────────────────────────────────────────
-_SHORT_TTL = int(float(os.getenv("SGPRICE_SHORT_TTL_HOURS", "2")) * 3600)   # 30d/100d
-_LONG_TTL  = int(float(os.getenv("SGPRICE_LONG_TTL_HOURS", "24")) * 3600)   # 365d/3yr
+# 30d/100d: günde 1 kez yenile (24 saat) — rate-limit baskısını minimize eder
+_SHORT_TTL = int(float(os.getenv("SGPRICE_SHORT_TTL_HOURS", "24")) * 3600)
+# 365d/3yr: ayda 1 kez yenile (30 gün) — tarihsel data nadiren değişir
+_LONG_TTL  = int(float(os.getenv("SGPRICE_LONG_TTL_DAYS",  "30")) * 86400)
 
 # Cache dosyaları bu dizine yazılır
 _CACHE_DIR = Path(os.getenv("FINDING_CACHE_DIR", "")) or (
@@ -63,6 +68,30 @@ def get_cached(isbn: str, days_back: int, condition: Optional[str]) -> Optional[
         return totals
     except Exception:
         logger.debug("Cache read error isbn=%s days=%d", isbn, days_back)
+        return None
+
+
+def get_stale(isbn: str, days_back: int, condition: Optional[str]) -> Optional[List[float]]:
+    """
+    TTL'i yok sayarak cache'den okur.
+    Rate-limit hatası geldiğinde stale data döndürmek için kullanılır.
+    Cache dosyası yoksa None döner.
+    """
+    path = _cache_path(isbn, days_back, condition)
+    try:
+        if not path.exists():
+            return None
+        raw = path.read_text(encoding="utf-8")
+        entry = json.loads(raw)
+        totals = entry.get("totals") or []
+        age = time.time() - float(entry.get("ts", 0))
+        logger.debug(
+            "Stale cache READ isbn=%s days=%d cond=%s count=%d age=%.0fs",
+            isbn, days_back, condition, len(totals), age,
+        )
+        return totals
+    except Exception:
+        logger.debug("Stale cache read error isbn=%s days=%d", isbn, days_back)
         return None
 
 

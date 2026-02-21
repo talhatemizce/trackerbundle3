@@ -96,12 +96,32 @@ async def _fetch_sold_in_range(
             params[f"itemFilter({filter_idx}).value({i})"] = v
         filter_idx += 1
 
-    r = await client.get(
-        "https://svcs.ebay.com/services/search/FindingService/v1",
-        params=params,
-        timeout=25,
-    )
-    r.raise_for_status()
+    try:
+        r = await client.get(
+            "https://svcs.ebay.com/services/search/FindingService/v1",
+            params=params,
+            timeout=25,
+        )
+        r.raise_for_status()
+    except Exception as api_err:
+        # ── Rate-limit / network hatası: stale cache'e düş ──────────────────
+        logger.warning(
+            "Finding API error isbn=%s days=%d cond=%s err=%s — trying stale cache",
+            isbn, days_back, condition_filter, api_err,
+        )
+        stale = finding_cache.get_stale(isbn, days_back, condition_filter)
+        if stale is not None:
+            logger.info(
+                "Stale cache fallback OK isbn=%s days=%d cond=%s count=%d",
+                isbn, days_back, condition_filter, len(stale),
+            )
+            return stale
+        logger.warning(
+            "No stale cache for isbn=%s days=%d cond=%s — returning empty",
+            isbn, days_back, condition_filter,
+        )
+        return []
+
     j = r.json()
 
     totals: List[float] = []

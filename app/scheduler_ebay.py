@@ -199,7 +199,12 @@ def _interval_for_isbn(isbn: str) -> int:
     return int(get_settings().sched_tick_seconds)
 
 
-async def run_once() -> None:
+async def run_once(force_all: bool = False) -> None:
+    """
+    Scan due ISBNs once.
+    force_all=True → tüm ISBN'ler due sayılır (interval kontrolü atlanır).
+    Bu, servis başlangıcında ilk taramanın anında yapılması için kullanılır.
+    """
     s = get_settings()
     isbns = isbn_store.list_isbns()
     if not isbns:
@@ -209,11 +214,18 @@ async def run_once() -> None:
     now = time.time()
     due_isbns: List[str] = []
     for isbn in isbns:
-        interval = _interval_for_isbn(isbn)
-        if run_state.due(isbn, interval, now=now):
+        if force_all:
             due_isbns.append(isbn)
+        else:
+            interval = _interval_for_isbn(isbn)
+            if run_state.due(isbn, interval, now=now):
+                due_isbns.append(isbn)
 
-    logger.info("Checking %d/%d ISBN (due)", len(due_isbns), len(isbns))
+    if force_all:
+        logger.info("Startup scan: forcing %d/%d ISBN (force_all=True)", len(due_isbns), len(isbns))
+    else:
+        logger.info("Checking %d/%d ISBN (due)", len(due_isbns), len(isbns))
+
     if not due_isbns:
         return
 
@@ -230,11 +242,15 @@ async def main() -> None:
     tick = int(s.sched_tick_seconds)
     logger.info("Scheduler start tick=%ss ebay_env=%s", tick, s.ebay_env)
 
+    # İlk çalıştırmada tüm ISBN'leri tara (last_run ne olursa olsun)
+    first_run = True
     while True:
         try:
-            await run_once()
+            await run_once(force_all=first_run)
+            first_run = False
         except Exception:
             logger.exception("run_once crash")
+            first_run = False
         await asyncio.sleep(tick)
 
 
