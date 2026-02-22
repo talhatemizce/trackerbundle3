@@ -127,7 +127,7 @@ def _pick_candidates_under_limit(items: List[Dict[str, Any]], isbn: str) -> List
         item_id = (it.get("itemId") or "?")[:20]
         price_val = (it.get("price") or {}).get("value", "?")
         ship_opts = it.get("shippingOptions") or []
-        ship_type = ((ship_opts[0].get("shippingServiceType") or ship_opts[0].get("shippingType") or "?") if ship_opts else "none").upper()
+        ship_type = ((ship_opts[0].get("shippingCostType") or ship_opts[0].get("shippingServiceType") or ship_opts[0].get("shippingType") or "?") if ship_opts else "none").upper()
         cid = it.get("conditionId", "?")
 
         total = item_total_price(it, calc_ship_est=calc_est)

@@ -198,8 +198,9 @@ def item_total_price(
     ship_estimated = False
     if opts:
         opt = opts[0]
-        ship_type = (opt.get("shippingServiceType") or opt.get("shippingType") or "").upper()
-        if "CALCULATED" in ship_type or "LOCAL" in ship_type or "PICKUP" in ship_type:
+        # Browse API uses shippingCostType; shippingServiceType/shippingType are fallbacks
+        ship_type = (opt.get("shippingCostType") or opt.get("shippingServiceType") or opt.get("shippingType") or "").upper()
+        if "CALCULATED" in ship_type or "LOCAL" in ship_type or "PICKUP" in ship_type or "NOT_SPECIFIED" in ship_type:
             if calc_ship_est and calc_ship_est > 0:
                 ship = calc_ship_est
                 ship_estimated = True
