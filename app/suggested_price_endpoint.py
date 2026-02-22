@@ -67,6 +67,16 @@ async def _fetch_sold_in_range(
         logger.debug("Finding cache HIT isbn=%s days=%d cond=%s", isbn, days_back, condition_filter)
         return cached
 
+    # ── Rate-limit backoff ────────────────────────────────────────────────────
+    if finding_cache.is_rate_limited():
+        st = finding_cache.rate_limit_status()
+        logger.warning(
+            "Finding API backoff aktif (%.0fs kaldı) — stale cache dönülüyor isbn=%s",
+            st.get("remaining_seconds", 0), isbn,
+        )
+        stale = finding_cache.get_stale(isbn, days_back, condition_filter)
+        return stale if stale is not None else []
+
     s = get_settings()
     app_id = s.ebay_app_id or s.ebay_client_id
     if not app_id:
@@ -127,10 +137,16 @@ async def _fetch_sold_in_range(
             timeout=25,
         )
         if not r.is_success:
+            body_text = r.text[:600]
             logger.error(
                 "Finding API HTTP %d isbn=%s days=%d cond=%s body=%s",
-                r.status_code, isbn, days_back, condition_filter, r.text[:600],
+                r.status_code, isbn, days_back, condition_filter, body_text,
             )
+            # Rate-limit tespiti → 23h backoff başlat
+            if r.status_code in (429, 500) and any(
+                kw in body_text for kw in ("RateLimiter", "exceeded operation", "rate limit", "quota")
+            ):
+                finding_cache.set_rate_limited(23)
         r.raise_for_status()
     except Exception as api_err:
         # ── Rate-limit / network hatası: stale cache'e düş ──────────────────

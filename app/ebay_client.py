@@ -9,6 +9,7 @@ import httpx
 
 from app.core.config import get_settings
 from app.core.json_store import read_json, write_json
+import app.finding_cache as finding_cache
 
 logger = logging.getLogger("trackerbundle.ebay_client")
 
@@ -172,10 +173,15 @@ def isbn_variants(isbn: str) -> List[str]:
 
 # ── Shipping-aware total price ────────────────────────────────────────────────
 
-def item_total_price(item: Dict[str, Any]) -> Optional[float]:
+def item_total_price(
+    item: Dict[str, Any],
+    calc_ship_est: Optional[float] = None,
+) -> Optional[float]:
     """
     Item toplam fiyatı = fiyat + shipping.
-    Shipping 'Calculated' veya bilinmiyorsa None döner → item SKIP edilir.
+    CALCULATED/LOCAL/PICKUP shipping:
+      - calc_ship_est > 0 → heuristic kullan (env CALCULATED_SHIP_ESTIMATE_USD)
+      - calc_ship_est == 0 veya None → None döner, item skip edilir
     """
     try:
         price = float(item.get("price", {}).get("value", 0) or 0)
@@ -189,24 +195,32 @@ def item_total_price(item: Dict[str, Any]) -> Optional[float]:
         return None
 
     ship = 0.0
+    ship_estimated = False
     if opts:
         opt = opts[0]
-        # "Calculated" veya "LOCAL_PICKUP" → kesin maliyet yok, skip
         ship_type = (opt.get("shippingServiceType") or opt.get("shippingType") or "").upper()
         if "CALCULATED" in ship_type or "LOCAL" in ship_type or "PICKUP" in ship_type:
-            return None
+            if calc_ship_est and calc_ship_est > 0:
+                ship = calc_ship_est
+                ship_estimated = True
+            else:
+                return None
 
-        cost_val = opt.get("shippingCost", {}).get("value")
-        if cost_val is None:
-            # Opsiyon var ama fiyat yok → bilinmiyor, skip
-            return None
-        try:
-            ship = float(cost_val)
-        except (TypeError, ValueError):
-            return None
-    # opts == [] → free shipping (Browse API davranışı)
+        if not ship_estimated:
+            cost_val = opt.get("shippingCost", {}).get("value")
+            if cost_val is None:
+                return None
+            try:
+                ship = float(cost_val)
+            except (TypeError, ValueError):
+                return None
+    # opts == [] → free shipping
 
-    return round(price + ship, 2)
+    result = round(price + ship, 2)
+    # Annotate for caller awareness
+    if ship_estimated:
+        item["_shipping_estimated"] = True
+    return result
 
 
 def _safe_int(x: Any) -> Optional[int]:
@@ -237,6 +251,12 @@ async def finding_sold_stats(
             "by_condition": {bucket: {"count": N, "avg": M, "min": X, "max": Y}},
         }
     """
+    # ── Backoff kontrolü ─────────────────────────────────────────────────────
+    if finding_cache.is_rate_limited():
+        st = finding_cache.rate_limit_status()
+        logger.warning("Finding API backoff aktif (%.0fs kaldı) — finding_sold_stats skip", st.get("remaining_seconds", 0))
+        raise RuntimeError("Finding API rate-limited (backoff aktif)")
+
     s = get_settings()
     app_id = s.ebay_app_id or s.ebay_client_id
     if not app_id:
@@ -277,10 +297,12 @@ async def finding_sold_stats(
         timeout=20,
     )
     if not r.is_success:
-        logger.error(
-            "Finding API HTTP %d isbn=%s body=%s",
-            r.status_code, isbn_clean, r.text[:600],
-        )
+        body_text = r.text[:600]
+        logger.error("Finding API HTTP %d isbn=%s body=%s", r.status_code, isbn_clean, body_text)
+        if r.status_code in (429, 500) and any(
+            kw in body_text for kw in ("RateLimiter", "exceeded operation", "rate limit", "quota")
+        ):
+            finding_cache.set_rate_limited(23)
         r.raise_for_status()
     j = r.json()
 

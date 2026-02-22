@@ -51,6 +51,7 @@ def _format_message(
     limit: float,
     sold_avg: int | None = None,
     sold_count: int | None = None,
+    ship_estimated: bool = False,
 ) -> str:
     title = (item.get("title") or "")[:90]
     url = item.get("itemWebUrl") or ""
@@ -79,10 +80,11 @@ def _format_message(
 
     offer_str = " · Make Offer" if make_offer else ""
 
+    ship_note = " · est. ship" if ship_estimated else ""
     msg = (
         f"📚 <b>{title}</b>\n"
         f"ISBN: {isbn} | {label}{offer_str}\n"
-        f"Total: <b>${total_i}</b> (limit ${limit_i}) → {decision_str}\n"
+        f"Total: <b>${total_i}</b>{ship_note} (limit ${limit_i}) → {decision_str}\n"
     )
 
     # Sold stats satırı
@@ -120,8 +122,9 @@ def _pick_candidates_under_limit(items: List[Dict[str, Any]], isbn: str) -> List
     s = get_settings()
     out: List[Tuple[Dict[str, Any], str, float, float]] = []
 
+    calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else None
     for it in items:
-        total = item_total_price(it)
+        total = item_total_price(it, calc_ship_est=calc_est)
         if total is None:
             continue
 
@@ -223,7 +226,7 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
         avg_for_msg = cond_stats.get("avg") if cond_stats.get("avg") is not None else sold_overall_avg
         count_for_msg = cond_stats.get("count") if cond_stats.get("count") is not None else sold_overall_count
 
-        msg = _format_message(isbn, it, bucket, total, limit, sold_avg=avg_for_msg, sold_count=count_for_msg)
+        msg = _format_message(isbn, it, bucket, total, limit, sold_avg=avg_for_msg, sold_count=count_for_msg, ship_estimated=it.get("_shipping_estimated", False))
         ok = await _send_telegram(msg)
         if ok:
             sent += 1

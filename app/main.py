@@ -404,6 +404,21 @@ async def ebay_debug_finding(isbn: str, days: int = 30, condition: Optional[str]
     }
 
 
+@app.get("/ebay/debug/finding-backoff")
+async def ebay_debug_finding_backoff_status():
+    """Finding API rate-limit backoff durumu."""
+    from app import finding_cache as _fc
+    return _fc.rate_limit_status()
+
+
+@app.delete("/ebay/debug/finding-backoff")
+async def ebay_debug_finding_backoff_clear():
+    """Finding API rate-limit backoff'u temizle."""
+    from app import finding_cache as _fc
+    _fc.clear_rate_limit()
+    return {"cleared": True, "status": _fc.rate_limit_status()}
+
+
 @app.get("/ebay/debug/search")
 async def ebay_debug_search(isbn: str, limit: int = 5, strict: bool = False):
     """

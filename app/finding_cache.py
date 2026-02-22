@@ -157,3 +157,56 @@ def cache_stats() -> dict:
         return {"files": len(files), "bytes": total_bytes}
     except Exception:
         return {"files": 0, "bytes": 0}
+
+
+# ── Finding API Rate-limit Backoff State ──────────────────────────────────────
+
+def _backoff_path() -> Path:
+    from app.core.config import get_settings
+    return get_settings().resolved_data_dir() / "finding_backoff.json"
+
+
+def set_rate_limited(hours: float = 23.0) -> None:
+    """Rate-limit algılandığında çağır: backoff_until = now + hours."""
+    backoff_until = time.time() + hours * 3600
+    try:
+        p = _backoff_path()
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"backoff_until": backoff_until}), encoding="utf-8")
+        os.replace(tmp, p)
+        logger.warning("Finding API backoff set: %.1f saat", hours)
+    except Exception as e:
+        logger.error("set_rate_limited write error: %s", e)
+
+
+def is_rate_limited() -> bool:
+    """True ise Finding API çağrısı yapma."""
+    try:
+        data = json.loads(_backoff_path().read_text(encoding="utf-8"))
+        return time.time() < data.get("backoff_until", 0)
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
+def rate_limit_status() -> dict:
+    """Backoff durumunu döner: {active, backoff_until_epoch, remaining_seconds}."""
+    try:
+        data = json.loads(_backoff_path().read_text(encoding="utf-8"))
+        bu = data.get("backoff_until", 0)
+        remaining = max(0.0, bu - time.time())
+        return {"active": remaining > 0, "backoff_until_epoch": bu, "remaining_seconds": remaining}
+    except FileNotFoundError:
+        return {"active": False, "backoff_until_epoch": 0, "remaining_seconds": 0}
+    except Exception as e:
+        return {"active": False, "error": str(e)}
+
+
+def clear_rate_limit() -> None:
+    """Backoff'u manuel sıfırla."""
+    try:
+        _backoff_path().unlink(missing_ok=True)
+        logger.info("Finding API backoff cleared")
+    except Exception as e:
+        logger.error("clear_rate_limit error: %s", e)

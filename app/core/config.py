@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # Make offer ceiling multiplier
     make_offer_multiplier: float = Field(default=1.30, validation_alias="MAKE_OFFER_MULTIPLIER")
 
+    # CALCULATED shipping heuristic (0.0 = disabled → item skipped)
+    calculated_ship_estimate_usd: float = Field(default=0.0, validation_alias="CALCULATED_SHIP_ESTIMATE_USD")
+
     def resolved_data_dir(self) -> Path:
         p = self.data_dir
         p.mkdir(parents=True, exist_ok=True)
