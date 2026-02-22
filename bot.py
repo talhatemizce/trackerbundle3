@@ -149,6 +149,21 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _api_reply(update, "GET", "/isbns")
 
+async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/add [isbn] — wizard başlatır; ISBN inline verilmişse doğrudan fiyat adımına geçer."""
+    context.user_data.clear()
+    arg = clean_isbn((context.args or [""])[0]) if context.args else ""
+    if arg and is_valid_isbn(arg):
+        context.user_data["pending_isbn"] = arg
+        _set_awaiting(context, "add_new_max")
+        return await _reply(
+            update,
+            f"ISBN: {arg} ✓\n\nNew (yeni/sıfır) max fiyat? (USD)\nörn: 50 — boş bırakırsan varsayılan kullanılır.",
+        )
+    # ISBN verilmemişse normal akış
+    _set_awaiting(context, "add_isbn")
+    await _reply(update, "ISBN gönder (10 veya 13 hane):\nörn: 9780132350884")
+
 def _awaiting_expired(context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Awaiting durumu AWAITING_TIMEOUT saniyeden eskiyse True döner ve state'i temizler."""
     ts = context.user_data.get("awaiting_ts", 0)
@@ -312,6 +327,7 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("cancel", lambda u, c: handle_text(u, c)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling(close_loop=False)

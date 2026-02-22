@@ -103,10 +103,10 @@ def normalize_condition(cond_text: Optional[str], condition_id: Optional[int | s
             2000: "like_new",
             2500: "like_new",
             2750: "like_new",
-            3000: "very_good",
-            4000: "good",
-            5000: "acceptable",
-            6000: "acceptable",
+            3000: "like_new",    # eBay Books: Like New
+            4000: "very_good",   # eBay Books: Very Good
+            5000: "good",        # eBay Books: Good
+            6000: "acceptable",  # eBay Books: Acceptable
         }
         if cid in mapping:
             return mapping[cid]
