@@ -124,19 +124,39 @@ def _pick_candidates_under_limit(items: List[Dict[str, Any]], isbn: str) -> List
 
     calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else None
     for it in items:
+        item_id = (it.get("itemId") or "?")[:20]
+        price_val = (it.get("price") or {}).get("value", "?")
+        ship_opts = it.get("shippingOptions") or []
+        ship_type = ((ship_opts[0].get("shippingServiceType") or ship_opts[0].get("shippingType") or "?") if ship_opts else "none").upper()
+        cid = it.get("conditionId", "?")
+
         total = item_total_price(it, calc_ship_est=calc_est)
         if total is None:
+            logger.info(
+                "EXCLUDE isbn=%s item=%s price=%s ship=%s condId=%s → total=None (CALCULATED/unknown ship)",
+                isbn, item_id, price_val, ship_type, cid,
+            )
             continue
 
         bucket = normalize_condition(it.get("condition"), it.get("conditionId"))
         lim_info = effective_limit(isbn, bucket)
         limit = float(lim_info["limit"])
+        has_offer = "BEST_OFFER" in (it.get("buyingOptions") or [])
 
-        if "BEST_OFFER" in (it.get("buyingOptions") or []):
+        if has_offer:
             limit = float(round(limit * float(s.make_offer_multiplier), 2))
 
         if total <= limit:
+            logger.info(
+                "INCLUDE isbn=%s item=%s total=%.2f limit=%.2f bucket=%s offer=%s",
+                isbn, item_id, total, limit, bucket, has_offer,
+            )
             out.append((it, bucket, float(total), float(limit)))
+        else:
+            logger.info(
+                "EXCLUDE isbn=%s item=%s total=%.2f > limit=%.2f bucket=%s offer=%s",
+                isbn, item_id, total, limit, bucket, has_offer,
+            )
 
     out.sort(key=lambda x: x[2])
     return out[:2]

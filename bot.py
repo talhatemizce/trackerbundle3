@@ -156,11 +156,13 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if arg and is_valid_isbn(arg):
         context.user_data["pending_isbn"] = arg
         _set_awaiting(context, "add_new_max")
+        logger.info("wizard /add isbn=%s → add_new_max", arg)
         return await _reply(
             update,
             f"ISBN: {arg} ✓\n\nNew (yeni/sıfır) max fiyat? (USD)\nörn: 50 — boş bırakırsan varsayılan kullanılır.",
         )
     # ISBN verilmemişse normal akış
+    logger.info("wizard /add no-inline → add_isbn")
     _set_awaiting(context, "add_isbn")
     await _reply(update, "ISBN gönder (10 veya 13 hane):\nörn: 9780132350884")
 
@@ -266,6 +268,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _reply(update, "ISBN yanlış (checksum hatası veya uzunluk). Tekrar gönder.")
         context.user_data["pending_isbn"] = isbn
         _set_awaiting(context, "add_new_max")
+        logger.info("wizard add_isbn isbn=%s → add_new_max", isbn)
         return await _reply(update, f"ISBN: {isbn} ✓\n\nNew (sıfır/yeni) için max fiyat? (USD)\nörnk: 50 — boş bırakırsan varsayılan (50) kullanılır.")
 
     # Adım 2: New max
@@ -276,6 +279,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _reply(update, f"⚠️ {e}")
         context.user_data["pending_new_max"] = new_max
         _set_awaiting(context, "add_used_max")
+        logger.info("wizard add_new_max new_max=%s → add_used_max", new_max)
         default_hint = "30" if new_max is None else str(int(round(new_max * 0.60)))
         return await _reply(update, f"Used (kullanılmış) Good kondisyon için max fiyat? (USD)\nörnk: {default_hint} — boş bırakırsan varsayılan (30) kullanılır.\n\nNot: Acceptable={int(round(float(default_hint)*0.8))}, VeryGood={int(round(float(default_hint)*1.1))}, LikeNew={int(round(float(default_hint)*1.15))} otomatik türetilir.")
 
@@ -294,16 +298,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _reply(update, "⚠️ Oturum hatası, tekrar başlat.")
 
         try:
+            logger.info("wizard add_used_max isbn=%s new_max=%s used_max=%s → saving", isbn, new_max, used_max)
             # 1. ISBN watchlist'e ekle
             r = await api("POST", "/isbns", json={"isbn": isbn})
             added = r.status_code == 200 and r.json().get("added", False)
+            logger.info("wizard POST /isbns isbn=%s http=%d added=%s", isbn, r.status_code, added)
 
             # 2. Limitleri kaydet (varsa)
             if new_max is not None or used_max is not None:
-                await api("PUT", f"/rules/{isbn}/override", json={
+                rr = await api("PUT", f"/rules/{isbn}/override", json={
                     "new_max": new_max,
                     "used_all_max": used_max,
                 })
+                logger.info("wizard PUT /rules/%s/override http=%d", isbn, rr.status_code)
 
             lines = [f"✅ ISBN {isbn} {'eklendi' if added else 'zaten vardı'}"]
             if new_max is not None:
