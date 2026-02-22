@@ -210,11 +210,17 @@ def item_total_price(
         if not ship_estimated:
             cost_val = opt.get("shippingCost", {}).get("value")
             if cost_val is None:
-                return None
-            try:
-                ship = float(cost_val)
-            except (TypeError, ValueError):
-                return None
+                # No cost value + no type info → treat as unknown/CALCULATED
+                if calc_ship_est and calc_ship_est > 0:
+                    ship = calc_ship_est
+                    ship_estimated = True
+                else:
+                    return None
+            else:
+                try:
+                    ship = float(cost_val)
+                except (TypeError, ValueError):
+                    return None
     # opts == [] → free shipping
 
     result = round(price + ship, 2)

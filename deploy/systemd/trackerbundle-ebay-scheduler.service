@@ -2,6 +2,8 @@
 Description=TrackerBundle eBay ISBN Scheduler
 After=network-online.target trackerbundle-api.service
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 User=ubuntu
@@ -11,8 +13,6 @@ EnvironmentFile=/etc/trackerbundle.env
 ExecStart=/home/ubuntu/trackerbundle3/venv/bin/python -m app.scheduler_ebay
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 [Install]
 WantedBy=multi-user.target

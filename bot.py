@@ -119,7 +119,15 @@ async def api(method: str, path: str, **kwargs):
         logger.warning("API request error: %s %s — %s", method, path, exc)
         raise RuntimeError(f"Ağ hatası: {exc}")
 
+async def _log_update(update: Update) -> None:
+    """Gelen her update'i tek satır logla — bot routing debug için."""
+    uid = update.effective_user.id if update.effective_user else "?"
+    txt = (update.message.text or "") if update.message else ""
+    logger.info("UPDATE uid=%s text=%r", uid, txt[:80])
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _log_update(update)
     context.user_data.pop("awaiting", None)
     await update.message.reply_text("TrackerBundle Bot ✅\nMenüden seç.", reply_markup=MENU, parse_mode=None)
 
@@ -151,6 +159,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/add [isbn] — wizard başlatır; ISBN inline verilmişse doğrudan fiyat adımına geçer."""
+    await _log_update(update)
     context.user_data.clear()
     arg = clean_isbn((context.args or [""])[0]) if context.args else ""
     if arg and is_valid_isbn(arg):
@@ -195,6 +204,7 @@ def _parse_price(txt: str):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _log_update(update)
     txt = (update.message.text or "").strip()
 
     # ── İptal komutu ────────────────────────────────────────────────────────
