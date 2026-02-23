@@ -30,6 +30,9 @@ def add_entry(
     sold_avg: Optional[float] = None,
     sold_count: Optional[int] = None,
     ship_estimated: bool = False,
+    match_quality: str = "CONFIRMED",        # "CONFIRMED" | "UNVERIFIED_SUPER_DEAL"
+    verified: bool = True,
+    verification_reason: str = "gtins_match",
 ) -> None:
     entry = {
         "ts": int(time.time()),
@@ -45,6 +48,9 @@ def add_entry(
         "sold_avg": sold_avg,
         "sold_count": sold_count,
         "ship_estimated": ship_estimated,
+        "match_quality": match_quality,
+        "verified": verified,
+        "verification_reason": verification_reason,
     }
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)

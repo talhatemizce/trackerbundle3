@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-23-backoff-ux";
+const BUILD_ID = "2026-02-23-hybrid-verify";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -568,6 +568,12 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                 <span style={{fontSize:11,fontWeight:600,color:e.decision==="BUY"?C.green:C.blue}}>
                   {e.decision==="BUY"?"🟢 BUY":"🟡 OFFER"}
                 </span>
+                {e.match_quality==="CONFIRMED"
+                  ? <span style={{fontSize:10,color:C.green,background:"rgba(52,211,153,.1)",border:`1px solid ${C.green}`,borderRadius:3,padding:"1px 6px"}}>✅ confirmed</span>
+                  : e.match_quality==="UNVERIFIED_SUPER_DEAL"
+                    ? <span style={{fontSize:10,color:C.orange,background:"rgba(251,146,60,.1)",border:`1px solid ${C.orange}`,borderRadius:3,padding:"1px 6px"}}>⚠ super deal</span>
+                    : null
+                }
               </div>
               <div style={{fontSize:11,color:C.muted,display:"flex",gap:12,flexWrap:"wrap"}}>
                 <span>ISBN: {e.isbn}{titles[e.isbn]?` · ${titles[e.isbn]}`:""}</span>
@@ -575,6 +581,9 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                 <span style={{color:C.muted3}}>limit: ${e.limit}</span>
                 {e.sold_avg && <span>sold avg: ${e.sold_avg}</span>}
                 {e.ship_estimated && <span style={{color:C.orange}}>est.ship</span>}
+                {e.verification_reason && e.verification_reason!=="gtins_match" && (
+                  <span style={{fontSize:10,color:C.muted3}}>{e.verification_reason}</span>
+                )}
               </div>
             </div>
             {/* Time + link */}

@@ -506,6 +506,130 @@ async def _strict_verify(
     return verified
 
 
+
+# ─── Hybrid Verification (N=15) ────────────────────────────────────────────────
+
+HYBRID_VERIFY_N = 15        # kaç item'ı doğrulayacağız
+HYBRID_CONCURRENCY = 5      # paralel getItem çağrısı
+
+# UNVERIFIED kabul eşikleri (total / limit)
+UNVERIFIED_USED_RATIO = 0.60
+UNVERIFIED_NEW_RATIO  = 0.70
+_NEW_BUCKETS = {"brand_new"}
+
+
+def _unverified_threshold(bucket: str, limit: float) -> float:
+    """UNVERIFIED_SUPER_DEAL için maksimum total."""
+    ratio = UNVERIFIED_NEW_RATIO if bucket in _NEW_BUCKETS else UNVERIFIED_USED_RATIO
+    return limit * ratio
+
+
+async def hybrid_verify_items(
+    client: httpx.AsyncClient,
+    isbn: str,
+    items: List[Dict[str, Any]],
+    limit_map: Dict[str, float],   # {item_id: effective_limit}
+    bucket_map: Dict[str, str],    # {item_id: bucket}
+    concurrency: int = HYBRID_CONCURRENCY,
+) -> List[Dict[str, Any]]:
+    """
+    Hybrid verification pipeline:
+      1. Token al
+      2. Items'ı total fiyatına göre sırala, en ucuz N=15 seç
+      3. Her biri için GET /item/{id}?fieldgroups=PRODUCT
+      4. Karar:
+         - CONFIRMED      : product.gtins eşleşiyor   → deal (limit altıysa)
+         - UNVERIFIED_SUPER_DEAL : gtins yok/uyuşmuyor ama total <= threshold
+         - DROP           : gtins uyuşmuyor + fiyat threshold üstünde
+
+    Her item'a şu field'lar eklenerek döner:
+      _match_quality      : "CONFIRMED" | "UNVERIFIED_SUPER_DEAL"
+      _verification_reason: "gtins_match" | "gtins_missing" | "gtins_mismatch"
+      _verified           : True / False
+    """
+    if not items:
+        return []
+
+    token = await get_app_token(client)
+    isbn_clean = isbn.replace("-", "").replace(" ", "").upper().strip()
+    variants = isbn_variants(isbn_clean)
+
+    def _price_key(it: Dict[str, Any]) -> float:
+        try:
+            return float(it.get("price", {}).get("value", 9999))
+        except Exception:
+            return 9999.0
+
+    sorted_items = sorted(items, key=_price_key)
+    to_verify = sorted_items[:HYBRID_VERIFY_N]
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _check_one(it: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        item_id = it.get("itemId") or ""
+        if not item_id:
+            return None
+
+        bucket = bucket_map.get(item_id, "used_all")
+        limit  = limit_map.get(item_id, 9999.0)
+        threshold = _unverified_threshold(bucket, limit)
+
+        async with sem:
+            try:
+                detail = await _get_item_detail(client, token, item_id)
+            except Exception as e:
+                logger.warning("hybrid_verify: item=%s detail fetch failed (%s) — fail-open UNVERIFIED", item_id, e)
+                # fail-open: treat as gtins_missing, apply unverified threshold
+                detail = {}
+
+        product = detail.get("product") or {}
+        gtins   = [g.replace("-", "").upper() for g in (product.get("gtins") or [])]
+
+        if not gtins:
+            reason = "gtins_missing"
+        else:
+            matched = any(g in {v.upper() for v in variants} for g in gtins)
+            reason = "gtins_match" if matched else "gtins_mismatch"
+
+        total = _price_key(it)  # approximation for threshold check
+
+        if reason == "gtins_match":
+            result = it.copy()
+            result["_match_quality"] = "CONFIRMED"
+            result["_verification_reason"] = reason
+            result["_verified"] = True
+            logger.info("hybrid_verify isbn=%s item=%s → CONFIRMED (gtins_match)", isbn, item_id)
+            return result
+        else:
+            # UNVERIFIED path: only accept if total is super cheap
+            if total <= threshold:
+                result = it.copy()
+                result["_match_quality"] = "UNVERIFIED_SUPER_DEAL"
+                result["_verification_reason"] = reason
+                result["_verified"] = False
+                logger.info(
+                    "hybrid_verify isbn=%s item=%s → UNVERIFIED_SUPER_DEAL reason=%s total=%.2f threshold=%.2f",
+                    isbn, item_id, reason, total, threshold,
+                )
+                return result
+            else:
+                logger.debug(
+                    "hybrid_verify isbn=%s item=%s → DROP reason=%s total=%.2f > threshold=%.2f",
+                    isbn, item_id, reason, total, threshold,
+                )
+                return None
+
+    results = await asyncio.gather(*[_check_one(it) for it in to_verify])
+    accepted = [r for r in results if r is not None]
+    logger.info(
+        "hybrid_verify isbn=%s: checked=%d accepted=%d (CONFIRMED=%d UNVERIFIED=%d)",
+        isbn,
+        len(to_verify),
+        len(accepted),
+        sum(1 for r in accepted if r.get("_match_quality") == "CONFIRMED"),
+        sum(1 for r in accepted if r.get("_match_quality") == "UNVERIFIED_SUPER_DEAL"),
+    )
+    return accepted
+
 async def _browse_fetch_one(
     client: httpx.AsyncClient,
     token: str,

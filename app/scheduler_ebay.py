@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app import isbn_store
 from app.rules_store import get_rule, effective_limit
 from app import run_state
-from app.ebay_client import browse_search_isbn, finding_sold_stats, normalize_condition, item_total_price
+from app.ebay_client import browse_search_isbn, finding_sold_stats, normalize_condition, item_total_price, hybrid_verify_items
 from app.alert_store import check_and_mark
 from app import alert_history_store
 from app import sold_stats_store
@@ -53,6 +53,7 @@ def _format_message(
     sold_avg: int | None = None,
     sold_count: int | None = None,
     ship_estimated: bool = False,
+    match_quality: str = "CONFIRMED",
 ) -> str:
     title = (item.get("title") or "")[:90]
     url = item.get("itemWebUrl") or ""
@@ -80,11 +81,12 @@ def _format_message(
         decision_str = "🟢 BUY"
 
     offer_str = " · Make Offer" if make_offer else ""
+    verify_badge = "" if match_quality == "CONFIRMED" else " ⚠️ unverified"
 
     ship_note = " · est. ship" if ship_estimated else ""
     msg = (
         f"📚 <b>{title}</b>\n"
-        f"ISBN: {isbn} | {label}{offer_str}\n"
+        f"ISBN: {isbn} | {label}{offer_str}{verify_badge}\n"
         f"Total: <b>${total_i}</b>{ship_note} (limit ${limit_i}) → {decision_str}\n"
     )
 
@@ -213,6 +215,13 @@ def _rebuild_totals_from_bucket(stats: Dict[str, Any]) -> list:
 
 
 async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
+    """
+    Hybrid verification pipeline (N=15):
+      1. Browse search (GTIN-first, category fallback)
+      2. Pre-filter by price limit → top N=15 cheapest candidates
+      3. hybrid_verify_items → CONFIRMED / UNVERIFIED_SUPER_DEAL / DROP
+      4. Dedup check → send Telegram + write history
+    """
     sent = 0
     try:
         items = await _fetch(client, isbn)
@@ -220,19 +229,51 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
         logger.exception("ISBN %s fetch failed", isbn)
         return 0
 
-    candidates = _pick_candidates_under_limit(items, isbn)
-    logger.info("isbn=%s candidates=%d (limit altı)", isbn, len(candidates))
+    # ── Adım 1: price/limit pre-filter (limit altındaki tüm items, max 15) ──
+    s = get_settings()
+    calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else None
 
-    if not candidates:
+    pre: List[Tuple[Dict, str, float, float]] = []
+    for it in items:
+        total = item_total_price(it, calc_ship_est=calc_est)
+        if total is None:
+            continue
+        bucket = normalize_condition(it.get("condition"), it.get("conditionId"))
+        lim_info = effective_limit(isbn, bucket)
+        lim = float(lim_info["limit"])
+        if "BEST_OFFER" in (it.get("buyingOptions") or []):
+            lim = float(round(lim * float(s.make_offer_multiplier), 2))
+        if total <= lim:
+            pre.append((it, bucket, total, lim))
+
+    pre.sort(key=lambda x: x[2])
+    pre = pre[:15]  # N=15
+
+    logger.info("isbn=%s pre_candidates=%d (price ≤ limit, before verify)", isbn, len(pre))
+    if not pre:
         return 0
 
-    # Sold stats'ı sadece candidate varsa çek (API çağrısını boşa harcamayalım)
-    sold = await _fetch_sold(client, isbn)
-    sold_overall_avg = sold.get("sold_avg")
-    sold_overall_count = sold.get("sold_count")
-    sold_by_cond = sold.get("by_condition", {})
+    # ── Adım 2: hybrid verification ─────────────────────────────────────────
+    limit_map  = {str(it.get("itemId") or ""): lim   for it, _, _, lim in pre}
+    bucket_map = {str(it.get("itemId") or ""): bucket for it, bucket, _, _ in pre}
+    pre_items  = [it for it, _, _, _ in pre]
 
-    for it, bucket, total, limit in candidates:
+    verified = await hybrid_verify_items(
+        client, isbn, pre_items, limit_map=limit_map, bucket_map=bucket_map
+    )
+    logger.info("isbn=%s verified_candidates=%d (after hybrid verify)", isbn, len(verified))
+
+    if not verified:
+        return 0
+
+    # ── Adım 3: sold stats (non-blocking) ───────────────────────────────────
+    sold = await _fetch_sold(client, isbn)
+    sold_overall_avg   = sold.get("sold_avg")
+    sold_overall_count = sold.get("sold_count")
+    sold_by_cond       = sold.get("by_condition", {})
+
+    # ── Adım 4: dedup + Telegram + history ──────────────────────────────────
+    for it in verified:
         item_id = str(it.get("itemId") or "")
         if not item_id:
             continue
@@ -242,18 +283,22 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
             logger.info("isbn=%s item=%s skip=already_notified", isbn, item_id)
             continue
 
-        # Condition bazlı sold avg varsa onu kullan, yoksa genel avg
-        cond_stats = sold_by_cond.get(bucket, {})
-        avg_for_msg = cond_stats.get("avg") if cond_stats.get("avg") is not None else sold_overall_avg
+        bucket = bucket_map.get(item_id, "used_all")
+        total  = float(item_total_price(it, calc_ship_est=calc_est) or 0)
+        limit  = limit_map.get(item_id, 0.0)
+
+        match_quality = it.get("_match_quality", "CONFIRMED")
+        verified_flag = it.get("_verified", True)
+        verify_reason = it.get("_verification_reason", "gtins_match")
+
+        cond_stats    = sold_by_cond.get(bucket, {})
+        avg_for_msg   = cond_stats.get("avg") if cond_stats.get("avg") is not None else sold_overall_avg
         count_for_msg = cond_stats.get("count") if cond_stats.get("count") is not None else sold_overall_count
 
-        msg = _format_message(isbn, it, bucket, total, limit, sold_avg=avg_for_msg, sold_count=count_for_msg, ship_estimated=it.get("_shipping_estimated", False))
-
-        # Decide label for history
         make_offer = "BEST_OFFER" in (it.get("buyingOptions") or [])
-        decision = "OFFER" if make_offer else "BUY"
+        decision   = "OFFER" if make_offer else "BUY"
 
-        # Extract image URL from eBay Browse response
+        # Image URL
         image_url = ""
         img = it.get("image") or {}
         if isinstance(img, dict):
@@ -263,10 +308,16 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
             if thumbs and isinstance(thumbs[0], dict):
                 image_url = thumbs[0].get("imageUrl") or ""
 
+        msg = _format_message(
+            isbn, it, bucket, total, limit,
+            sold_avg=avg_for_msg, sold_count=count_for_msg,
+            ship_estimated=it.get("_shipping_estimated", False),
+            match_quality=match_quality,
+        )
+
         ok = await _send_telegram(msg)
         if ok:
             sent += 1
-            # Write to alert history (fire-and-forget; don't block on error)
             try:
                 alert_history_store.add_entry(
                     isbn=isbn,
@@ -281,8 +332,14 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
                     sold_avg=avg_for_msg,
                     sold_count=count_for_msg,
                     ship_estimated=it.get("_shipping_estimated", False),
+                    match_quality=match_quality,
+                    verified=verified_flag,
+                    verification_reason=verify_reason,
                 )
-                logger.info("HISTORY_WRITE isbn=%s item=%s decision=%s total=%.2f", isbn, item_id, decision, total)
+                logger.info(
+                    "HISTORY_WRITE isbn=%s item=%s decision=%s total=%.2f quality=%s",
+                    isbn, item_id, decision, total, match_quality,
+                )
             except Exception as _he:
                 logger.warning("alert_history write failed: %s", _he)
 
