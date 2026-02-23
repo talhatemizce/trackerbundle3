@@ -31,10 +31,24 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-23-alerts-feed-fix";
+const BUILD_ID = "2026-02-23-ebay-link-modal";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
+// eBay condition ID mapping (verify when eBay updates their URL scheme)
+// Last verified: 2026-02. Update EBAY_COND_IDS if searches return wrong results.
+const EBAY_COND_IDS = {
+  brand_new:  "1000",
+  like_new:   "3000",
+  very_good:  "4000",
+  good:       "5000",
+  acceptable: "6000",
+};
+const ebaySearchUrl = (isbn, bucket) => {
+  const base = `https://www.ebay.com/sch/i.html?_nkw=${isbn}&_sacat=267&LH_BIN=1&rt=nc&_sop=15`;
+  const cid = bucket && EBAY_COND_IDS[bucket];
+  return cid ? `${base}&LH_ItemCondition=${cid}` : base;
+};
 const cleanIsbn = (s) => (s || "").replace(/[^0-9Xx]/g, "").toUpperCase();
 const validateIsbn = (s) => {
   const c = cleanIsbn(s);
@@ -217,6 +231,9 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
   const [isbnUsedMax, setIsbnUsedMax] = useState("");
   const [isbnInterval, setIsbnInterval] = useState("");
   const [savingRule, setSavingRule] = useState(false);
+  const [activeStats, setActiveStats] = useState(null);   // /ebay/active-stats result
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [showStatsModal, setShowStatsModal] = useState(false);
 
   // Populate override fields when ISBN changes
   useEffect(() => {
@@ -288,6 +305,20 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
       push("Hata: " + e.message, "error");
     } finally { setLoading(false); }
   };
+
+  const fetchActiveStats = async () => {
+    if (!selected) return;
+    setStatsLoading(true);
+    try {
+      const res = await req(`/ebay/active-stats/${selected}`, {}, 30000);
+      setActiveStats(res);
+    } catch(e) {
+      push("Active stats hatası: " + e.message, "error");
+    } finally { setStatsLoading(false); }
+  };
+
+  // Auto-fetch active stats when ISBN changes
+  useEffect(() => { setActiveStats(null); if (selected) fetchActiveStats(); }, [selected]);
 
   return (
     <div>
@@ -380,15 +411,143 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
         </div>
       )}
 
+      {/* Active Stats Modal */}
+      {showStatsModal && activeStats && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={e=>{if(e.target===e.currentTarget)setShowStatsModal(false);}}>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:28,width:560,maxWidth:"100%",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 60px rgba(0,0,0,.5)"}}
+            onKeyDown={e=>e.key==="Escape"&&setShowStatsModal(false)}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:600,color:C.text}}>Aktif Listeler — {activeStats.isbn}</div>
+                <div style={{fontSize:10,color:C.muted3,marginTop:2}}>eBay Browse · anlık, FIXED_PRICE</div>
+              </div>
+              <button onClick={()=>setShowStatsModal(false)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"4px 12px",cursor:"pointer"}}>✕ Kapat</button>
+            </div>
+
+            {/* Overall new vs used */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
+              {activeStats.overall?.new && (
+                <div style={{background:C.surface2,border:`1px solid ${C.green}`,borderRadius:8,padding:"12px 16px"}}>
+                  <div style={{fontSize:10,color:C.green,marginBottom:6,fontWeight:600}}>BRAND NEW</div>
+                  <div style={{fontSize:20,fontWeight:700,color:C.green}}>${activeStats.overall.new.min} <span style={{fontSize:12,fontWeight:400,color:C.muted}}>min</span></div>
+                  <div style={{fontSize:12,color:C.muted,marginTop:2}}>{activeStats.overall.new.count} ilan · ort ${activeStats.overall.new.avg}</div>
+                </div>
+              )}
+              {activeStats.overall?.used && (
+                <div style={{background:C.surface2,border:`1px solid ${C.accent}`,borderRadius:8,padding:"12px 16px"}}>
+                  <div style={{fontSize:10,color:C.accent,marginBottom:6,fontWeight:600}}>USED (tüm)</div>
+                  <div style={{fontSize:20,fontWeight:700,color:C.accent}}>${activeStats.overall.used.min} <span style={{fontSize:12,fontWeight:400,color:C.muted}}>min</span></div>
+                  <div style={{fontSize:12,color:C.muted,marginTop:2}}>{activeStats.overall.used.count} ilan · ort ${activeStats.overall.used.avg}</div>
+                </div>
+              )}
+            </div>
+
+            {/* By condition table */}
+            {Object.keys(activeStats.by_condition||{}).length > 0 && (
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:8,letterSpacing:"0.08em",textTransform:"uppercase"}}>Kondisyon Kırılımı</div>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead>
+                    <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                      {["Kondisyon","Adet","Min","Ort",""].map(h=>(
+                        <th key={h} style={{textAlign:h==="Kondisyon"?"left":"right",padding:"4px 8px",color:C.muted,fontSize:10,fontWeight:500}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[["brand_new","New",C.green],["like_new","Like New",C.blue],["very_good","Very Good",C.purple],["good","Good",C.accent],["acceptable","Acceptable",C.orange],["used_all","Used",C.muted]].map(([k,label,color])=>{
+                      const st = activeStats.by_condition?.[k];
+                      if (!st) return null;
+                      return (
+                        <tr key={k} style={{borderBottom:`1px solid ${C.border}20`}}>
+                          <td style={{padding:"7px 8px"}}>
+                            <span style={{color,fontWeight:500}}>{label}</span>
+                          </td>
+                          <td style={{padding:"7px 8px",textAlign:"right",color:C.muted}}>{st.count}</td>
+                          <td style={{padding:"7px 8px",textAlign:"right",color:C.text,fontWeight:600}}>${st.min}</td>
+                          <td style={{padding:"7px 8px",textAlign:"right",color:C.muted}}>${st.avg}</td>
+                          <td style={{padding:"7px 8px",textAlign:"right"}}>
+                            <a href={ebaySearchUrl(activeStats.isbn, k)} target="_blank" rel="noreferrer"
+                              style={{fontSize:10,color:C.accent,border:`1px solid ${C.accent}`,borderRadius:3,padding:"1px 7px",textDecoration:"none"}}>
+                              eBay ↗
+                            </a>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Top 10 cheapest */}
+            {activeStats.top_cheapest?.length > 0 && (
+              <div>
+                <div style={{fontSize:10,color:C.muted,marginBottom:8,letterSpacing:"0.08em",textTransform:"uppercase"}}>En Ucuz 10 İlan</div>
+                {activeStats.top_cheapest.map((it,i)=>{
+                  const condColors = {brand_new:C.green,like_new:C.blue,very_good:C.purple,good:C.accent,acceptable:C.orange,used_all:C.muted};
+                  const condLabels = {brand_new:"New",like_new:"Like New",very_good:"Very Good",good:"Good",acceptable:"Acceptable",used_all:"Used"};
+                  return (
+                    <div key={it.itemId||i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border}20`}}>
+                      <a href={it.url||"#"} target="_blank" rel="noreferrer" style={{flexShrink:0,display:"block"}}>
+                        {it.image
+                          ? <img src={it.image} loading="lazy" width={36} height={36} style={{borderRadius:4,objectFit:"cover",background:C.surface2}} alt=""/>
+                          : <div style={{width:36,height:36,borderRadius:4,background:C.surface2}}/>
+                        }
+                      </a>
+                      <div style={{flex:1,minWidth:0,fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
+                      <span style={{color:condColors[it.bucket]||C.muted,fontSize:10,flexShrink:0}}>{condLabels[it.bucket]||it.bucket}</span>
+                      <span style={{color:C.text,fontWeight:600,fontSize:13,flexShrink:0}}>${it.total}</span>
+                      <a href={ebaySearchUrl(activeStats.isbn, it.bucket)} target="_blank" rel="noreferrer"
+                        title={`eBay'de ${condLabels[it.bucket]||it.bucket} kondisyonlu, en ucuzdan`}
+                        style={{flexShrink:0,fontSize:10,color:C.accent,border:`1px solid ${C.accent}`,borderRadius:3,padding:"1px 7px",textDecoration:"none",whiteSpace:"nowrap"}}>
+                        eBay ↗
+                      </a>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Önerilen Fiyat Sorgulama */}
       <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:24}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <ST C={C} style={{marginBottom:0}}>Önerilen Alım Fiyatı</ST>
-          <div style={{fontSize:10,color:C.muted3,textAlign:"right",lineHeight:1.6}}>
-            avg_30d×0.25 + avg_90d×0.25 + avg_365d×0.50<br/>
-            Eksik → Browse proxy (aktif listeler)
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {activeStats && !statsLoading && (
+              <button onClick={()=>setShowStatsModal(true)} style={{background:"none",border:`1px solid ${C.blue}`,borderRadius:5,color:C.blue,fontFamily:"var(--mono)",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>
+                📊 Aktif {activeStats.overall?.used ? `· ${activeStats.overall.used.count+( activeStats.overall.new?.count||0)} ilan` : ""}
+              </button>
+            )}
+            {statsLoading && <span style={{fontSize:10,color:C.muted3}}>⟳ aktif…</span>}
           </div>
         </div>
+        {/* Active stats inline summary */}
+        {activeStats && !statsLoading && (
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:16,padding:"10px 14px",background:C.surface2,borderRadius:8,border:`1px solid ${C.border}`}}>
+            {activeStats.overall?.new && (
+              <span style={{fontSize:11,color:C.muted}}>
+                New: <b style={{color:C.green}}>{activeStats.overall.new.count}</b> ilan
+                {" · "}min <b style={{color:C.green}}>${activeStats.overall.new.min}</b>
+                {" · "}avg <b style={{color:C.muted}}>${activeStats.overall.new.avg}</b>
+              </span>
+            )}
+            {activeStats.overall?.used && (
+              <span style={{fontSize:11,color:C.muted}}>
+                Used: <b style={{color:C.accent}}>{activeStats.overall.used.count}</b> ilan
+                {" · "}min <b style={{color:C.accent}}>${activeStats.overall.used.min}</b>
+                {" · "}avg <b style={{color:C.muted}}>${activeStats.overall.used.avg}</b>
+              </span>
+            )}
+            <button onClick={()=>setShowStatsModal(true)} style={{background:"none",border:"none",color:C.muted3,fontFamily:"var(--mono)",fontSize:10,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+              detay →
+            </button>
+          </div>
+        )}
 
         <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:24}}>
           <select className="inp" value={selected} onChange={e=>setSelected(e.target.value)} style={{flex:1,maxWidth:300}}>
@@ -1169,6 +1328,11 @@ export default function App() {
                             ⏱ {fmtSecs(intervals[isbn])}
                           </button>
                         )}
+                        <a href={ebaySearchUrl(isbn, null)} target="_blank" rel="noreferrer"
+                          title="eBay'de en ucuzdan listele (kondisyonsuz)"
+                          style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"3px 10px",cursor:"pointer",textDecoration:"none",whiteSpace:"nowrap"}}>
+                          eBay ↗
+                        </a>
                         <button className="icon-btn" onClick={()=>deleteIsbn(isbn)} style={{color:C.muted2,fontSize:18}}>×</button>
                       </div>
                       {editingRule===isbn && (

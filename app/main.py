@@ -354,6 +354,83 @@ async def amazon_prices_telegram(asin: str):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+# ---- Active listing stats ----
+@app.get("/ebay/active-stats/{isbn}")
+async def ebay_active_stats(isbn: str):
+    """
+    Active eBay listing stats for an ISBN.
+    Returns per-condition count/min/avg and top cheapest items.
+    """
+    from app.ebay_client import browse_search_isbn, normalize_condition, item_total_price
+    from app.core.config import get_settings as _gs
+    import statistics, httpx
+
+    s = _gs()
+    calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else None
+
+    async with httpx.AsyncClient() as client:
+        try:
+            items = await browse_search_isbn(client, isbn, limit=100, strict=False)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"eBay fetch failed: {e}")
+
+    # Bucket all items
+    _NEW_BUCKETS = {"brand_new"}
+    buckets: dict = {}
+    for it in items:
+        total = item_total_price(it, calc_ship_est=calc_est)
+        if total is None:
+            continue
+        bucket = normalize_condition(it.get("condition"), it.get("conditionId"))
+        buckets.setdefault(bucket, []).append({
+            "total": round(float(total), 2),
+            "bucket": bucket,
+            "itemId": it.get("itemId", ""),
+            "title": (it.get("title") or "")[:80],
+            "url": it.get("itemWebUrl") or "",
+            "image": ((it.get("image") or {}).get("imageUrl") or ""),
+        })
+
+    def _stats(rows):
+        prices = [r["total"] for r in rows]
+        if not prices:
+            return None
+        return {
+            "count": len(prices),
+            "min": round(min(prices), 2),
+            "avg": round(sum(prices)/len(prices), 2),
+        }
+
+    by_condition = {}
+    for b, rows in buckets.items():
+        st = _stats(rows)
+        if st:
+            by_condition[b] = st
+
+    new_rows  = [r for b, rows in buckets.items() if b in _NEW_BUCKETS  for r in rows]
+    used_rows = [r for b, rows in buckets.items() if b not in _NEW_BUCKETS for r in rows]
+
+    overall = {}
+    ns = _stats(new_rows)
+    us = _stats(used_rows)
+    if ns: overall["new"]  = ns
+    if us: overall["used"] = us
+
+    # Top cheapest 10 across all conditions
+    all_rows = [r for rows in buckets.values() for r in rows]
+    all_rows.sort(key=lambda r: r["total"])
+    top_cheapest = all_rows[:10]
+
+    return {
+        "ok": True,
+        "isbn": isbn,
+        "source": "browse",
+        "overall": overall,
+        "by_condition": by_condition,
+        "top_cheapest": top_cheapest,
+    }
+
+
 # ---- eBay debug (raw Browse results inspection) ----
 from app.ebay_client import (
     browse_search_isbn as _browse_search,
