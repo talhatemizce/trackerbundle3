@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-23-wizard-sliders";
+const BUILD_ID = "2026-02-23-alerts-feed-fix";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -468,11 +468,37 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
 
 
 
+// Thumbnail with eBay → OpenLibrary fallback, safe against infinite onError loops
+function Thumb({ imageUrl, isbn, href, C }) {
+  const olCover = `https://covers.openlibrary.org/b/isbn/${isbn}-S.jpg`;
+  const [src, setSrc] = useState(imageUrl || olCover);
+  const [triedOl, setTriedOl] = useState(!imageUrl); // if no eBay url, already on OL
+  return (
+    <a href={href || "#"} target="_blank" rel="noreferrer" style={{flexShrink:0}}>
+      <img
+        src={src}
+        loading="lazy"
+        width={56} height={56}
+        style={{borderRadius:6,objectFit:"cover",background:C.surface2,border:`1px solid ${C.border}`,display:"block"}}
+        onError={() => {
+          if (!triedOl) {
+            setTriedOl(true);
+            setSrc(olCover);
+          }
+          // if OL also fails, leave broken (img hides itself gracefully with background)
+        }}
+        alt=""
+      />
+    </a>
+  );
+}
+
 function AlertsFeedTab({ C, push, isbns, titles }) {
   const [entries, setEntries] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [isbnFilter, setIsbnFilter] = useState("");
+  const [dedupIsbn, setDedupIsbn] = useState("");   // React state — no getElementById
 
   const load = async () => {
     setLoading(true);
@@ -487,24 +513,38 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
 
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [isbnFilter]);
 
+  const clearDedup = async () => {
+    if (!dedupIsbn) { push("ISBN seç", "error"); return; }
+    try {
+      await req(`/alerts/dedup/${dedupIsbn}`, {method:"DELETE"});
+      push(`${dedupIsbn} dedup temizlendi — bir sonraki scheduler tick'inde tekrar alert gönderilir`, "success");
+    } catch(e) { push("Hata: "+e.message, "error"); }
+  };
+
+  const injectTest = async () => {
+    try {
+      await req("/debug/inject-history", {method:"POST"});
+      push("Test entry eklendi", "success");
+      await load();
+    } catch(e) { push(e.message, "error"); }
+  };
+
   const condLabel = { brand_new:"New", like_new:"Like New", very_good:"Very Good", good:"Good", acceptable:"Acceptable", used_all:"Used" };
   const condColor = (b, C) => ({brand_new:C.green, like_new:C.blue, very_good:C.purple, good:C.accent, acceptable:C.orange, used_all:C.muted})[b] || C.muted;
 
   const fmtTs = (ts) => {
-    const d = new Date(ts*1000);
-    const now = Date.now();
-    const diff = Math.round((now - ts*1000)/1000);
-    if (diff < 60) return `${diff}s önce`;
+    const diff = Math.round((Date.now() - ts*1000)/1000);
+    if (diff < 60)   return `${diff}s önce`;
     if (diff < 3600) return `${Math.round(diff/60)}dk önce`;
     if (diff < 86400) return `${Math.round(diff/3600)}s önce`;
-    return d.toLocaleDateString("tr-TR");
+    return new Date(ts*1000).toLocaleDateString("tr-TR");
   };
 
   return (
     <div>
       {/* Summary cards */}
       {summary && (
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:24}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:20}}>
           <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:10,padding:"16px 20px"}}>
             <div style={{fontSize:10,color:C.muted,marginBottom:4}}>Toplam Alert</div>
             <div style={{fontSize:28,fontWeight:600,color:C.text}}>{summary.total}</div>
@@ -520,61 +560,58 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
         </div>
       )}
 
-      {/* Filter + refresh */}
-      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
-        <select className="inp" value={isbnFilter} onChange={e=>setIsbnFilter(e.target.value)} style={{width:280,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text}}>
+      {/* Controls row: filter + dedup + refresh */}
+      <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:10,padding:"14px 16px",marginBottom:16,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+        {/* ISBN filter */}
+        <select className="inp" value={isbnFilter} onChange={e=>setIsbnFilter(e.target.value)} style={{flex:"1 1 200px",minWidth:160,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text,fontSize:12}}>
           <option value="">Tüm ISBNler</option>
           {isbns.map(isbn=><option key={isbn} value={isbn}>{isbn}{titles[isbn]?` — ${titles[isbn]}`:""}</option>)}
         </select>
-        <button onClick={load} disabled={loading} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:"pointer"}}>
-          {loading ? "⟳" : "↻ Yenile"}
+
+        <div style={{width:1,height:24,background:C.border,flexShrink:0}}/>
+
+        {/* Dedup clear — proper React state */}
+        <select className="inp" value={dedupIsbn} onChange={e=>setDedupIsbn(e.target.value)} style={{flex:"1 1 180px",minWidth:150,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text,fontSize:12}}>
+          <option value="">Dedup temizle…</option>
+          {isbns.map(i=><option key={i} value={i}>{i}</option>)}
+        </select>
+        <button
+          onClick={clearDedup}
+          disabled={!dedupIsbn}
+          title="Seçili ISBN'in dedup kaydını sil — scheduler bir sonraki tick'te tekrar alert gönderebilir"
+          style={{background:"none",border:`1px solid ${dedupIsbn?C.orange:C.border}`,borderRadius:5,color:dedupIsbn?C.orange:C.muted3,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:dedupIsbn?"pointer":"default",whiteSpace:"nowrap",transition:"all .15s"}}
+        >
+          🗑 Dedup Sil
         </button>
-        <span style={{fontSize:11,color:C.muted3}}>{entries.length} kayıt · 30s otomatik yenile</span>
+
+        <div style={{width:1,height:24,background:C.border,flexShrink:0}}/>
+
+        <button onClick={injectTest} title="Test için sahte alert history entry ekle" style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 10px",cursor:"pointer"}}>
+          💉
+        </button>
+        <button onClick={load} disabled={loading} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 10px",cursor:"pointer"}}>
+          {loading ? "⟳" : "↻"}
+        </button>
+        <span style={{fontSize:10,color:C.muted3,whiteSpace:"nowrap"}}>{entries.length} kayıt · auto 30s</span>
       </div>
 
-      {/* Debug tools */}
-      <details style={{marginBottom:14}}>
-        <summary style={{fontSize:10,color:C.muted3,cursor:"pointer",userSelect:"none"}}>🔧 Debug araçları</summary>
-        <div style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,padding:14,marginTop:8,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-          <span style={{fontSize:10,color:C.muted}}>Test entry ekle →</span>
-          <button onClick={async()=>{try{await req("/debug/inject-history",{method:"POST"});push("Test entry eklendi","success");load();}catch(e){push(e.message,"error");}}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>
-            💉 Inject Test
-          </button>
-          <span style={{fontSize:10,color:C.muted,marginLeft:10}}>Dedup temizle (ISBN) →</span>
-          <select id="dedup-select" className="inp" style={{width:200,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text,fontSize:11,padding:"4px 8px"}}>
-            <option value="">ISBN seç…</option>
-            {isbns.map(i=><option key={i} value={i}>{i}</option>)}
-          </select>
-          <button onClick={async()=>{const sel=document.getElementById("dedup-select").value;if(!sel)return;try{await req(`/alerts/dedup/${sel}`,{method:"DELETE"});push(`${sel} dedup temizlendi — scheduler tekrar alert gönderir`,"success");}catch(e){push(e.message,"error");}}} style={{background:"none",border:`1px solid ${C.orange}`,borderRadius:5,color:C.orange,fontFamily:"var(--mono)",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>
-            🗑 Dedup Sil
-          </button>
-        </div>
-      </details>
-
       {entries.length === 0 && !loading && (
-        <div style={{border:`1px dashed ${C.border}`,borderRadius:8,padding:40,textAlign:"center",color:C.muted3,fontSize:12}}>
+        <div style={{border:`1px dashed ${C.border}`,borderRadius:8,padding:32,textAlign:"center",color:C.muted3,fontSize:12,lineHeight:2}}>
           Henüz alert geçmişi yok.<br/>
-          <span style={{fontSize:10,marginTop:4,display:"block"}}>Scheduler bir deal bulunca buraya kaydedilir. Test için Debug araçlarını kullan.</span>
+          <span style={{fontSize:11,color:C.muted}}>
+            Scheduler bir deal bulup Telegram'a gönderdikten sonra burada görünür.
+          </span><br/>
+          <span style={{fontSize:10}}>
+            Test için: <b style={{color:C.accent}}>💉</b> butonu · Dedup dolu olabilir: dropdown'dan ISBN seç → <b style={{color:C.orange}}>🗑 Dedup Sil</b>
+          </span>
         </div>
       )}
 
       {entries.map((e, i) => {
-        const olCover = `https://covers.openlibrary.org/b/isbn/${e.isbn}-S.jpg`;
-        const imgSrc = e.image_url || olCover;
-
         return (
           <div key={`${e.item_id}-${i}`} style={{background:C.rowBg,border:`1px solid ${C.rowBorder}`,borderLeft:`3px solid ${condColor(e.condition,C)}`,borderRadius:8,padding:"12px 14px",marginBottom:8,display:"flex",gap:12,alignItems:"flex-start"}}>
-            {/* Thumbnail */}
-            <a href={e.url||"#"} target="_blank" rel="noreferrer" style={{flexShrink:0}}>
-              <img
-                src={imgSrc}
-                loading="lazy"
-                width={52} height={52}
-                style={{borderRadius:5,objectFit:"cover",background:C.surface2,border:`1px solid ${C.border}`}}
-                onError={ev => { if (ev.target.src !== olCover) ev.target.src = olCover; }}
-                alt=""
-              />
-            </a>
+            {/* Thumbnail — eBay imageUrl → OL cover fallback (safe, no loop) */}
+            <Thumb imageUrl={e.image_url} isbn={e.isbn} href={e.url} C={C} />
             {/* Content */}
             <div style={{flex:1,minWidth:0}}>
               <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:3}}>
