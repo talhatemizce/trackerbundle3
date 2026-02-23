@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-23-ebay-single-fn";
+const BUILD_ID = "2026-02-23-filters-meta";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -126,32 +126,80 @@ function useToast() {
   return { toasts, push };
 }
 
-// OpenLibrary title cache: localStorage + per-ISBN fetch
-function useBookTitles(isbns) {
-  const [titles, setTitles] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("ol_titles") || "{}"); } catch { return {}; }
+// OpenLibrary metadata cache: title + author + year, localStorage with 7-day TTL
+const OL_CACHE_KEY = "ol_meta_v2";
+const OL_TTL_MS = 7 * 24 * 3600 * 1000;
+
+function _olCacheLoad() {
+  try { return JSON.parse(localStorage.getItem(OL_CACHE_KEY) || "{}"); } catch { return {}; }
+}
+function _olCacheSave(data) {
+  try { localStorage.setItem(OL_CACHE_KEY, JSON.stringify(data)); } catch {}
+}
+
+// Returns { [isbn]: { title, author, year } | null }
+function useBookMeta(isbns) {
+  const [meta, setMeta] = useState(() => {
+    const raw = _olCacheLoad();
+    const now = Date.now();
+    // Strip expired entries on load
+    const valid = {};
+    for (const [isbn, entry] of Object.entries(raw)) {
+      if (entry && entry._ts && (now - entry._ts) < OL_TTL_MS) valid[isbn] = entry;
+    }
+    return valid;
   });
+
   const isbnKey = isbns.join(",");
   useEffect(() => {
-    const missing = isbns.filter(isbn => titles[isbn] === undefined);
+    const now = Date.now();
+    const missing = isbns.filter(isbn =>
+      meta[isbn] === undefined ||
+      (meta[isbn]?._ts && (now - meta[isbn]._ts) >= OL_TTL_MS)
+    );
     if (!missing.length) return;
-    setTitles(t => { const n = {...t}; missing.forEach(i => { n[i] = null; }); return n; });
+
+    // Mark as in-flight (null) to avoid duplicate fetches
+    setMeta(m => {
+      const n = {...m};
+      missing.forEach(i => { if (n[i] === undefined) n[i] = null; });
+      return n;
+    });
+
     missing.forEach(isbn => {
       fetch(`https://openlibrary.org/isbn/${isbn}.json`)
         .then(r => r.ok ? r.json() : null)
         .then(d => {
-          const title = d?.title || "";
-          setTitles(t => {
-            const n = {...t, [isbn]: title};
-            try { localStorage.setItem("ol_titles", JSON.stringify(n)); } catch {}
+          // author_name is in /works/ — use subtitle/by_statement if present, else skip
+          const title  = d?.title || "";
+          const author = d?.by_statement?.replace(/\s*\/.*$/, "").trim() || "";
+          const year   = d?.publish_date ? String(d.publish_date).match(/\d{4}/)?.[0] || "" : "";
+          const entry  = { title, author, year, _ts: Date.now() };
+          setMeta(m => {
+            const n = {...m, [isbn]: entry};
+            _olCacheSave(n);
             return n;
           });
         })
-        .catch(() => setTitles(t => ({...t, [isbn]: ""})));
+        .catch(() => {
+          setMeta(m => {
+            const n = {...m, [isbn]: { title:"", author:"", year:"", _ts: Date.now() }};
+            _olCacheSave(n);
+            return n;
+          });
+        });
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isbnKey]);
-  return titles;
+
+  return meta;
+}
+
+// Convenience: map isbn → title string (backward compat)
+function titlesFromMeta(meta) {
+  const out = {};
+  for (const [isbn, m] of Object.entries(meta)) out[isbn] = m?.title ?? null;
+  return out;
 }
 
 function ToastStack({ toasts, C }) {
@@ -722,6 +770,8 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [isbnFilter, setIsbnFilter] = useState("");
+  const [condFilter, setCondFilter] = useState("");      // "" | brand_new | like_new | ...
+  const [decisionFilter, setDecisionFilter] = useState(""); // "" | BUY | OFFER
   const [dedupIsbn, setDedupIsbn] = useState("");   // React state — no getElementById
 
   const load = async () => {
@@ -792,6 +842,24 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
           {isbns.map(isbn=><option key={isbn} value={isbn}>{isbn}{titles[isbn]?` — ${titles[isbn]}`:""}</option>)}
         </select>
 
+        {/* Condition filter */}
+        <select className="inp" value={condFilter} onChange={e=>setCondFilter(e.target.value)} style={{flex:"0 1 130px",minWidth:110,background:C.inputBg,border:`1px solid ${condFilter?C.accent:C.inputBorder}`,color:condFilter?C.accent:C.text,fontSize:12}}>
+          <option value="">Kondisyon</option>
+          <option value="brand_new">New</option>
+          <option value="like_new">Like New</option>
+          <option value="very_good">Very Good</option>
+          <option value="good">Good</option>
+          <option value="acceptable">Acceptable</option>
+          <option value="used_all">Used</option>
+        </select>
+
+        {/* Decision filter */}
+        <select className="inp" value={decisionFilter} onChange={e=>setDecisionFilter(e.target.value)} style={{flex:"0 1 90px",minWidth:80,background:C.inputBg,border:`1px solid ${decisionFilter?C.blue:C.inputBorder}`,color:decisionFilter?C.blue:C.text,fontSize:12}}>
+          <option value="">Karar</option>
+          <option value="BUY">🟢 BUY</option>
+          <option value="OFFER">🟡 OFFER</option>
+        </select>
+
         <div style={{width:1,height:24,background:C.border,flexShrink:0}}/>
 
         {/* Dedup clear — proper React state */}
@@ -816,8 +884,32 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
         <button onClick={load} disabled={loading} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 10px",cursor:"pointer"}}>
           {loading ? "⟳" : "↻"}
         </button>
-        <span style={{fontSize:10,color:C.muted3,whiteSpace:"nowrap"}}>{entries.length} kayıt · auto 30s</span>
+        <span style={{fontSize:10,color:C.muted3,whiteSpace:"nowrap"}}>
+          {(condFilter||decisionFilter)
+            ? `${entries.filter(e=>(!condFilter||e.condition===condFilter)&&(!decisionFilter||e.decision===decisionFilter)).length}/${entries.length}`
+            : entries.length} kayıt · 30s
+        </span>
       </div>
+
+      {/* Active filter chips */}
+      {(condFilter || decisionFilter) && (
+        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:10,color:C.muted3}}>Filtre aktif:</span>
+          {condFilter && (
+            <span style={{fontSize:10,background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"2px 8px",color:C.text,display:"flex",alignItems:"center",gap:4}}>
+              {condFilter.replace(/_/g," ")}
+              <button onClick={()=>setCondFilter("")} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:0,fontSize:12,lineHeight:1}}>×</button>
+            </span>
+          )}
+          {decisionFilter && (
+            <span style={{fontSize:10,background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"2px 8px",color:C.text,display:"flex",alignItems:"center",gap:4}}>
+              {decisionFilter}
+              <button onClick={()=>setDecisionFilter("")} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:0,fontSize:12,lineHeight:1}}>×</button>
+            </span>
+          )}
+          <button onClick={()=>{setCondFilter("");setDecisionFilter("");}} style={{fontSize:10,background:"none",border:"none",color:C.muted3,cursor:"pointer",textDecoration:"underline"}}>tümünü kaldır</button>
+        </div>
+      )}
 
       {entries.length === 0 && !loading && (
         <div style={{border:`1px dashed ${C.border}`,borderRadius:8,padding:32,textAlign:"center",color:C.muted3,fontSize:12,lineHeight:2}}>
@@ -831,7 +923,10 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
         </div>
       )}
 
-      {entries.map((e, i) => {
+      {entries
+        .filter(e => !condFilter     || e.condition === condFilter)
+        .filter(e => !decisionFilter || e.decision  === decisionFilter)
+        .map((e, i) => {
         return (
           <div key={`${e.item_id}-${i}`} style={{background:C.rowBg,border:`1px solid ${C.rowBorder}`,borderLeft:`3px solid ${condColor(e.condition,C)}`,borderRadius:8,padding:"12px 14px",marginBottom:8,display:"flex",gap:12,alignItems:"flex-start"}}>
             {/* Thumbnail — eBay imageUrl → OL cover fallback (safe, no loop) */}
@@ -1026,7 +1121,8 @@ export default function App() {
   const totalAlerts=Object.values(alertStats).reduce((s,n)=>s+n,0);
   const inp={background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text};
   const row={background:C.rowBg,border:`1px solid ${C.rowBorder}`};
-  const titles = useBookTitles(isbns);
+  const bookMeta = useBookMeta(isbns);
+  const titles = titlesFromMeta(bookMeta);
 
   return (
     <div style={{fontFamily:"var(--mono)",background:C.bg,minHeight:"100vh",color:C.text,transition:"background .25s,color .25s"}}>
@@ -1368,6 +1464,7 @@ export default function App() {
                             <span style={{fontFamily:"var(--sans)",fontSize:13,fontWeight:600}}>{isbn}</span>
                             {titles[isbn]&&<span style={{fontSize:12,color:C.muted,fontFamily:"var(--sans)"}}>— {titles[isbn]}</span>}
                             {titles[isbn]===null&&<span style={{fontSize:10,color:C.muted3}}>…</span>}
+                            {bookMeta[isbn]?.author&&<span style={{fontSize:10,color:C.muted3,fontFamily:"var(--sans)"}}>{bookMeta[isbn].author}{bookMeta[isbn].year?` · ${bookMeta[isbn].year}`:""}</span>}
                             {alertStats[isbn]>0&&<span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green}}>🎯 {alertStats[isbn]}</span>}
                           </div>
                           <div style={{fontSize:10,color:C.muted2,marginTop:3,display:"flex",gap:12}}>
