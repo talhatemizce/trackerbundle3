@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-22-browse-proxy";
+const BUILD_ID = "2026-02-22-wizard";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; return `${Math.round(s/60)}m`; };
@@ -382,6 +382,21 @@ export default function App() {
   const [runState, setRunState] = useState({});
   const [loading, setLoading] = useState(true);
 
+  const [rules, setRules] = useState({});
+
+  // Add Wizard state
+  const [showWizard, setShowWizard] = useState(false);
+  const [wizIsbn, setWizIsbn] = useState("");
+  const [wizNewMax, setWizNewMax] = useState("");
+  const [wizUsedMax, setWizUsedMax] = useState("");
+  const [wizInterval, setWizInterval] = useState("4h");
+  const [wizAdding, setWizAdding] = useState(false);
+
+  // Inline rule edit
+  const [editingRule, setEditingRule] = useState(null); // isbn or null
+  const [editRuleNewMax, setEditRuleNewMax] = useState("");
+  const [editRuleUsedMax, setEditRuleUsedMax] = useState("");
+
   const [newIsbn, setNewIsbn] = useState("");
   const [newInterval, setNewInterval] = useState("4h");
   const [editing, setEditing] = useState(null);
@@ -395,7 +410,10 @@ export default function App() {
     try {
       const [a,b,c,d,e] = await Promise.allSettled([req("/isbns"),req("/rules"),req("/status"),req("/alerts/stats"),req("/run-state")]);
       if (a.status==="fulfilled") setIsbns(a.value.items||[]);
-      if (b.status==="fulfilled") setIntervals(b.value.intervals||{});
+      if (b.status==="fulfilled") {
+        setIntervals(b.value.intervals||{});
+        setRules(b.value.rules||{});
+      }
       if (c.status==="fulfilled") setStatus(c.value);
       if (d.status==="fulfilled") setAlertStats(d.value.stats||{});
       if (e.status==="fulfilled") setRunState(e.value.by_isbn||{});
@@ -429,6 +447,45 @@ export default function App() {
       else { setIntervals(p=>{const r={...p};delete r[isbn];return r;}); push("Varsayılana döndürüldü","info"); }
       setEditing(null);
     } catch(e){ push("Ayarlanamadı: "+e.message,"error"); }
+  };
+
+  const submitWizard = async () => {
+    const isbn = wizIsbn.trim();
+    if (!isbn) return;
+    setWizAdding(true);
+    try {
+      const res = await req("/isbns", {method:"POST", body:JSON.stringify({isbn})});
+      const canonical = res.isbn;
+      if (!res.added && res.isbn) {
+        push(`${canonical} zaten listede`, "info");
+      }
+      // Always set limits if provided
+      if (wizNewMax || wizUsedMax) {
+        const nm = wizNewMax ? Number(wizNewMax) : undefined;
+        const um = wizUsedMax ? Number(wizUsedMax) : undefined;
+        await req(`/rules/${canonical}/override`, {method:"PUT", body:JSON.stringify({new_max: nm, used_all_max: um})});
+      }
+      const secs = wizInterval ? parseSecs(wizInterval) : null;
+      if (secs) {
+        await req(`/rules/${canonical}/interval`, {method:"PUT", body:JSON.stringify({interval_seconds: secs})});
+      }
+      if (res.added) push(`${canonical} eklendi`, "success");
+      setShowWizard(false);
+      setWizIsbn(""); setWizNewMax(""); setWizUsedMax(""); setWizInterval("4h");
+      load();
+    } catch(e) { push("Eklenemedi: " + e.message, "error"); }
+    finally { setWizAdding(false); }
+  };
+
+  const saveRuleLimits = async (isbn) => {
+    try {
+      const nm = editRuleNewMax ? Number(editRuleNewMax) : undefined;
+      const um = editRuleUsedMax ? Number(editRuleUsedMax) : undefined;
+      await req(`/rules/${isbn}/override`, {method:"PUT", body:JSON.stringify({new_max: nm, used_all_max: um})});
+      setRules(p => ({...p, [isbn]: {...(p[isbn]||{}), new_max: nm, used_all_max: um}}));
+      push(`Limitler güncellendi`, "success");
+      setEditingRule(null);
+    } catch(e) { push("Güncellenemedi: " + e.message, "error"); }
   };
 
   const clearAlerts = async (isbn) => {
@@ -532,18 +589,61 @@ export default function App() {
 
             {tab==="watchlist"&&(
               <div>
+                {/* Add Wizard Modal */}
+                {showWizard && (
+                  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)setShowWizard(false);}}>
+                    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:32,width:460,maxWidth:"95vw",boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+                      <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:6}}>📚 Yeni ISBN Ekle</div>
+                      <div style={{fontSize:11,color:C.muted,marginBottom:20}}>ISBN, fiyat limitleri ve tarama aralığını gir</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                        <div style={{gridColumn:"1/-1"}}>
+                          <div style={{fontSize:10,color:C.muted,marginBottom:5}}>ISBN *</div>
+                          <input className="inp" placeholder="9780132350884 veya 978-0974769431" value={wizIsbn} onChange={e=>setWizIsbn(e.target.value)} autoFocus style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text}}/>
+                        </div>
+                        <div>
+                          <div style={{fontSize:10,color:C.muted,marginBottom:5}}>New Max ($)</div>
+                          <input className="inp" type="number" placeholder="örn: 50" value={wizNewMax} onChange={e=>setWizNewMax(e.target.value)} style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.green}}/>
+                        </div>
+                        <div>
+                          <div style={{fontSize:10,color:C.muted,marginBottom:5}}>Used Good Max ($)</div>
+                          <input className="inp" type="number" placeholder="örn: 30" value={wizUsedMax} onChange={e=>setWizUsedMax(e.target.value)} style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.accent}}/>
+                        </div>
+                        <div style={{gridColumn:"1/-1"}}>
+                          <div style={{fontSize:10,color:C.muted,marginBottom:5}}>Tarama Aralığı</div>
+                          <select className="inp" value={wizInterval} onChange={e=>setWizInterval(e.target.value)} style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text}}>
+                            {[["30m","30 dakika"],["1h","1 saat"],["4h","4 saat"],["8h","8 saat"],["12h","12 saat"],["24h","1 gün"],["48h","2 gün"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      {(wizNewMax||wizUsedMax) && (
+                        <div style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:11,color:C.muted,lineHeight:1.8}}>
+                          {wizNewMax && <div>New: <b style={{color:C.green}}>${wizNewMax}</b></div>}
+                          {wizUsedMax && <>
+                            <div>Used Good: <b style={{color:C.accent}}>${wizUsedMax}</b></div>
+                            <div>Like New: <b style={{color:C.blue}}>${Math.round(Number(wizUsedMax)*1.15)}</b> · Very Good: <b style={{color:C.purple}}>${Math.round(Number(wizUsedMax)*1.10)}</b> · Acceptable: <b style={{color:C.orange}}>${Math.round(Number(wizUsedMax)*0.80)}</b></div>
+                          </>}
+                        </div>
+                      )}
+                      <div style={{display:"flex",gap:10}}>
+                        <button className="add-btn" onClick={submitWizard} disabled={wizAdding||!wizIsbn.trim()} style={{flex:1}}>
+                          {wizAdding ? "Ekleniyor…" : "+ Ekle"}
+                        </button>
+                        <button onClick={()=>setShowWizard(false)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"8px 18px",cursor:"pointer"}}>İptal</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Tek ISBN Ekle */}
                 <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:20,marginBottom:16}}>
-                  <ST C={C} style={{marginBottom:14}}>ISBN Ekle</ST>
-                  <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                    <input className="inp" placeholder="ISBN (örn: 9780132350884 veya 978-0132350884)" value={newIsbn} onChange={e=>setNewIsbn(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addIsbn()} style={{...inp,width:260}}/>
-                    <select className="inp" value={newInterval} onChange={e=>setNewInterval(e.target.value)} style={{...inp,width:130}}>
-                      {[["30m","30 dk"],["1h","1 saat"],["4h","4 saat"],["8h","8 saat"],["12h","12 saat"],["24h","1 gün"],["48h","2 gün"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}
-                    </select>
-                    <button className="add-btn" onClick={addIsbn} disabled={!newIsbn.trim()}>+ Ekle</button>
-                    <button onClick={()=>setShowCsvImport(p=>!p)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:"pointer"}}>
-                      {showCsvImport ? "▲ CSV Kapat" : "📄 Toplu CSV"}
-                    </button>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                    <ST C={C} style={{marginBottom:0}}>ISBN Yönetimi</ST>
+                    <div style={{display:"flex",gap:8}}>
+                      <button className="add-btn" onClick={()=>setShowWizard(true)}>+ Yeni ISBN</button>
+                      <button onClick={()=>setShowCsvImport(p=>!p)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:"pointer"}}>
+                        {showCsvImport ? "▲ CSV Kapat" : "📄 Toplu CSV"}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -591,28 +691,60 @@ export default function App() {
                   : isbns
                       .filter(isbn => !isbnFilter || isbn.includes(isbnFilter.replace(/-/g,"")))
                       .map(isbn=>(
-                    <div key={isbn} className="row-item" style={{...row}}>
-                      <div style={{flex:1}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                          <span style={{fontFamily:"var(--sans)",fontSize:13,fontWeight:600}}>{isbn}</span>
-                          {titles[isbn]&&<span style={{fontSize:12,color:C.muted,fontFamily:"var(--sans)"}}>— {titles[isbn]}</span>}
-                          {titles[isbn]===null&&<span style={{fontSize:10,color:C.muted3}}>…</span>}
-                          {alertStats[isbn]>0&&<span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green}}>🎯 {alertStats[isbn]}</span>}
+                    <div key={isbn} style={{...row,borderRadius:8,marginBottom:8,overflow:"hidden"}}>
+                      <div className="row-item" style={{borderBottom:editingRule===isbn?`1px solid ${C.border}`:"none",marginBottom:0,paddingBottom:editingRule===isbn?12:undefined}}>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                            <span style={{fontFamily:"var(--sans)",fontSize:13,fontWeight:600}}>{isbn}</span>
+                            {titles[isbn]&&<span style={{fontSize:12,color:C.muted,fontFamily:"var(--sans)"}}>— {titles[isbn]}</span>}
+                            {titles[isbn]===null&&<span style={{fontSize:10,color:C.muted3}}>…</span>}
+                            {alertStats[isbn]>0&&<span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green}}>🎯 {alertStats[isbn]}</span>}
+                          </div>
+                          <div style={{fontSize:10,color:C.muted2,marginTop:3,display:"flex",gap:12}}>
+                            <span>{runState[isbn]?`son tarama: ${fmtTime(runState[isbn])}`:"henüz taranmadı"}</span>
+                            {rules[isbn]?.new_max!=null&&<span style={{color:C.green}}>New: ${rules[isbn].new_max}</span>}
+                            {rules[isbn]?.used_all_max!=null&&<span style={{color:C.accent}}>Used: ${rules[isbn].used_all_max}</span>}
+                          </div>
                         </div>
-                        <div style={{fontSize:10,color:C.muted2,marginTop:3}}>{runState[isbn]?`son tarama: ${fmtTime(runState[isbn])}`:"henüz taranmadı"}</div>
-                      </div>
-                      {editing===isbn ? (
-                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                          <input className="inp" style={{...inp,width:90,padding:"4px 8px",fontSize:12}} placeholder="4h / 30m" value={editVal} autoFocus onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveInterval(isbn,editVal);if(e.key==="Escape")setEditing(null);}}/>
-                          <button className="add-btn" style={{padding:"4px 10px",fontSize:12}} onClick={()=>saveInterval(isbn,editVal)}>✓</button>
-                          <button className="icon-btn" style={{fontSize:13}} onClick={()=>setEditing(null)}>✕</button>
-                        </div>
-                      ) : (
-                        <button onClick={()=>{setEditing(isbn);setEditVal(fmtSecs(intervals[isbn])==="default"?"":fmtSecs(intervals[isbn]));}} style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:4,color:intervals[isbn]?C.accent:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"3px 10px",cursor:"pointer"}}>
-                          {fmtSecs(intervals[isbn])}
+                        <button onClick={()=>{
+                          if(editingRule===isbn){setEditingRule(null);}
+                          else{setEditingRule(isbn);setEditRuleNewMax(rules[isbn]?.new_max||"");setEditRuleUsedMax(rules[isbn]?.used_all_max||"");}
+                        }} style={{background:C.surface2,border:`1px solid ${editingRule===isbn?C.accent:C.border}`,borderRadius:4,color:editingRule===isbn?C.accent:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"3px 10px",cursor:"pointer"}} title="Limitleri düzenle">
+                          {editingRule===isbn?"✕ Kapat":"✏ Limit"}
                         </button>
+                        {editing===isbn ? (
+                          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                            <input className="inp" style={{...inp,width:90,padding:"4px 8px",fontSize:12}} placeholder="4h / 30m" value={editVal} autoFocus onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveInterval(isbn,editVal);if(e.key==="Escape")setEditing(null);}}/>
+                            <button className="add-btn" style={{padding:"4px 10px",fontSize:12}} onClick={()=>saveInterval(isbn,editVal)}>✓</button>
+                            <button className="icon-btn" style={{fontSize:13}} onClick={()=>setEditing(null)}>✕</button>
+                          </div>
+                        ) : (
+                          <button onClick={()=>{setEditing(isbn);setEditVal(fmtSecs(intervals[isbn])==="default"?"":fmtSecs(intervals[isbn]));}} style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:4,color:intervals[isbn]?C.blue:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"3px 10px",cursor:"pointer"}}>
+                            ⏱ {fmtSecs(intervals[isbn])}
+                          </button>
+                        )}
+                        <button className="icon-btn" onClick={()=>deleteIsbn(isbn)} style={{color:C.muted2,fontSize:18}}>×</button>
+                      </div>
+                      {editingRule===isbn && (
+                        <div style={{padding:"12px 16px",background:C.surface2,display:"flex",gap:10,alignItems:"flex-end",flexWrap:"wrap"}}>
+                          <div>
+                            <div style={{fontSize:10,color:C.muted,marginBottom:4}}>New Max ($)</div>
+                            <input className="inp" type="number" placeholder="örn: 50" value={editRuleNewMax} onChange={e=>setEditRuleNewMax(e.target.value)} style={{width:100,padding:"5px 8px",fontSize:12,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.green}}/>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:C.muted,marginBottom:4}}>Used Good Max ($)</div>
+                            <input className="inp" type="number" placeholder="örn: 30" value={editRuleUsedMax} onChange={e=>setEditRuleUsedMax(e.target.value)} style={{width:100,padding:"5px 8px",fontSize:12,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.accent}}/>
+                          </div>
+                          {editRuleUsedMax && (
+                            <div style={{fontSize:10,color:C.muted3,lineHeight:1.8}}>
+                              Like New: <span style={{color:C.blue}}>${Math.round(Number(editRuleUsedMax)*1.15)}</span>{" · "}
+                              VG: <span style={{color:C.purple}}>${Math.round(Number(editRuleUsedMax)*1.10)}</span>{" · "}
+                              Acceptable: <span style={{color:C.orange}}>${Math.round(Number(editRuleUsedMax)*0.80)}</span>
+                            </div>
+                          )}
+                          <button className="add-btn" style={{padding:"6px 18px",fontSize:12}} onClick={()=>saveRuleLimits(isbn)}>✓ Kaydet</button>
+                        </div>
                       )}
-                      <button className="icon-btn" onClick={()=>deleteIsbn(isbn)} style={{color:C.muted2,fontSize:18}}>×</button>
                     </div>
                   ))}
               </div>

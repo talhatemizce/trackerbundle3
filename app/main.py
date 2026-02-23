@@ -107,9 +107,14 @@ def add_isbn_endpoint(item: ISBNItem):
     if not isbn:
         raise HTTPException(status_code=400, detail="isbn empty")
 
+    # Validate before attempting add
+    if not isbn_store._validate(isbn):
+        raise HTTPException(status_code=400, detail="invalid_isbn")
+
+    canonical = isbn_store._clean(isbn)
     added = isbn_store.add_isbn(isbn)
     count = len(isbn_store.list_isbns())
-    return {"ok": True, "added": added, "isbn": isbn, "count": count}
+    return {"ok": True, "added": added, "isbn": canonical, "count": count}
 
 
 @app.delete("/isbns/{isbn}")
@@ -211,7 +216,16 @@ def import_isbns(payload: ImportPayload):
 # ---- Rules endpoints (interval + overrides, file_lock via rules_store) ----
 @app.get("/rules")
 def get_rules():
-    return {"ok": True, "intervals": rules_store.list_intervals()}
+    intervals = rules_store.list_intervals()
+    # Also return new_max/used_all_max per ISBN
+    rules = {}
+    for isbn, secs in intervals.items():
+        try:
+            r = rules_store.get_rule(isbn)
+            rules[isbn] = {"interval_seconds": r.interval_seconds, "new_max": r.new_max, "used_all_max": r.used_all_max}
+        except Exception:
+            rules[isbn] = {"interval_seconds": secs, "new_max": None, "used_all_max": None}
+    return {"ok": True, "intervals": intervals, "rules": rules}
 
 
 @app.get("/rules/{isbn}")
