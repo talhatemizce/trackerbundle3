@@ -281,18 +281,20 @@ def alerts_history(limit: int = 50, isbn: str | None = None):
     entries = _alert_history.get_history(limit=limit, isbn_filter=isbn)
     return {"ok": True, "entries": entries, "count": len(entries)}
 
+@app.delete("/alerts/dedup/{isbn}")
+def clear_dedup(isbn: str):
+    """ISBN için dedup store'u temizle — bir sonraki scheduler çalışmasında yeniden alert gönderilir.
+    NOT: history store'a dokunmaz; sadece notified.json'u temizler."""
+    count = _alert_store.clear_isbn(isbn)
+    return {"ok": True, "isbn": isbn, "dedup_cleared": count}
+
+
 @app.delete("/alerts/{isbn}")
 def clear_alerts(isbn: str):
+    """Hem dedup store'u hem history store'u temizler."""
     _alert_store.clear_isbn(isbn)
     _alert_history.clear_isbn(isbn)
     return {"ok": True, "isbn": isbn}
-
-
-@app.delete("/alerts/dedup/{isbn}")
-def clear_dedup(isbn: str):
-    """ISBN için dedup store'u temizle — bir sonraki scheduler çalışmasında yeniden alert gönderilir."""
-    count = _alert_store.clear_isbn(isbn)
-    return {"ok": True, "isbn": isbn, "dedup_cleared": count}
 
 @app.post("/debug/inject-history")
 def inject_test_history():
