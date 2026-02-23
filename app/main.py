@@ -266,15 +266,26 @@ def set_isbn_override_endpoint(isbn: str, payload: OverridePayload):
 
 # ---- Alert stats & clear (panel dashboard) ----
 from app import alert_store as _alert_store
+from app import alert_history_store as _alert_history
 
 @app.get("/alerts/stats")
 def alerts_stats():
     return {"ok": True, "stats": _alert_store.get_stats()}
 
+@app.get("/alerts/summary")
+def alerts_summary():
+    return {"ok": True, **_alert_history.get_summary()}
+
+@app.get("/alerts/history")
+def alerts_history(limit: int = 50, isbn: str | None = None):
+    entries = _alert_history.get_history(limit=limit, isbn_filter=isbn)
+    return {"ok": True, "entries": entries, "count": len(entries)}
+
 @app.delete("/alerts/{isbn}")
 def clear_alerts(isbn: str):
-    count = _alert_store.clear_isbn(isbn)
-    return {"ok": True, "isbn": isbn, "cleared": count}
+    _alert_store.clear_isbn(isbn)
+    _alert_history.clear_isbn(isbn)
+    return {"ok": True, "isbn": isbn}
 
 
 # ---- Run state (scheduler son tarama zamanları, panel dashboard) ----

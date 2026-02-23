@@ -31,10 +31,10 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-22-wizard";
+const BUILD_ID = "2026-02-22-alerts-feed";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
-const fmtSecs = (s) => { if (!s) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; return `${Math.round(s/60)}m`; };
+const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
 const parseSecs = (str) => { const m = String(str).trim().match(/^(\d+(?:\.\d+)?)(d|h|m|s)?$/i); if (!m) return null; const n = parseFloat(m[1]), u = (m[2]||"h").toLowerCase(); return Math.round(u==="d"?n*86400:u==="h"?n*3600:u==="m"?n*60:n); };
 const fmtTime = (unix) => unix ? new Date(unix*1000).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"}) : "—";
 
@@ -189,13 +189,49 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
   );
 }
 
-function PricingTab({ isbns, C, push }) {
+function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
   const [selected, setSelected] = useState(isbns[0]||"");
   const [goodLimit, setGoodLimit] = useState(30);
   const [newLimit, setNewLimit] = useState(50);
   const [suggestedResult, setSuggestedResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [backoff, setBackoff] = useState(null);
+  const [isbnNewMax, setIsbnNewMax] = useState("");
+  const [isbnUsedMax, setIsbnUsedMax] = useState("");
+  const [isbnInterval, setIsbnInterval] = useState("");
+  const [savingRule, setSavingRule] = useState(false);
+
+  // Populate override fields when ISBN changes
+  useEffect(() => {
+    if (selected && rules[selected]) {
+      setIsbnNewMax(rules[selected].new_max != null ? String(rules[selected].new_max) : "");
+      setIsbnUsedMax(rules[selected].used_all_max != null ? String(rules[selected].used_all_max) : "");
+      const secs = rules[selected].interval_seconds;
+      setIsbnInterval(secs ? fmtSecs(secs) : "");
+    } else {
+      setIsbnNewMax(""); setIsbnUsedMax(""); setIsbnInterval("");
+    }
+  }, [selected, rules]);
+
+  const saveIsbnRule = async () => {
+    if (!selected) return;
+    setSavingRule(true);
+    try {
+      if (isbnNewMax || isbnUsedMax) {
+        await req(`/rules/${selected}/override`, {method:"PUT", body:JSON.stringify({
+          new_max: isbnNewMax ? Number(isbnNewMax) : undefined,
+          used_all_max: isbnUsedMax ? Number(isbnUsedMax) : undefined,
+        })});
+      }
+      const secs = isbnInterval ? parseSecs(isbnInterval) : null;
+      if (secs) {
+        await req(`/rules/${selected}/interval`, {method:"PUT", body:JSON.stringify({interval_seconds:secs})});
+      }
+      push(`${selected} kuralları güncellendi`, "success");
+      if (onRulesSaved) onRulesSaved();
+    } catch(e) { push("Kayıt hatası: "+e.message, "error"); }
+    finally { setSavingRule(false); }
+  };
 
   useEffect(() => {
     req("/ebay/debug/finding-backoff", {}, 5000).then(setBackoff).catch(() => setBackoff(null));
@@ -280,6 +316,40 @@ function PricingTab({ isbns, C, push }) {
         </div>
       </div>
 
+      {/* Per-ISBN Kural Override */}
+      {selected && (
+        <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:20,marginBottom:20}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <ST C={C} style={{marginBottom:0}}>ISBN Kural Override — {selected}{titles[selected]?` · ${titles[selected]}`:""}</ST>
+            <span style={{fontSize:10,color:C.muted3}}>Boş bırakırsan varsayılan</span>
+          </div>
+          <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end"}}>
+            <div>
+              <div style={{fontSize:10,color:C.muted,marginBottom:4}}>New Max ($)</div>
+              <input className="inp" type="number" placeholder="örn: 50" value={isbnNewMax} onChange={e=>setIsbnNewMax(e.target.value)} style={{width:100,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.green}}/>
+            </div>
+            <div>
+              <div style={{fontSize:10,color:C.muted,marginBottom:4}}>Used Good Max ($)</div>
+              <input className="inp" type="number" placeholder="örn: 30" value={isbnUsedMax} onChange={e=>setIsbnUsedMax(e.target.value)} style={{width:100,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.accent}}/>
+            </div>
+            <div>
+              <div style={{fontSize:10,color:C.muted,marginBottom:4}}>Interval</div>
+              <input className="inp" placeholder="4h / 30m / 1d" value={isbnInterval} onChange={e=>setIsbnInterval(e.target.value)} style={{width:100,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.blue}}/>
+            </div>
+            {isbnUsedMax && (
+              <div style={{fontSize:10,color:C.muted3,lineHeight:1.9}}>
+                Like New: <b style={{color:C.blue}}>${Math.round(Number(isbnUsedMax)*1.15)}</b>{" "}
+                VG: <b style={{color:C.purple}}>${Math.round(Number(isbnUsedMax)*1.10)}</b>{" "}
+                Accept: <b style={{color:C.orange}}>${Math.round(Number(isbnUsedMax)*0.80)}</b>
+              </div>
+            )}
+            <button className="add-btn" onClick={saveIsbnRule} disabled={savingRule} style={{padding:"8px 20px"}}>
+              {savingRule ? "Kaydediliyor…" : "✓ Kaydet"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Önerilen Fiyat Sorgulama */}
       <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:24}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
@@ -292,7 +362,7 @@ function PricingTab({ isbns, C, push }) {
 
         <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:24}}>
           <select className="inp" value={selected} onChange={e=>setSelected(e.target.value)} style={{flex:1,maxWidth:300}}>
-            {isbns.length===0 ? <option value="">Önce watchlist'e ISBN ekle</option> : isbns.map(isbn=><option key={isbn} value={isbn}>{isbn}</option>)}
+            {isbns.length===0 ? <option value="">Önce watchlist'e ISBN ekle</option> : isbns.map(isbn=><option key={isbn} value={isbn}>{isbn}{titles[isbn] ? ` — ${titles[isbn]}` : ""}</option>)}
           </select>
           <button className="add-btn" onClick={()=>fetchSuggested(false)} disabled={loading||!selected}>
             {loading ? (
@@ -366,6 +436,128 @@ function PricingTab({ isbns, C, push }) {
 }
 
 
+
+
+function AlertsFeedTab({ C, push, isbns, titles }) {
+  const [entries, setEntries] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [isbnFilter, setIsbnFilter] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const url = isbnFilter ? `/alerts/history?limit=100&isbn=${isbnFilter}` : "/alerts/history?limit=100";
+      const [h, s] = await Promise.allSettled([req(url), req("/alerts/summary")]);
+      if (h.status === "fulfilled") setEntries(h.value.entries || []);
+      if (s.status === "fulfilled") setSummary(s.value);
+    } catch(e) { push("Yüklenemedi: "+e.message, "error"); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [isbnFilter]);
+
+  const condLabel = { brand_new:"New", like_new:"Like New", very_good:"Very Good", good:"Good", acceptable:"Acceptable", used_all:"Used" };
+  const condColor = (b, C) => ({brand_new:C.green, like_new:C.blue, very_good:C.purple, good:C.accent, acceptable:C.orange, used_all:C.muted})[b] || C.muted;
+
+  const fmtTs = (ts) => {
+    const d = new Date(ts*1000);
+    const now = Date.now();
+    const diff = Math.round((now - ts*1000)/1000);
+    if (diff < 60) return `${diff}s önce`;
+    if (diff < 3600) return `${Math.round(diff/60)}dk önce`;
+    if (diff < 86400) return `${Math.round(diff/3600)}s önce`;
+    return d.toLocaleDateString("tr-TR");
+  };
+
+  return (
+    <div>
+      {/* Summary cards */}
+      {summary && (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:24}}>
+          <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:10,padding:"16px 20px"}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:4}}>Toplam Alert</div>
+            <div style={{fontSize:28,fontWeight:600,color:C.text}}>{summary.total}</div>
+          </div>
+          <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:10,padding:"16px 20px"}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:4}}>Son 24 Saat</div>
+            <div style={{fontSize:28,fontWeight:600,color:C.green}}>{summary.last_24h}</div>
+          </div>
+          <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:10,padding:"16px 20px"}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:4}}>ISBN Sayısı</div>
+            <div style={{fontSize:28,fontWeight:600,color:C.blue}}>{Object.keys(summary.by_isbn||{}).length}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Filter + refresh */}
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
+        <select className="inp" value={isbnFilter} onChange={e=>setIsbnFilter(e.target.value)} style={{width:280,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text}}>
+          <option value="">Tüm ISBNler</option>
+          {isbns.map(isbn=><option key={isbn} value={isbn}>{isbn}{titles[isbn]?` — ${titles[isbn]}`:""}</option>)}
+        </select>
+        <button onClick={load} disabled={loading} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:"pointer"}}>
+          {loading ? "⟳" : "↻ Yenile"}
+        </button>
+        <span style={{fontSize:11,color:C.muted3}}>{entries.length} kayıt · 30s otomatik yenile</span>
+      </div>
+
+      {entries.length === 0 && !loading && (
+        <div style={{border:`1px dashed ${C.border}`,borderRadius:8,padding:40,textAlign:"center",color:C.muted3,fontSize:12}}>
+          Henüz alert geçmişi yok.<br/>
+          <span style={{fontSize:10,marginTop:4,display:"block"}}>Scheduler bir deal bulunca buraya kaydedilir.</span>
+        </div>
+      )}
+
+      {entries.map((e, i) => {
+        const olCover = `https://covers.openlibrary.org/b/isbn/${e.isbn}-S.jpg`;
+        const imgSrc = e.image_url || olCover;
+
+        return (
+          <div key={`${e.item_id}-${i}`} style={{background:C.rowBg,border:`1px solid ${C.rowBorder}`,borderLeft:`3px solid ${condColor(e.condition,C)}`,borderRadius:8,padding:"12px 14px",marginBottom:8,display:"flex",gap:12,alignItems:"flex-start"}}>
+            {/* Thumbnail */}
+            <a href={e.url||"#"} target="_blank" rel="noreferrer" style={{flexShrink:0}}>
+              <img
+                src={imgSrc}
+                loading="lazy"
+                width={52} height={52}
+                style={{borderRadius:5,objectFit:"cover",background:C.surface2,border:`1px solid ${C.border}`}}
+                onError={ev => { if (ev.target.src !== olCover) ev.target.src = olCover; }}
+                alt=""
+              />
+            </a>
+            {/* Content */}
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:3}}>
+                <span style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:340}}>{e.title||e.isbn}</span>
+                <span style={{fontSize:10,color:condColor(e.condition,C),background:"rgba(255,255,255,.04)",border:`1px solid ${condColor(e.condition,C)}`,borderRadius:3,padding:"1px 6px"}}>{condLabel[e.condition]||e.condition}</span>
+                <span style={{fontSize:11,fontWeight:600,color:e.decision==="BUY"?C.green:C.blue}}>
+                  {e.decision==="BUY"?"🟢 BUY":"🟡 OFFER"}
+                </span>
+              </div>
+              <div style={{fontSize:11,color:C.muted,display:"flex",gap:12,flexWrap:"wrap"}}>
+                <span>ISBN: {e.isbn}{titles[e.isbn]?` · ${titles[e.isbn]}`:""}</span>
+                <span style={{color:C.text,fontWeight:600}}>${e.total}</span>
+                <span style={{color:C.muted3}}>limit: ${e.limit}</span>
+                {e.sold_avg && <span>sold avg: ${e.sold_avg}</span>}
+                {e.ship_estimated && <span style={{color:C.orange}}>est.ship</span>}
+              </div>
+            </div>
+            {/* Time + link */}
+            <div style={{flexShrink:0,textAlign:"right"}}>
+              <div style={{fontSize:10,color:C.muted3,marginBottom:6}}>{fmtTs(e.ts)}</div>
+              {e.url && (
+                <a href={e.url} target="_blank" rel="noreferrer" style={{fontSize:11,color:C.accent,textDecoration:"none",border:`1px solid ${C.accent}`,borderRadius:4,padding:"2px 8px",whiteSpace:"nowrap"}}>
+                  eBay →
+                </a>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 const TABS = ["dashboard","watchlist","pricing","alerts"];
 
@@ -750,34 +942,9 @@ export default function App() {
               </div>
             )}
 
-            {tab==="pricing"&&<PricingTab isbns={isbns} C={C} push={push}/>}
+            {tab==="pricing"&&<PricingTab isbns={isbns} C={C} push={push} titles={titles} rules={rules} onRulesSaved={load}/>}
 
-            {tab==="alerts"&&(
-              <div>
-                <ST C={C} style={{marginBottom:16}}>Bildirim Geçmişi · {totalAlerts} item işaretlendi</ST>
-                {Object.keys(alertStats).length===0
-                  ? <div style={{border:`1px dashed ${C.border}`,borderRadius:8,padding:40,textAlign:"center",color:C.muted3,fontSize:12}}>Henüz hiç alert gönderilmedi.<br/><span style={{fontSize:10,marginTop:4,display:"block",color:C.muted3}}>Bulgular Telegram'a gönderilir.</span></div>
-                  : Object.entries(alertStats).map(([isbn,count])=>(
-                    <div key={isbn} style={{background:isDark?"#0d0d14":"#fff",border:`1px solid ${isDark?"#1a2a1a":"#d1fae5"}`,borderLeft:`3px solid ${C.green}`,borderRadius:8,padding:18,marginBottom:12}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <div>
-                          <div style={{fontFamily:"var(--sans)",fontSize:14,fontWeight:600}}>{isbn}</div>
-                          <div style={{fontSize:10,color:C.muted,marginTop:3}}>{count} benzersiz item Telegram'a bildirildi</div>
-                        </div>
-                        <div style={{display:"flex",alignItems:"center",gap:12}}>
-                          <span style={{fontSize:28,fontWeight:600,color:C.green}}>{count}</span>
-                          <button onClick={()=>clearAlerts(isbn)} style={{background:"none",border:`1px solid ${isDark?"#2a1a1a":"#fecaca"}`,color:C.red,padding:"5px 12px",borderRadius:5,fontSize:11,cursor:"pointer",fontFamily:"var(--mono)"}}>Temizle</button>
-                        </div>
-                      </div>
-                      {runState[isbn]&&<div style={{fontSize:10,color:C.muted3,marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8}}>Son tarama: {new Date(runState[isbn]*1000).toLocaleString("tr-TR")}</div>}
-                    </div>
-                  ))}
-                <div style={{marginTop:20,padding:"16px 20px",background:C.cardBg,borderRadius:12,border:`1px solid ${C.cardBorder}`,fontSize:11,color:C.muted,lineHeight:2}}>
-                  📬 Gerçek zamanlı deal bildirimleri Telegram'a gidiyor.<br/>
-                  Bu ekran yalnızca <strong style={{color:C.text}}>dedup listesini</strong> gösterir.
-                </div>
-              </div>
-            )}
+{tab==="alerts"&&<AlertsFeedTab C={C} push={push} isbns={isbns} titles={titles}/>}
           </>
         )}
       </div>

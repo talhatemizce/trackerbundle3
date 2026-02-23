@@ -14,6 +14,7 @@ from app.rules_store import get_rule, effective_limit
 from app import run_state
 from app.ebay_client import browse_search_isbn, finding_sold_stats, normalize_condition, item_total_price
 from app.alert_store import check_and_mark
+from app import alert_history_store
 from app import sold_stats_store
 
 logger = logging.getLogger("trackerbundle.scheduler_ebay")
@@ -247,9 +248,42 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
         count_for_msg = cond_stats.get("count") if cond_stats.get("count") is not None else sold_overall_count
 
         msg = _format_message(isbn, it, bucket, total, limit, sold_avg=avg_for_msg, sold_count=count_for_msg, ship_estimated=it.get("_shipping_estimated", False))
+
+        # Decide label for history
+        make_offer = "BEST_OFFER" in (it.get("buyingOptions") or [])
+        decision = "OFFER" if make_offer else "BUY"
+
+        # Extract image URL from eBay Browse response
+        image_url = ""
+        img = it.get("image") or {}
+        if isinstance(img, dict):
+            image_url = img.get("imageUrl") or ""
+        if not image_url:
+            thumbs = it.get("thumbnailImages") or []
+            if thumbs and isinstance(thumbs[0], dict):
+                image_url = thumbs[0].get("imageUrl") or ""
+
         ok = await _send_telegram(msg)
         if ok:
             sent += 1
+            # Write to alert history (fire-and-forget; don't block on error)
+            try:
+                alert_history_store.add_entry(
+                    isbn=isbn,
+                    item_id=item_id,
+                    title=(it.get("title") or "")[:120],
+                    condition=bucket,
+                    total=total,
+                    limit=limit,
+                    decision=decision,
+                    url=it.get("itemWebUrl") or "",
+                    image_url=image_url,
+                    sold_avg=avg_for_msg,
+                    sold_count=count_for_msg,
+                    ship_estimated=it.get("_shipping_estimated", False),
+                )
+            except Exception as _he:
+                logger.warning("alert_history write failed: %s", _he)
 
     return sent
 
