@@ -31,24 +31,77 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-23-ebay-link-modal";
+const BUILD_ID = "2026-02-23-ebay-single-fn";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
-// eBay condition ID mapping (verify when eBay updates their URL scheme)
-// Last verified: 2026-02. Update EBAY_COND_IDS if searches return wrong results.
-const EBAY_COND_IDS = {
+// ─── eBay search URL builder ─────────────────────────────────────────────────
+// SINGLE SOURCE OF TRUTH for all "Open on eBay" links in this panel.
+// If eBay changes URL params: update only this function, rebuild dist, deploy.
+//
+// Params:
+//   isbn      : ISBN-13 (digits only preferred)
+//   condition : optional bucket key (brand_new | like_new | very_good | good | acceptable)
+//   sort      : "cheapest" (default) | "none"
+//
+// Current param strategy (last verified: 2026-02):
+//   _sacat=267        Books category
+//   LH_BIN=1          Buy It Now only
+//   rt=nc             refine + no cache (freshness)
+//   _sop=15           Sort: Price + Shipping, lowest first
+//   LH_ItemCondition  condition filter (best-effort, omit if unknown bucket)
+//
+// COND_IDS: eBay Books condition IDs — may drift with UI deploys.
+// If links return wrong condition results, update values here.
+const _EBAY_COND_IDS = {
   brand_new:  "1000",
   like_new:   "3000",
   very_good:  "4000",
   good:       "5000",
   acceptable: "6000",
+  // used_all → no condition filter (shows all used)
 };
-const ebaySearchUrl = (isbn, bucket) => {
-  const base = `https://www.ebay.com/sch/i.html?_nkw=${isbn}&_sacat=267&LH_BIN=1&rt=nc&_sop=15`;
-  const cid = bucket && EBAY_COND_IDS[bucket];
-  return cid ? `${base}&LH_ItemCondition=${cid}` : base;
-};
+
+function buildEbaySearchUrl({ isbn, condition = null, sort = "cheapest" } = {}) {
+  if (!isbn) return "#";
+  const params = new URLSearchParams({
+    _nkw:   isbn,
+    _sacat: "267",
+    LH_BIN: "1",
+    rt:     "nc",
+    _sop:   sort === "cheapest" ? "15" : "12",   // 15=price+ship asc, 12=best match
+  });
+  const cid = condition && _EBAY_COND_IDS[condition];
+  if (cid) params.set("LH_ItemCondition", cid);
+  return `https://www.ebay.com/sch/i.html?${params.toString()}`;
+}
+
+// Unit-like smoke tests (run once at module load, log any mismatch)
+;(() => {
+  const cases = [
+    { input: { isbn: "9780132350884" },
+      expect: "https://www.ebay.com/sch/i.html?_nkw=9780132350884&_sacat=267&LH_BIN=1&rt=nc&_sop=15" },
+    { input: { isbn: "9780132350884", condition: "good" },
+      expect: "https://www.ebay.com/sch/i.html?_nkw=9780132350884&_sacat=267&LH_BIN=1&rt=nc&_sop=15&LH_ItemCondition=5000" },
+    { input: { isbn: "9780974769431", condition: "like_new", sort: "cheapest" },
+      expect: "https://www.ebay.com/sch/i.html?_nkw=9780974769431&_sacat=267&LH_BIN=1&rt=nc&_sop=15&LH_ItemCondition=3000" },
+  ];
+  cases.forEach(({ input, expect }) => {
+    const got = buildEbaySearchUrl(input);
+    if (got !== expect) console.warn("[buildEbaySearchUrl] MISMATCH", { input, got, expect });
+  });
+})();
+
+// Telemetry: report broken eBay link (fire-and-forget)
+async function reportBrokenLink({ isbn, url, context }) {
+  try {
+    await fetch("/telemetry/link-broken", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isbn, url, context, build_id: BUILD_ID, userAgent: navigator.userAgent }),
+    });
+  } catch (_) { /* non-fatal */ }
+}
 const cleanIsbn = (s) => (s || "").replace(/[^0-9Xx]/g, "").toUpperCase();
 const validateIsbn = (s) => {
   const c = cleanIsbn(s);
@@ -422,7 +475,19 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
                 <div style={{fontSize:14,fontWeight:600,color:C.text}}>Aktif Listeler — {activeStats.isbn}</div>
                 <div style={{fontSize:10,color:C.muted3,marginTop:2}}>eBay Browse · anlık, FIXED_PRICE</div>
               </div>
-              <button onClick={()=>setShowStatsModal(false)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"4px 12px",cursor:"pointer"}}>✕ Kapat</button>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <button
+                  onClick={async()=>{
+                    await reportBrokenLink({ isbn: activeStats.isbn, url: buildEbaySearchUrl({ isbn: activeStats.isbn }), context: "pricing_modal" });
+                    alert("Teşekkürler — link sorunu kaydedildi.");
+                  }}
+                  title="eBay linklerinde sorun mu var? Bildir."
+                  style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted3,fontFamily:"var(--mono)",fontSize:10,padding:"4px 10px",cursor:"pointer"}}
+                >
+                  🔗 Link bozuk?
+                </button>
+                <button onClick={()=>setShowStatsModal(false)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"4px 12px",cursor:"pointer"}}>✕ Kapat</button>
+              </div>
             </div>
 
             {/* Overall new vs used */}
@@ -468,7 +533,7 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
                           <td style={{padding:"7px 8px",textAlign:"right",color:C.text,fontWeight:600}}>${st.min}</td>
                           <td style={{padding:"7px 8px",textAlign:"right",color:C.muted}}>${st.avg}</td>
                           <td style={{padding:"7px 8px",textAlign:"right"}}>
-                            <a href={ebaySearchUrl(activeStats.isbn, k)} target="_blank" rel="noreferrer"
+                            <a href={buildEbaySearchUrl({ isbn: activeStats.isbn, condition: k })} target="_blank" rel="noreferrer"
                               style={{fontSize:10,color:C.accent,border:`1px solid ${C.accent}`,borderRadius:3,padding:"1px 7px",textDecoration:"none"}}>
                               eBay ↗
                             </a>
@@ -499,7 +564,7 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
                       <div style={{flex:1,minWidth:0,fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
                       <span style={{color:condColors[it.bucket]||C.muted,fontSize:10,flexShrink:0}}>{condLabels[it.bucket]||it.bucket}</span>
                       <span style={{color:C.text,fontWeight:600,fontSize:13,flexShrink:0}}>${it.total}</span>
-                      <a href={ebaySearchUrl(activeStats.isbn, it.bucket)} target="_blank" rel="noreferrer"
+                      <a href={buildEbaySearchUrl({ isbn: activeStats.isbn, condition: it.bucket })} target="_blank" rel="noreferrer"
                         title={`eBay'de ${condLabels[it.bucket]||it.bucket} kondisyonlu, en ucuzdan`}
                         style={{flexShrink:0,fontSize:10,color:C.accent,border:`1px solid ${C.accent}`,borderRadius:3,padding:"1px 7px",textDecoration:"none",whiteSpace:"nowrap"}}>
                         eBay ↗
@@ -1328,8 +1393,17 @@ export default function App() {
                             ⏱ {fmtSecs(intervals[isbn])}
                           </button>
                         )}
-                        <a href={ebaySearchUrl(isbn, null)} target="_blank" rel="noreferrer"
-                          title="eBay'de en ucuzdan listele (kondisyonsuz)"
+                        <a
+                          href={buildEbaySearchUrl({ isbn })}
+                          target="_blank" rel="noreferrer"
+                          title="eBay'de en ucuzdan · Shift+Tık = link bozuk bildir"
+                          onClick={async e=>{
+                            if (e.shiftKey) {
+                              e.preventDefault();
+                              await reportBrokenLink({ isbn, url: buildEbaySearchUrl({ isbn }), context: "watchlist" });
+                              alert("Link sorunu kaydedildi.");
+                            }
+                          }}
                           style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"3px 10px",cursor:"pointer",textDecoration:"none",whiteSpace:"nowrap"}}>
                           eBay ↗
                         </a>

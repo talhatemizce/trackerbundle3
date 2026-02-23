@@ -13,7 +13,7 @@ import io
 from typing import List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app import isbn_store
@@ -352,6 +352,60 @@ async def amazon_prices_telegram(asin: str):
         return {"ok": True, "text": _amz.format_telegram(data)}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+# ---- Link telemetry (broken eBay links) ----
+@app.post("/telemetry/link-broken")
+async def report_broken_link(request: Request):
+    """
+    Lightweight broken-link report from panel.
+    Appends to data/link_telemetry.jsonl (newline-delimited JSON, append-only).
+    Internal use only — no auth needed since on VPS private network.
+    """
+    import json, time
+    from pathlib import Path as _P
+    from app.core.config import get_settings as _gs
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    entry = {
+        "ts": int(time.time()),
+        "isbn": str(body.get("isbn", ""))[:20],
+        "url": str(body.get("url", ""))[:300],
+        "context": str(body.get("context", ""))[:30],
+        "build_id": str(body.get("build_id", ""))[:40],
+        "user_agent": str(body.get("userAgent", ""))[:120],
+    }
+
+    try:
+        out = _gs().resolved_data_dir() / "link_telemetry.jsonl"
+        with open(out, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        logger.warning("link_telemetry write failed: %s", e)
+
+    return {"ok": True}
+
+
+@app.get("/telemetry/link-broken")
+async def get_link_telemetry(limit: int = 50):
+    """Read last N broken-link reports."""
+    import json
+    from app.core.config import get_settings as _gs
+    out = _gs().resolved_data_dir() / "link_telemetry.jsonl"
+    if not out.exists():
+        return {"ok": True, "entries": [], "count": 0}
+    lines = out.read_text(encoding="utf-8").splitlines()
+    entries = []
+    for line in lines[-limit:]:
+        try:
+            entries.append(json.loads(line))
+        except Exception:
+            pass
+    return {"ok": True, "entries": list(reversed(entries)), "count": len(lines)}
 
 
 # ---- Active listing stats ----
