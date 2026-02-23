@@ -31,6 +31,8 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
+const BUILD_ID = "2026-02-22-3bd187c";
+
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; return `${Math.round(s/60)}m`; };
 const parseSecs = (str) => { const m = String(str).trim().match(/^(\d+(?:\.\d+)?)(d|h|m|s)?$/i); if (!m) return null; const n = parseFloat(m[1]), u = (m[2]||"h").toLowerCase(); return Math.round(u==="d"?n*86400:u==="h"?n*3600:u==="m"?n*60:n); };
@@ -40,6 +42,34 @@ function useToast() {
   const [toasts, setToasts] = useState([]);
   const push = useCallback((msg, type="info") => { const id=Date.now()+Math.random(); setToasts(t=>[...t,{id,msg,type}]); setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),3200); }, []);
   return { toasts, push };
+}
+
+// OpenLibrary title cache: localStorage + per-ISBN fetch
+function useBookTitles(isbns) {
+  const [titles, setTitles] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ol_titles") || "{}"); } catch { return {}; }
+  });
+  const isbnKey = isbns.join(",");
+  useEffect(() => {
+    const missing = isbns.filter(isbn => titles[isbn] === undefined);
+    if (!missing.length) return;
+    setTitles(t => { const n = {...t}; missing.forEach(i => { n[i] = null; }); return n; });
+    missing.forEach(isbn => {
+      fetch(`https://openlibrary.org/isbn/${isbn}.json`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          const title = d?.title || "";
+          setTitles(t => {
+            const n = {...t, [isbn]: title};
+            try { localStorage.setItem("ol_titles", JSON.stringify(n)); } catch {}
+            return n;
+          });
+        })
+        .catch(() => setTitles(t => ({...t, [isbn]: ""})));
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isbnKey]);
+  return titles;
 }
 
 function ToastStack({ toasts, C }) {
@@ -140,6 +170,20 @@ function PricingTab({ isbns, C, push }) {
   const [newLimit, setNewLimit] = useState(50);
   const [suggestedResult, setSuggestedResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [backoff, setBackoff] = useState(null);
+
+  useEffect(() => {
+    req("/ebay/debug/finding-backoff", {}, 5000).then(setBackoff).catch(() => setBackoff(null));
+  }, []);
+
+  const clearBackoff = async () => {
+    try {
+      await fetch(BASE + "/ebay/debug/finding-backoff", {method:"DELETE"});
+      const b = await req("/ebay/debug/finding-backoff", {}, 5000);
+      setBackoff(b);
+      push("Backoff temizlendi — bir sonraki hesaplamada Finding API yeniden denenir", "success");
+    } catch(e) { push("Temizlenemedi: " + e.message, "error"); }
+  };
 
   const limits = {
     new: newLimit, like_new: Math.round(goodLimit*1.15), very_good: Math.round(goodLimit*1.10),
@@ -169,6 +213,22 @@ function PricingTab({ isbns, C, push }) {
 
   return (
     <div>
+      {/* Finding API Backoff Banner */}
+      {backoff?.active && (
+        <div style={{background:"rgba(248,113,113,.08)",border:`1px solid ${C.red}`,borderRadius:8,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
+          <span style={{fontSize:18}}>⏸</span>
+          <div style={{flex:1}}>
+            <div style={{color:C.red,fontSize:12,fontWeight:600}}>Finding API Backoff Aktif</div>
+            <div style={{color:C.muted,fontSize:11,marginTop:2}}>
+              Sold stats yaklaşık <b style={{color:C.orange}}>{Math.round(backoff.remaining_seconds/3600)}s</b> sonra yeniden denenecek · Gösterilen veriler stale/boş olabilir
+            </div>
+          </div>
+          <button onClick={clearBackoff} style={{background:"none",border:`1px solid ${C.red}`,borderRadius:5,color:C.red,fontFamily:"var(--mono)",fontSize:11,padding:"5px 12px",cursor:"pointer",whiteSpace:"nowrap"}}>
+            ✕ Temizle
+          </button>
+        </div>
+      )}
+
       {/* Limit Tablosu */}
       <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:24,marginBottom:20}}>
         <ST C={C} style={{marginBottom:16}}>Fiyat Limitleri (USD)</ST>
@@ -366,6 +426,7 @@ export default function App() {
   const totalAlerts=Object.values(alertStats).reduce((s,n)=>s+n,0);
   const inp={background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text};
   const row={background:C.rowBg,border:`1px solid ${C.rowBorder}`};
+  const titles = useBookTitles(isbns);
 
   return (
     <div style={{fontFamily:"var(--mono)",background:C.bg,minHeight:"100vh",color:C.text,transition:"background .25s,color .25s"}}>
@@ -380,6 +441,7 @@ export default function App() {
             <span style={{fontFamily:"var(--sans)",fontWeight:600,fontSize:15}}>TrackerBundle</span>
             <span style={{color:C.muted3}}>/</span>
             <span style={{color:C.muted,fontSize:12}}>eBay Panel</span>
+            <span style={{fontSize:9,color:C.muted3,letterSpacing:"0.05em",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"1px 5px",fontFamily:"var(--mono)"}}>{BUILD_ID}</span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {status?.ok
@@ -429,7 +491,10 @@ export default function App() {
                 <ST C={C}>Watchlist Önizleme</ST>
                 {isbns.slice(0,5).map(isbn=>(
                   <div key={isbn} className="row-item" style={{...row}}>
-                    <div style={{flex:1}}><span style={{fontSize:13}}>{isbn}</span></div>
+                    <div style={{flex:1,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <span style={{fontSize:13}}>{isbn}</span>
+                      {titles[isbn]&&<span style={{fontSize:11,color:C.muted,fontFamily:"var(--sans)"}}>— {titles[isbn]}</span>}
+                    </div>
                     <span style={{fontSize:10,color:C.muted}}>interval: {fmtSecs(intervals[isbn])}</span>
                     {runState[isbn]&&<span style={{fontSize:10,color:C.muted2}}>son: {fmtTime(runState[isbn])}</span>}
                     {alertStats[isbn]>0&&<span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green,fontSize:10}}>🎯 {alertStats[isbn]}</span>}
@@ -503,8 +568,10 @@ export default function App() {
                       .map(isbn=>(
                     <div key={isbn} className="row-item" style={{...row}}>
                       <div style={{flex:1}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                           <span style={{fontFamily:"var(--sans)",fontSize:13,fontWeight:600}}>{isbn}</span>
+                          {titles[isbn]&&<span style={{fontSize:12,color:C.muted,fontFamily:"var(--sans)"}}>— {titles[isbn]}</span>}
+                          {titles[isbn]===null&&<span style={{fontSize:10,color:C.muted3}}>…</span>}
                           {alertStats[isbn]>0&&<span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green}}>🎯 {alertStats[isbn]}</span>}
                         </div>
                         <div style={{fontSize:10,color:C.muted2,marginTop:3}}>{runState[isbn]?`son tarama: ${fmtTime(runState[isbn])}`:"henüz taranmadı"}</div>
