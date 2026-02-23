@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-22-3bd187c";
+const BUILD_ID = "2026-02-22-browse-proxy";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; return `${Math.round(s/60)}m`; };
@@ -119,9 +119,17 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
 
   const p = data.periods || {};
   const hasData = data.suggested != null;
+  const isProxy = data.data_source === "browse_proxy";
 
   return (
-    <div style={{background:C.surface2,border:`1px solid ${data.volatile_warning?C.orange:C.border}`,borderRadius:10,padding:20,flex:1}}>
+    <div style={{background:C.surface2,border:`1px solid ${isProxy?C.orange:data.volatile_warning?C.orange:C.border}`,borderRadius:10,padding:20,flex:1}}>
+      {/* Proxy banner */}
+      {isProxy && (
+        <div style={{background:"rgba(251,146,60,.1)",border:`1px solid ${C.orange}`,borderRadius:6,padding:"6px 10px",marginBottom:12,fontSize:10,color:C.orange,lineHeight:1.5}}>
+          📊 <b>Proxy veri</b> — Satış verisi yok (Finding API kota aşımı). Aktif eBay listeleme fiyatlarından hesaplandı.
+          Gerçek satış fiyatından sapma olabilir.
+        </div>
+      )}
       {/* Başlık + Önerilen fiyat */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
         <div>
@@ -129,12 +137,19 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
           {hasData
             ? <div style={{fontSize:36,fontWeight:700,color,lineHeight:1}}>{dollar(data.suggested)}</div>
             : <div style={{fontSize:20,color:C.muted3,fontWeight:600}}>Veri yok</div>}
-          <div style={{fontSize:10,color:C.muted3,marginTop:4}}>avg_30d×0.25 + avg_100d×0.25 + avg_365d×0.50</div>
+          <div style={{fontSize:10,color:C.muted3,marginTop:4}}>
+            {isProxy ? "aktif listeleme ortalaması (proxy)" : "avg_30d×0.25 + avg_90d×0.25 + avg_365d×0.50"}
+          </div>
         </div>
         <div style={{textAlign:"right"}}>
           {cached && (
             <div style={{background:"rgba(96,165,250,.1)",border:`1px solid ${C.blue}`,borderRadius:6,padding:"3px 8px",fontSize:10,color:C.blue,marginBottom:6}}>
               ⚡ cache · {cacheAge ? `${Math.round(cacheAge/60)}dk önce` : ""}
+            </div>
+          )}
+          {isProxy && (
+            <div style={{background:"rgba(251,146,60,.12)",border:`1px solid ${C.orange}`,borderRadius:6,padding:"3px 8px",fontSize:10,color:C.orange,marginBottom:6}}>
+              Browse proxy
             </div>
           )}
           {data.volatile_warning && (
@@ -147,7 +162,7 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
               volatility {data.volatility}x
             </div>
           )}
-          {data.fallback_used && (
+          {data.fallback_used && !isProxy && (
             <div style={{fontSize:10,color:C.muted3,marginTop:4}}>3yr fallback kullanıldı</div>
           )}
         </div>
@@ -155,10 +170,20 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
 
       {/* Period breakdown */}
       <div>
-        <PeriodBar label="Son 30 gün"  avg={p.avg_30d?.avg}  count={p.avg_30d?.count||0}  weight={0.25} C={C} />
-        <PeriodBar label="Son 100 gün" avg={p.avg_100d?.avg} count={p.avg_100d?.count||0} weight={0.25} C={C} />
-        <PeriodBar label="Son 1 yıl"   avg={p.avg_365d?.avg} count={p.avg_365d?.count||0} weight={0.50} C={C} />
-        <PeriodBar label="3yr fallback" avg={p.avg_3yr?.avg}  count={p.avg_3yr?.count||0}  weight={0.15} C={C} isBase />
+        {isProxy ? (
+          <>
+            <PeriodBar label="Aktif min"    avg={p.avg_30d?.avg}  count={p.avg_30d?.count||0}  weight={0.33} C={C} />
+            <PeriodBar label="Aktif ort."   avg={p.avg_90d?.avg}  count={p.avg_90d?.count||0}  weight={0.67} C={C} />
+            <PeriodBar label="Aktif median" avg={p.avg_365d?.avg} count={p.avg_365d?.count||0} weight={1.00} C={C} />
+          </>
+        ) : (
+          <>
+            <PeriodBar label="Son 30 gün"  avg={p.avg_30d?.avg}  count={p.avg_30d?.count||0}  weight={0.25} C={C} />
+            <PeriodBar label="Son 90 gün"  avg={p.avg_90d?.avg}  count={p.avg_90d?.count||0}  weight={0.25} C={C} />
+            <PeriodBar label="Son 1 yıl"   avg={p.avg_365d?.avg} count={p.avg_365d?.count||0} weight={0.50} C={C} />
+            <PeriodBar label="3yr fallback" avg={p.avg_3yr?.avg}  count={p.avg_3yr?.count||0}  weight={0.15} C={C} isBase />
+          </>
+        )}
       </div>
     </div>
   );
@@ -260,8 +285,8 @@ function PricingTab({ isbns, C, push }) {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <ST C={C} style={{marginBottom:0}}>Önerilen Alım Fiyatı</ST>
           <div style={{fontSize:10,color:C.muted3,textAlign:"right",lineHeight:1.6}}>
-            avg_30d×0.25 + avg_100d×0.25 + avg_365d×0.50<br/>
-            Eksik dönem → 3yr fallback
+            avg_30d×0.25 + avg_90d×0.25 + avg_365d×0.50<br/>
+            Eksik → Browse proxy (aktif listeler)
           </div>
         </div>
 

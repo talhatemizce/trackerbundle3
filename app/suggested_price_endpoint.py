@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
-from app.ebay_client import get_app_token, normalize_condition, BOOKS_CATEGORY_ID
+from app.ebay_client import (
+    get_app_token, normalize_condition, BOOKS_CATEGORY_ID,
+    browse_search_isbn, item_total_price,
+)
 from app.core.config import get_settings
 from app import finding_cache
 from app import sold_stats_store
@@ -212,6 +215,44 @@ async def _fetch_sold_in_range(
     return totals
 
 
+async def _browse_price_proxy(
+    client: httpx.AsyncClient,
+    isbn: str,
+    condition_filter: Optional[str],
+) -> List[float]:
+    """
+    Fallback: Finding API backoff aktifken Browse API aktif listeleme fiyatlarını
+    sold stats proxy olarak döndürür.
+    condition_filter: "new" | "used" | None
+    """
+    s = get_settings()
+    calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else None
+    try:
+        items = await browse_search_isbn(client, isbn, limit=50, strict=False)
+    except Exception as e:
+        logger.warning("browse_price_proxy error isbn=%s: %s", isbn, e)
+        return []
+
+    totals: List[float] = []
+    for it in items:
+        if condition_filter:
+            bucket = normalize_condition(it.get("condition"), it.get("conditionId"))
+            if condition_filter == "new" and bucket != "brand_new":
+                continue
+            if condition_filter == "used" and bucket == "brand_new":
+                continue
+        total = item_total_price(it, calc_ship_est=calc_est)
+        if total is None:
+            continue
+        totals.append(total)
+
+    logger.info(
+        "browse_price_proxy isbn=%s cond=%s → %d prices",
+        isbn, condition_filter, len(totals),
+    )
+    return sorted(totals)
+
+
 def _avg(vals: List[float]) -> Optional[float]:
     return round(sum(vals) / len(vals), 2) if vals else None
 
@@ -344,6 +385,25 @@ async def get_suggested_price(
                 if not v3y:
                     v3y = v365   # Henüz 3yr birikim yok → 365d ile tahmini doldur
 
+                # ── Browse proxy fallback ─────────────────────────────────────
+                # Finding backoff aktifse VE tüm dönemler boşsa aktif listeleme
+                # fiyatlarını sold stats proxy olarak kullan.
+                backoff_st = finding_cache.rate_limit_status()
+                data_source = "finding_api"
+                if backoff_st.get("active") and not any([v30, v90]):
+                    proxy = await _browse_price_proxy(client, isbn_clean, cond_key)
+                    if proxy:
+                        v30 = v90 = v365 = v3y = proxy
+                        data_source = "browse_proxy"
+                    else:
+                        data_source = "empty"
+                elif any([v30, v90]):
+                    data_source = "finding_api"
+                elif any([v365, v3y]):
+                    data_source = "accumulator"
+                else:
+                    data_source = "empty"
+
                 avg_30  = _avg(v30)
                 avg_90  = _avg(v90)
                 avg_365 = _avg(v365)
@@ -387,6 +447,9 @@ async def get_suggested_price(
                         avg_365 is None and avg_3y is not None,
                     ]),
                     "formula": "avg_30d×0.25 + avg_90d×0.25 + avg_365d×0.50",
+                    "data_source": data_source,
+                    "backoff_active": backoff_st.get("active", False),
+                    "backoff_remaining_seconds": int(backoff_st.get("remaining_seconds", 0)),
                 }
 
             except Exception as e:
