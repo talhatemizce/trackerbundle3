@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-22-dedup-ctrl";
+const BUILD_ID = "2026-02-23-backoff-ux";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -138,7 +138,9 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
             ? <div style={{fontSize:36,fontWeight:700,color,lineHeight:1}}>{dollar(data.suggested)}</div>
             : <div style={{fontSize:20,color:C.muted3,fontWeight:600}}>Veri yok</div>}
           <div style={{fontSize:10,color:C.muted3,marginTop:4}}>
-            {isProxy ? "aktif listeleme ortalaması (proxy)" : "avg_30d×0.25 + avg_90d×0.25 + avg_365d×0.50"}
+            {isProxy
+              ? <span style={{color:"inherit"}}>📊 Aktif eBay listelerinden proxy · <b>SATIŞ fiyatı DEĞİL</b></span>
+              : "avg_30d×0.25 + avg_90d×0.25 + avg_365d×0.50 (gerçek satış verisi)"}
           </div>
         </div>
         <div style={{textAlign:"right"}}>
@@ -172,9 +174,9 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
       <div>
         {isProxy ? (
           <>
-            <PeriodBar label="Aktif min"    avg={p.avg_30d?.avg}  count={p.avg_30d?.count||0}  weight={0.33} C={C} />
-            <PeriodBar label="Aktif ort."   avg={p.avg_90d?.avg}  count={p.avg_90d?.count||0}  weight={0.67} C={C} />
-            <PeriodBar label="Aktif median" avg={p.avg_365d?.avg} count={p.avg_365d?.count||0} weight={1.00} C={C} />
+            <PeriodBar label="Min (aktif)"  avg={p.avg_30d?.avg}  count={p.avg_30d?.count||0}  weight={0.33} C={C} />
+            <PeriodBar label="Ort. (aktif)" avg={p.avg_90d?.avg}  count={p.avg_90d?.count||0}  weight={0.67} C={C} />
+            <PeriodBar label="Med. (aktif)" avg={p.avg_365d?.avg} count={p.avg_365d?.count||0} weight={1.00} C={C} />
           </>
         ) : (
           <>
@@ -279,13 +281,26 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
         <div style={{background:"rgba(248,113,113,.08)",border:`1px solid ${C.red}`,borderRadius:8,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
           <span style={{fontSize:18}}>⏸</span>
           <div style={{flex:1}}>
-            <div style={{color:C.red,fontSize:12,fontWeight:600}}>Finding API Backoff Aktif</div>
-            <div style={{color:C.muted,fontSize:11,marginTop:2}}>
-              Sold stats yaklaşık <b style={{color:C.orange}}>{Math.round(backoff.remaining_seconds/3600)}s</b> sonra yeniden denenecek · Gösterilen veriler stale/boş olabilir
+            <div style={{color:C.red,fontSize:12,fontWeight:600}}>Finding API Backoff Aktif — Sold Stats Devre Dışı</div>
+            <div style={{color:C.muted,fontSize:11,marginTop:2,lineHeight:1.7}}>
+              {backoff.backoff_until_epoch
+                ? <>Bitiş: <b style={{color:C.orange}}>
+                    {new Date(backoff.backoff_until_epoch*1000).toLocaleString("tr-TR")}
+                  </b> · kalan: <b style={{color:C.orange}}>{
+                    backoff.remaining_seconds >= 3600
+                      ? `${Math.round(backoff.remaining_seconds/3600)} saat`
+                      : `${Math.round(backoff.remaining_seconds/60)} dk`
+                  }</b></>
+                : "Süre bilinmiyor"
+              }<br/>
+              <span style={{fontSize:10,color:C.muted3}}>
+                Fiyat tahmini aktif listelerden hesaplanıyor (Browse proxy) — "sold avg" değil.
+                Temizlemek eBay kotasını sıfırlamaz; sadece yerel kilidi kaldırır.
+              </span>
             </div>
           </div>
           <button onClick={clearBackoff} style={{background:"none",border:`1px solid ${C.red}`,borderRadius:5,color:C.red,fontFamily:"var(--mono)",fontSize:11,padding:"5px 12px",cursor:"pointer",whiteSpace:"nowrap"}}>
-            ✕ Temizle
+            🔓 Kilidi Kaldır
           </button>
         </div>
       )}
@@ -592,6 +607,7 @@ export default function App() {
   const [alertStats, setAlertStats] = useState({});
   const [runState, setRunState] = useState({});
   const [loading, setLoading] = useState(true);
+  const [backoffStatus, setBackoffStatus] = useState(null);
 
   const [rules, setRules] = useState({});
 
@@ -619,7 +635,7 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [a,b,c,d,e] = await Promise.allSettled([req("/isbns"),req("/rules"),req("/status"),req("/alerts/stats"),req("/run-state")]);
+      const [a,b,c,d,e,f] = await Promise.allSettled([req("/isbns"),req("/rules"),req("/status"),req("/alerts/stats"),req("/run-state"),req("/ebay/debug/finding-backoff",{},5000)]);
       if (a.status==="fulfilled") setIsbns(a.value.items||[]);
       if (b.status==="fulfilled") {
         setIntervals(b.value.intervals||{});
@@ -628,6 +644,7 @@ export default function App() {
       if (c.status==="fulfilled") setStatus(c.value);
       if (d.status==="fulfilled") setAlertStats(d.value.stats||{});
       if (e.status==="fulfilled") setRunState(e.value.by_isbn||{});
+      if (f.status==="fulfilled") setBackoffStatus(f.value);
     } catch(err) { push("Yüklenirken hata: "+err.message,"error"); }
     finally { setLoading(false); }
   }, [push]);
@@ -763,12 +780,42 @@ export default function App() {
                 <div style={{marginBottom:10,color:C.muted3,fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase"}}>
                   Overview · {new Date().toLocaleDateString("tr-TR",{day:"numeric",month:"long",year:"numeric"})}
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:28}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:16}}>
                   <StatCard C={C} icon="📚" label="Toplam ISBN" value={isbns.length} sub="watchlist'te" accent={C.accent}/>
                   <StatCard C={C} icon="🔄" label="Tarama Yapıldı" value={Object.keys(runState).length} sub="run_state kayıtları" accent={C.blue}/>
                   <StatCard C={C} icon="🎯" label="Toplam Alert" value={totalAlerts} sub="benzersiz item" accent={C.green}/>
                   <StatCard C={C} icon="🔔" label="Bot Token" value={status?.has_bot_token?"✓":"✗"} sub={status?.has_bot_token?"Telegram aktif":"Token yok"} accent={status?.has_bot_token?C.green:C.red}/>
                 </div>
+
+                {/* Finding API Backoff Banner — dashboard */}
+                {backoffStatus?.active && (
+                  <div style={{background:"rgba(248,113,113,.07)",border:`1px solid ${C.red}`,borderRadius:10,padding:"14px 18px",marginBottom:20,display:"flex",alignItems:"center",gap:14}}>
+                    <span style={{fontSize:20}}>⏸</span>
+                    <div style={{flex:1}}>
+                      <div style={{color:C.red,fontSize:12,fontWeight:600,marginBottom:3}}>Finding API Backoff — Sold Stats Devre Dışı</div>
+                      <div style={{color:C.muted,fontSize:11}}>
+                        Bitiş: <b style={{color:C.orange}}>
+                          {new Date(backoffStatus.backoff_until_epoch*1000).toLocaleString("tr-TR")}
+                        </b>
+                        {" · "}kalan: <b style={{color:C.orange}}>{
+                          backoffStatus.remaining_seconds >= 3600
+                            ? `${Math.round(backoffStatus.remaining_seconds/3600)} saat`
+                            : `${Math.round(backoffStatus.remaining_seconds/60)} dk`
+                        }</b>
+                        <span style={{color:C.muted3,fontSize:10,marginLeft:8}}>· Fiyat tahmini Browse proxy üzerinden çalışıyor</span>
+                      </div>
+                    </div>
+                    <button onClick={async()=>{
+                      try {
+                        await fetch(BASE+"/ebay/debug/finding-backoff",{method:"DELETE"});
+                        setBackoffStatus({active:false,remaining_seconds:0,backoff_until_epoch:0});
+                        push("Backoff kilidi kaldırıldı","success");
+                      } catch(e){push(e.message,"error");}
+                    }} style={{background:"none",border:`1px solid ${C.red}`,borderRadius:5,color:C.red,fontFamily:"var(--mono)",fontSize:11,padding:"6px 14px",cursor:"pointer",whiteSpace:"nowrap"}}>
+                      🔓 Kilidi Kaldır
+                    </button>
+                  </div>
+                )}
                 {Object.keys(alertStats).length>0&&(
                   <div style={{marginBottom:24}}>
                     <ST C={C}>Bildirim Gönderilen ISBNler</ST>
