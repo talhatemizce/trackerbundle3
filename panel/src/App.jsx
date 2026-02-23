@@ -31,10 +31,25 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-23-hybrid-verify";
+const BUILD_ID = "2026-02-23-direct-input";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
+const cleanIsbn = (s) => (s || "").replace(/[^0-9Xx]/g, "").toUpperCase();
+const validateIsbn = (s) => {
+  const c = cleanIsbn(s);
+  if (c.length === 13) {
+    const sum = c.split("").reduce((acc, ch, i) => acc + parseInt(ch) * (i % 2 === 0 ? 1 : 3), 0);
+    return sum % 10 === 0;
+  }
+  if (c.length === 10) {
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += parseInt(c[i]) * (10 - i);
+    const last = c[9] === "X" ? 10 : parseInt(c[9]);
+    return (sum + last) % 11 === 0;
+  }
+  return false;
+};
 const parseSecs = (str) => { const m = String(str).trim().match(/^(\d+(?:\.\d+)?)(d|h|m|s)?$/i); if (!m) return null; const n = parseFloat(m[1]), u = (m[2]||"h").toLowerCase(); return Math.round(u==="d"?n*86400:u==="h"?n*3600:u==="m"?n*60:n); };
 const fmtTime = (unix) => unix ? new Date(unix*1000).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"}) : "—";
 
@@ -623,6 +638,7 @@ export default function App() {
   // Add Wizard state
   const [showWizard, setShowWizard] = useState(false);
   const [wizIsbn, setWizIsbn] = useState("");
+  const [isbnInputError, setIsbnInputError] = useState("");
   const [wizNewMax, setWizNewMax] = useState("");
   const [wizUsedMax, setWizUsedMax] = useState("");
   const [wizInterval, setWizInterval] = useState("4h");
@@ -709,6 +725,7 @@ export default function App() {
       if (res.added) push(`${canonical} eklendi`, "success");
       setShowWizard(false);
       setWizIsbn(""); setWizNewMax(""); setWizUsedMax(""); setWizInterval("4h");
+      setNewIsbn(""); setIsbnInputError("");
       load();
     } catch(e) { push("Eklenemedi: " + e.message, "error"); }
     finally { setWizAdding(false); }
@@ -858,18 +875,16 @@ export default function App() {
               <div>
                 {/* Add Wizard Modal */}
                 {showWizard && (
-                  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)setShowWizard(false);}}>
+                  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget){setShowWizard(false); setWizIsbn(""); setNewIsbn(""); setIsbnInputError("");}}}>
                     <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:32,width:460,maxWidth:"95vw",boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
-                      <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:6}}>📚 Yeni ISBN Ekle</div>
-                      <div style={{fontSize:11,color:C.muted,marginBottom:20}}>ISBN, fiyat limitleri ve tarama aralığını gir</div>
+                      <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:4}}>📚 Limit & Aralık Ayarla</div>
+                      <div style={{fontSize:12,color:C.muted3,marginBottom:16,fontFamily:"var(--mono)"}}>
+                        ISBN: <b style={{color:C.accent}}>{wizIsbn}</b>
+                      </div>
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-                        <div style={{gridColumn:"1/-1"}}>
-                          <div style={{fontSize:10,color:C.muted,marginBottom:5}}>ISBN *</div>
-                          <input className="inp" placeholder="9780132350884 veya 978-0974769431" value={wizIsbn} onChange={e=>setWizIsbn(e.target.value)} autoFocus style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text}}/>
-                        </div>
                         <div>
                           <div style={{fontSize:10,color:C.muted,marginBottom:5}}>New Max ($)</div>
-                          <input className="inp" type="number" placeholder="örn: 50" value={wizNewMax} onChange={e=>setWizNewMax(e.target.value)} style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.green}}/>
+                          <input className="inp" type="number" placeholder="örn: 50" value={wizNewMax} onChange={e=>setWizNewMax(e.target.value)} autoFocus style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.green}}/>
                         </div>
                         <div>
                           <div style={{fontSize:10,color:C.muted,marginBottom:5}}>Used Good Max ($)</div>
@@ -895,22 +910,84 @@ export default function App() {
                         <button className="add-btn" onClick={submitWizard} disabled={wizAdding||!wizIsbn.trim()} style={{flex:1}}>
                           {wizAdding ? "Ekleniyor…" : "+ Ekle"}
                         </button>
-                        <button onClick={()=>setShowWizard(false)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"8px 18px",cursor:"pointer"}}>İptal</button>
+                        <button onClick={()=>{setShowWizard(false); setWizIsbn(""); setNewIsbn(""); setIsbnInputError("");}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"8px 18px",cursor:"pointer"}}>İptal</button>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Tek ISBN Ekle */}
-                <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:20,marginBottom:16}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-                    <ST C={C} style={{marginBottom:0}}>ISBN Yönetimi</ST>
-                    <div style={{display:"flex",gap:8}}>
-                      <button className="add-btn" onClick={()=>setShowWizard(true)}>+ Yeni ISBN</button>
-                      <button onClick={()=>setShowCsvImport(p=>!p)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:"pointer"}}>
-                        {showCsvImport ? "▲ CSV Kapat" : "📄 Toplu CSV"}
-                      </button>
+                {/* Direct ISBN Input — always visible */}
+                <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:20,marginBottom:16}}> 
+                  <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                    <div style={{position:"relative",flex:1,minWidth:220}}>
+                      <input
+                        id="isbn-direct-input"
+                        className="inp"
+                        placeholder="978-0974769431 — ISBN yaz, Enter'a bas"
+                        value={newIsbn}
+                        onChange={e => {
+                          setNewIsbn(e.target.value);
+                          setIsbnInputError("");
+                        }}
+                        onKeyDown={e => {
+                          if (e.key !== "Enter") return;
+                          const raw = newIsbn.trim();
+                          if (!raw) return;
+                          const cleaned = cleanIsbn(raw);
+                          if (!validateIsbn(cleaned)) {
+                            setIsbnInputError("Geçersiz ISBN — kontrol et (10 veya 13 hane, checksum)");
+                            return;
+                          }
+                          setIsbnInputError("");
+                          setWizIsbn(cleaned);
+                          setWizNewMax(""); setWizUsedMax(""); setWizInterval("4h");
+                          setShowWizard(true);
+                        }}
+                        style={{
+                          width:"100%",
+                          background:C.inputBg,
+                          border:`1px solid ${isbnInputError ? C.red : C.inputBorder}`,
+                          color:C.text,
+                          paddingRight: 36,
+                        }}
+                      />
+                      {newIsbn && (
+                        <span style={{
+                          position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
+                          fontSize:11, color: validateIsbn(cleanIsbn(newIsbn)) ? C.green : C.muted3,
+                          pointerEvents:"none", userSelect:"none",
+                        }}>
+                          {validateIsbn(cleanIsbn(newIsbn)) ? "✓" : "?"}
+                        </span>
+                      )}
                     </div>
+                    {isbnInputError && (
+                      <div style={{width:"100%",fontSize:11,color:C.red,marginTop:4,order:10}}>
+                        ⚠ {isbnInputError}
+                      </div>
+                    )}
+                    <button
+                      className="add-btn"
+                      onClick={() => {
+                        const raw = newIsbn.trim();
+                        if (!raw) { document.getElementById("isbn-direct-input")?.focus(); return; }
+                        const cleaned = cleanIsbn(raw);
+                        if (!validateIsbn(cleaned)) { setIsbnInputError("Geçersiz ISBN"); return; }
+                        setIsbnInputError("");
+                        setWizIsbn(cleaned);
+                        setWizNewMax(""); setWizUsedMax(""); setWizInterval("4h");
+                        setShowWizard(true);
+                      }}
+                      title="ISBN ekle (Enter ile de açılır)"
+                    >
+                      + Ekle
+                    </button>
+                    <button
+                      onClick={()=>setShowCsvImport(p=>!p)}
+                      style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:"pointer"}}
+                    >
+                      {showCsvImport ? "▲ CSV Kapat" : "📄 Toplu CSV"}
+                    </button>
                   </div>
                 </div>
 
