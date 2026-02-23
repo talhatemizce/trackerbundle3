@@ -288,6 +288,32 @@ def clear_alerts(isbn: str):
     return {"ok": True, "isbn": isbn}
 
 
+@app.delete("/alerts/dedup/{isbn}")
+def clear_dedup(isbn: str):
+    """ISBN için dedup store'u temizle — bir sonraki scheduler çalışmasında yeniden alert gönderilir."""
+    count = _alert_store.clear_isbn(isbn)
+    return {"ok": True, "isbn": isbn, "dedup_cleared": count}
+
+@app.post("/debug/inject-history")
+def inject_test_history():
+    """Test amaçlı — alert history'ye sahte entry ekler. UI'ı test etmek için kullan."""
+    import time
+    _alert_history.add_entry(
+        isbn="TEST0000001",
+        item_id="test-item-001",
+        title="Test Book — Clean Code (Robert C. Martin)",
+        condition="good",
+        total=18.50,
+        limit=30.00,
+        decision="BUY",
+        url="https://www.ebay.com/sch/i.html?_nkw=clean+code",
+        image_url="",
+        sold_avg=25,
+        sold_count=12,
+        ship_estimated=False,
+    )
+    return {"ok": True, "msg": "Test entry injected. Check /alerts/history."}
+
 # ---- Run state (scheduler son tarama zamanları, panel dashboard) ----
 from app.core.json_store import _read_unsafe
 from app.core.config import get_settings as _get_settings

@@ -282,6 +282,7 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
                     sold_count=count_for_msg,
                     ship_estimated=it.get("_shipping_estimated", False),
                 )
+                logger.info("HISTORY_WRITE isbn=%s item=%s decision=%s total=%.2f", isbn, item_id, decision, total)
             except Exception as _he:
                 logger.warning("alert_history write failed: %s", _he)
 

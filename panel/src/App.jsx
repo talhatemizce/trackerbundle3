@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-22-alerts-feed";
+const BUILD_ID = "2026-02-22-dedup-ctrl";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -502,10 +502,29 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
         <span style={{fontSize:11,color:C.muted3}}>{entries.length} kayıt · 30s otomatik yenile</span>
       </div>
 
+      {/* Debug tools */}
+      <details style={{marginBottom:14}}>
+        <summary style={{fontSize:10,color:C.muted3,cursor:"pointer",userSelect:"none"}}>🔧 Debug araçları</summary>
+        <div style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,padding:14,marginTop:8,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:10,color:C.muted}}>Test entry ekle →</span>
+          <button onClick={async()=>{try{await req("/debug/inject-history",{method:"POST"});push("Test entry eklendi","success");load();}catch(e){push(e.message,"error");}}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>
+            💉 Inject Test
+          </button>
+          <span style={{fontSize:10,color:C.muted,marginLeft:10}}>Dedup temizle (ISBN) →</span>
+          <select id="dedup-select" className="inp" style={{width:200,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text,fontSize:11,padding:"4px 8px"}}>
+            <option value="">ISBN seç…</option>
+            {isbns.map(i=><option key={i} value={i}>{i}</option>)}
+          </select>
+          <button onClick={async()=>{const sel=document.getElementById("dedup-select").value;if(!sel)return;try{await req(`/alerts/dedup/${sel}`,{method:"DELETE"});push(`${sel} dedup temizlendi — scheduler tekrar alert gönderir`,"success");}catch(e){push(e.message,"error");}}} style={{background:"none",border:`1px solid ${C.orange}`,borderRadius:5,color:C.orange,fontFamily:"var(--mono)",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>
+            🗑 Dedup Sil
+          </button>
+        </div>
+      </details>
+
       {entries.length === 0 && !loading && (
         <div style={{border:`1px dashed ${C.border}`,borderRadius:8,padding:40,textAlign:"center",color:C.muted3,fontSize:12}}>
           Henüz alert geçmişi yok.<br/>
-          <span style={{fontSize:10,marginTop:4,display:"block"}}>Scheduler bir deal bulunca buraya kaydedilir.</span>
+          <span style={{fontSize:10,marginTop:4,display:"block"}}>Scheduler bir deal bulunca buraya kaydedilir. Test için Debug araçlarını kullan.</span>
         </div>
       )}
 
