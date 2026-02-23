@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-23-direct-input";
+const BUILD_ID = "2026-02-23-wizard-sliders";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -643,6 +643,9 @@ export default function App() {
   const [wizUsedMax, setWizUsedMax] = useState("");
   const [wizInterval, setWizInterval] = useState("4h");
   const [wizAdding, setWizAdding] = useState(false);
+  // Persist last-used values across wizard opens (survives tab switch, not page reload)
+  const wizDefaults = { newMax: 50, usedMax: 30, interval: "4h" };
+  const lastUsed = { newMax: parseInt(wizNewMax)||wizDefaults.newMax, usedMax: parseInt(wizUsedMax)||wizDefaults.usedMax, interval: wizInterval||wizDefaults.interval };
 
   // Inline rule edit
   const [editingRule, setEditingRule] = useState(null); // isbn or null
@@ -876,42 +879,99 @@ export default function App() {
                 {/* Add Wizard Modal */}
                 {showWizard && (
                   <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget){setShowWizard(false); setWizIsbn(""); setNewIsbn(""); setIsbnInputError("");}}}>
-                    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:32,width:460,maxWidth:"95vw",boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+                    <div
+                      style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:32,width:480,maxWidth:"95vw",boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}
+                      onKeyDown={e=>{
+                        if (e.key==="Enter" && !wizAdding && wizIsbn.trim()) submitWizard();
+                        if (e.key==="Escape") { setShowWizard(false); setWizIsbn(""); setNewIsbn(""); setIsbnInputError(""); }
+                      }}
+                    >
                       <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:4}}>📚 Limit & Aralık Ayarla</div>
-                      <div style={{fontSize:12,color:C.muted3,marginBottom:16,fontFamily:"var(--mono)"}}>
+                      <div style={{fontSize:12,color:C.muted3,marginBottom:20,fontFamily:"var(--mono)"}}>
                         ISBN: <b style={{color:C.accent}}>{wizIsbn}</b>
                       </div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-                        <div>
-                          <div style={{fontSize:10,color:C.muted,marginBottom:5}}>New Max ($)</div>
-                          <input className="inp" type="number" placeholder="örn: 50" value={wizNewMax} onChange={e=>setWizNewMax(e.target.value)} autoFocus style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.green}}/>
+
+                      {/* New Max slider */}
+                      <div style={{marginBottom:20}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                          <span style={{fontSize:11,color:C.muted}}>New Max</span>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <span style={{fontSize:11,color:C.muted3}}>$</span>
+                            <input
+                              type="number" min={0} max={200} step={1}
+                              value={wizNewMax}
+                              autoFocus
+                              onChange={e=>setWizNewMax(String(Math.min(200,Math.max(0,parseInt(e.target.value)||0))))}
+                              style={{width:60,padding:"3px 6px",borderRadius:5,border:`1px solid ${C.green}`,background:C.inputBg,color:C.green,fontFamily:"var(--mono)",fontSize:14,fontWeight:600,textAlign:"right"}}
+                            />
+                          </div>
                         </div>
-                        <div>
-                          <div style={{fontSize:10,color:C.muted,marginBottom:5}}>Used Good Max ($)</div>
-                          <input className="inp" type="number" placeholder="örn: 30" value={wizUsedMax} onChange={e=>setWizUsedMax(e.target.value)} style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.accent}}/>
-                        </div>
-                        <div style={{gridColumn:"1/-1"}}>
-                          <div style={{fontSize:10,color:C.muted,marginBottom:5}}>Tarama Aralığı</div>
-                          <select className="inp" value={wizInterval} onChange={e=>setWizInterval(e.target.value)} style={{width:"100%",background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text}}>
-                            {[["30m","30 dakika"],["1h","1 saat"],["4h","4 saat"],["8h","8 saat"],["12h","12 saat"],["24h","1 gün"],["48h","2 gün"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}
-                          </select>
+                        <input
+                          type="range" min={0} max={200} step={1}
+                          value={wizNewMax||0}
+                          onChange={e=>setWizNewMax(e.target.value)}
+                          style={{width:"100%",accentColor:C.green,cursor:"pointer"}}
+                        />
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.muted3,marginTop:2}}>
+                          <span>$0</span><span>$50</span><span>$100</span><span>$150</span><span>$200</span>
                         </div>
                       </div>
-                      {(wizNewMax||wizUsedMax) && (
-                        <div style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:11,color:C.muted,lineHeight:1.8}}>
-                          {wizNewMax && <div>New: <b style={{color:C.green}}>${wizNewMax}</b></div>}
-                          {wizUsedMax && <>
-                            <div>Used Good: <b style={{color:C.accent}}>${wizUsedMax}</b></div>
-                            <div>Like New: <b style={{color:C.blue}}>${Math.round(Number(wizUsedMax)*1.15)}</b> · Very Good: <b style={{color:C.purple}}>${Math.round(Number(wizUsedMax)*1.10)}</b> · Acceptable: <b style={{color:C.orange}}>${Math.round(Number(wizUsedMax)*0.80)}</b></div>
-                          </>}
+
+                      {/* Used Good Max slider */}
+                      <div style={{marginBottom:20}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                          <span style={{fontSize:11,color:C.muted}}>Used Good Max</span>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <span style={{fontSize:11,color:C.muted3}}>$</span>
+                            <input
+                              type="number" min={0} max={100} step={1}
+                              value={wizUsedMax}
+                              onChange={e=>setWizUsedMax(String(Math.min(100,Math.max(0,parseInt(e.target.value)||0))))}
+                              style={{width:60,padding:"3px 6px",borderRadius:5,border:`1px solid ${C.accent}`,background:C.inputBg,color:C.accent,fontFamily:"var(--mono)",fontSize:14,fontWeight:600,textAlign:"right"}}
+                            />
+                          </div>
                         </div>
-                      )}
-                      <div style={{display:"flex",gap:10}}>
+                        <input
+                          type="range" min={0} max={100} step={1}
+                          value={wizUsedMax||0}
+                          onChange={e=>setWizUsedMax(e.target.value)}
+                          style={{width:"100%",accentColor:C.accent,cursor:"pointer"}}
+                        />
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.muted3,marginTop:2}}>
+                          <span>$0</span><span>$25</span><span>$50</span><span>$75</span><span>$100</span>
+                        </div>
+                        {wizUsedMax>0 && (
+                          <div style={{marginTop:8,fontSize:10,color:C.muted3,lineHeight:1.9,display:"flex",gap:12,flexWrap:"wrap"}}>
+                            <span>Like New <b style={{color:C.blue}}>${Math.round(Number(wizUsedMax)*1.15)}</b></span>
+                            <span>Very Good <b style={{color:C.purple}}>${Math.round(Number(wizUsedMax)*1.10)}</b></span>
+                            <span>Acceptable <b style={{color:C.orange}}>${Math.round(Number(wizUsedMax)*0.80)}</b></span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Interval */}
+                      <div style={{marginBottom:24}}>
+                        <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Tarama Aralığı</div>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          {[["30m","30dk"],["1h","1s"],["4h","4s"],["8h","8s"],["12h","12s"],["24h","1g"],["48h","2g"]].map(([v,l])=>(
+                            <button key={v} onClick={()=>setWizInterval(v)} style={{
+                              padding:"5px 12px",borderRadius:5,fontFamily:"var(--mono)",fontSize:11,cursor:"pointer",
+                              background: wizInterval===v ? C.accent : "none",
+                              color: wizInterval===v ? C.accentText : C.muted,
+                              border: `1px solid ${wizInterval===v ? C.accent : C.border}`,
+                              fontWeight: wizInterval===v ? 600 : 400,
+                            }}>{l}</button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div style={{display:"flex",gap:10,alignItems:"center"}}>
                         <button className="add-btn" onClick={submitWizard} disabled={wizAdding||!wizIsbn.trim()} style={{flex:1}}>
-                          {wizAdding ? "Ekleniyor…" : "+ Ekle"}
+                          {wizAdding ? "Ekleniyor…" : `+ Ekle — $${wizUsedMax} used / $${wizNewMax} new / ${wizInterval}`}
                         </button>
-                        <button onClick={()=>{setShowWizard(false); setWizIsbn(""); setNewIsbn(""); setIsbnInputError("");}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"8px 18px",cursor:"pointer"}}>İptal</button>
+                        <button onClick={()=>{setShowWizard(false); setWizIsbn(""); setNewIsbn(""); setIsbnInputError("");}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"8px 14px",cursor:"pointer"}}>Esc</button>
                       </div>
+                      <div style={{marginTop:8,fontSize:10,color:C.muted3,textAlign:"center"}}>Enter ile kaydet · Esc ile kapat</div>
                     </div>
                   </div>
                 )}
@@ -940,7 +1000,10 @@ export default function App() {
                           }
                           setIsbnInputError("");
                           setWizIsbn(cleaned);
-                          setWizNewMax(""); setWizUsedMax(""); setWizInterval("4h");
+                          // Keep existing values (last-used); only reset if truly empty
+                          if (!wizNewMax) setWizNewMax(String(wizDefaults.newMax));
+                          if (!wizUsedMax) setWizUsedMax(String(wizDefaults.usedMax));
+                          if (!wizInterval) setWizInterval(wizDefaults.interval);
                           setShowWizard(true);
                         }}
                         style={{
@@ -975,7 +1038,9 @@ export default function App() {
                         if (!validateIsbn(cleaned)) { setIsbnInputError("Geçersiz ISBN"); return; }
                         setIsbnInputError("");
                         setWizIsbn(cleaned);
-                        setWizNewMax(""); setWizUsedMax(""); setWizInterval("4h");
+                        if (!wizNewMax) setWizNewMax(String(wizDefaults.newMax));
+                        if (!wizUsedMax) setWizUsedMax(String(wizDefaults.usedMax));
+                        if (!wizInterval) setWizInterval(wizDefaults.interval);
                         setShowWizard(true);
                       }}
                       title="ISBN ekle (Enter ile de açılır)"
