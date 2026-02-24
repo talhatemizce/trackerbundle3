@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-24-decision-engine";
+const BUILD_ID = "2026-02-24-v8-watchlist-drawer";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -1212,388 +1212,21 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
         </div>
       )}
 
-      {/* ─── Detail Drawer ──────────────────────────────────────────────────── */}
+      {/* ─── Detail Drawer — shared DetailDrawer component ─────────────────── */}
       {selectedAlert && (
-        <>
-          {/* Backdrop */}
-          <div onClick={()=>{setSelectedAlert(null);setDrawerData(null);}} style={{
-            position:"fixed",inset:0,zIndex:40,
-            background:"rgba(0,0,0,.45)",backdropFilter:"blur(2px)",
-          }}/>
-          {/* Drawer panel */}
-          <div style={{
-            position:"fixed",top:0,right:0,bottom:0,zIndex:50,
-            width:440,maxWidth:"95vw",
-            background:C.surface,
-            borderLeft:`1px solid ${C.border}`,
-            display:"flex",flexDirection:"column",
-            boxShadow:"-8px 0 32px rgba(0,0,0,.3)",
-            overflow:"hidden",
-          }}>
-            {/* ── A: Hero header ─────────────────────────────────────────────── */}
-            <div style={{padding:"16px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:14,flexShrink:0,background:C.surface}}>
-              {/* Large cover — click to lightbox */}
-              {(() => {
-                const olCover = `https://covers.openlibrary.org/b/isbn/${selectedAlert.isbn}-M.jpg`;
-                const src = selectedAlert.image_url || olCover;
-                return (
-                  <div onClick={()=>setLightboxSrc(src)} style={{
-                    width:120,height:170,flexShrink:0,borderRadius:8,overflow:"hidden",
-                    background:C.surface2,border:`1px solid ${C.border}`,cursor:"zoom-in",
-                    display:"flex",alignItems:"center",justifyContent:"center",
-                  }}>
-                    <img src={src} alt="" loading="lazy"
-                      style={{width:"100%",height:"100%",objectFit:"contain"}}
-                      onError={e=>{ if(e.target.src!==olCover) e.target.src=olCover; }}
-                    />
-                  </div>
-                );
-              })()}
-              {/* Title + key metrics */}
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:700,color:C.text,lineHeight:1.4,marginBottom:4,wordBreak:"break-word"}}>
-                  {selectedAlert.title||selectedAlert.isbn}
-                </div>
-                <div style={{fontSize:10,color:C.muted3,fontFamily:"var(--mono)",marginBottom:10}}>
-                  {selectedAlert.isbn}
-                  {bookMeta[selectedAlert.isbn]?.author && <span style={{marginLeft:6,color:C.muted}}>{bookMeta[selectedAlert.isbn].author}</span>}
-                  {bookMeta[selectedAlert.isbn]?.year   && <span style={{marginLeft:4,color:C.muted3}}>{bookMeta[selectedAlert.isbn].year}</span>}
-                </div>
-                {/* ── B: KPI bar ─────────────────────────────────────────────── */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div style={{background:C.surface2,borderRadius:7,padding:"8px 12px"}}>
-                    <div style={{fontSize:9,color:C.muted,marginBottom:2}}>📦 TOPLAM</div>
-                    <div style={{fontSize:20,fontWeight:700,color:C.text}}>${selectedAlert.total}</div>
-                    {selectedAlert.ship_estimated && (
-                      <div style={{fontSize:9,color:C.orange,marginTop:1}}>🚚 est. shipping</div>
-                    )}
-                  </div>
-                  <div style={{background:C.surface2,borderRadius:7,padding:"8px 12px"}}>
-                    <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🎯 LİMİT</div>
-                    <div style={{fontSize:20,fontWeight:700,color:selectedAlert.total<=selectedAlert.limit?C.green:C.red}}>
-                      ${selectedAlert.limit}
-                    </div>
-                    <div style={{fontSize:9,color:C.muted,marginTop:1}}>
-                      {selectedAlert.total<=selectedAlert.limit
-                        ? `✓ $${(selectedAlert.limit-selectedAlert.total).toFixed(2)} altında`
-                        : `↑ $${(selectedAlert.total-selectedAlert.limit).toFixed(2)} üstünde`}
-                    </div>
-                  </div>
-                  <div style={{background:C.surface2,borderRadius:7,padding:"8px 12px"}}>
-                    <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🏷 KONDİSYON</div>
-                    <div style={{fontSize:12,fontWeight:600,color:condColor(selectedAlert.condition,C)}}>
-                      {condLabel[selectedAlert.condition]||selectedAlert.condition}
-                    </div>
-                    <div style={{fontSize:9,color:C.muted,marginTop:1}}>
-                      {selectedAlert.match_quality==="CONFIRMED"?"✅ GTIN doğru":"⚠ unverified"}
-                    </div>
-                  </div>
-                  <div style={{background:C.surface2,borderRadius:7,padding:"8px 12px"}}>
-                    <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🔥 SKOR</div>
-                    <div style={{fontSize:20,fontWeight:700,color:selectedAlert.deal_score>=75?C.green:selectedAlert.deal_score>=50?C.accent:C.muted}}>
-                      {selectedAlert.deal_score!=null?selectedAlert.deal_score:"—"}
-                    </div>
-                    <div style={{fontSize:9,color:C.muted,marginTop:1}}>
-                      {selectedAlert.decision==="OFFER"?"make offer":"fixed price"}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <button onClick={()=>{setSelectedAlert(null);setDrawerData(null);}} style={{
-                background:"none",border:"none",color:C.muted,cursor:"pointer",
-                fontSize:20,lineHeight:1,padding:4,flexShrink:0,marginTop:-4,
-              }}>×</button>
-            </div>
-
-            {/* ── Drawer scrollable body ─────────────────────────────────────── */}
-            <div style={{flex:1,overflowY:"auto",padding:"14px 18px"}}>
-              {drawerLoading && (
-                <div style={{color:C.muted3,fontSize:12,textAlign:"center",paddingTop:32}}>Yükleniyor…</div>
-              )}
-              {!drawerLoading && drawerData && !drawerData.ok && (
-                <div style={{padding:"20px 0",textAlign:"center"}}>
-                  <div style={{fontSize:24,marginBottom:8}}>⚠️</div>
-                  <div style={{fontSize:12,color:C.orange,marginBottom:12}}>{drawerData.error || "Veri yüklenemedi"}</div>
-                  <button onClick={()=>openDrawer(selectedAlert)} style={{fontSize:11,background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,padding:"6px 14px",cursor:"pointer"}}>↺ Tekrar dene</button>
-                </div>
-              )}
-              {!drawerLoading && drawerData?.ok && (
-                <>
-                  {/* ── C: Details accordion ──────────────────────────────────── */}
-                  <AccordionSection title="📊 eBay Aktif Listeler" C={C} defaultOpen={true}>
-                    {drawerData.ebay?.ok ? (
-                      <>
-                        {/* KPI row */}
-                        <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:11,marginBottom:10,padding:"8px 10px",background:C.surface2,borderRadius:6}}>
-                          {drawerData.ebay.used && <>
-                            <span>🧺 <b style={{color:C.accent}}>{drawerData.ebay.used.count}</b> used</span>
-                            <span>💸 min <b style={{color:C.accent}}>${drawerData.ebay.used.min}</b></span>
-                            <span>📈 avg <b style={{color:C.muted}}>${drawerData.ebay.used.avg}</b></span>
-                          </>}
-                          {drawerData.ebay.new && <>
-                            <span>🆕 <b style={{color:C.green}}>{drawerData.ebay.new.count}</b> new</span>
-                            <span>💸 min <b style={{color:C.green}}>${drawerData.ebay.new.min}</b></span>
-                          </>}
-                        </div>
-                        {/* Condition table */}
-                        {drawerData.ebay.by_condition && Object.keys(drawerData.ebay.by_condition).length > 0 && (
-                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                            <thead>
-                              <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                                {["Kondisyon","Adet","Min","Ort"].map(h=>(
-                                  <th key={h} style={{textAlign:h==="Kondisyon"?"left":"right",padding:"3px 6px",fontSize:9,color:C.muted,fontWeight:500}}>{h}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(drawerData.ebay.by_condition)
-                                .sort((a,b)=>a[1].min-b[1].min)
-                                .map(([cond,st])=>(
-                                  <tr key={cond} style={{borderBottom:`1px solid ${C.border}10`}}>
-                                    <td style={{padding:"5px 6px",color:condColor(cond,C),fontWeight:500}}>{condLabel[cond]||cond}</td>
-                                    <td style={{padding:"5px 6px",textAlign:"right",color:C.muted}}>{st.count}</td>
-                                    <td style={{padding:"5px 6px",textAlign:"right",color:C.text,fontWeight:600}}>${st.min}</td>
-                                    <td style={{padding:"5px 6px",textAlign:"right",color:C.muted}}>${st.avg}</td>
-                                  </tr>
-                                ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </>
-                    ) : (
-                      <div style={{fontSize:11,color:C.muted3}}>{drawerData.ebay?.error||"Veri alınamadı"}</div>
-                    )}
-                  </AccordionSection>
-
-                  {/* ── Profit Simulation ─────────────────────────────────────── */}
-                  {drawerData.profit && (
-                    <AccordionSection title="💰 Kâr Simülasyonu" C={C} defaultOpen={true}>
-                      {(() => {
-                        const p = drawerData.profit;
-                        const tierEmoji = {fire:"🔥",good:"👍",low:"😬",loss:"❌"}[p.roi_tier] || "";
-                        const profitColor = p.profit > 0 ? C.green : C.red;
-                        const roiColor = p.roi_pct >= 30 ? C.green : p.roi_pct >= 15 ? C.accent : p.roi_pct > 0 ? C.orange : C.red;
-                        return (
-                          <>
-                            {/* Hero profit */}
-                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-                              <div style={{background:C.surface2,borderRadius:7,padding:"10px 14px",border:`1px solid ${p.profit>0?C.green:C.red}20`}}>
-                                <div style={{fontSize:9,color:C.muted,marginBottom:3}}>✅ NET KÂR</div>
-                                <div style={{fontSize:22,fontWeight:700,color:profitColor}}>
-                                  {p.profit>0?"+":" "}${Math.abs(p.profit).toFixed(2)}
-                                </div>
-                              </div>
-                              <div style={{background:C.surface2,borderRadius:7,padding:"10px 14px"}}>
-                                <div style={{fontSize:9,color:C.muted,marginBottom:3}}>📈 ROI</div>
-                                <div style={{fontSize:22,fontWeight:700,color:roiColor}}>
-                                  {p.roi_pct > 0 ? "+" : ""}{p.roi_pct}%
-                                </div>
-                                <div style={{fontSize:10,color:roiColor,marginTop:2}}>{tierEmoji} {p.roi_tier}</div>
-                              </div>
-                            </div>
-                            {/* Fee breakdown */}
-                            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                              <tbody>
-                                {[
-                                  ["🛒 Amazon sell price", `$${p.sell_price}`, C.text, `(${p.sell_source.replace(/_/g," ")})`],
-                                  ["📦 eBay cost",         `-$${p.ebay_cost}`,  C.red, ""],
-                                  ["💸 Referral (15%)",    `-$${p.referral_fee}`,C.muted, ""],
-                                  ["📦 Closing fee",        `-$${p.closing_fee}`,C.muted, "media"],
-                                  ["🚚 Fulfillment",        `-$${p.fulfillment}`, C.muted, "FBA avg"],
-                                  ["✈ Inbound",            `-$${p.inbound}`,    C.muted, "estimate"],
-                                ].map(([label, val, col, sub])=>(
-                                  <tr key={label} style={{borderBottom:`1px solid ${C.border}10`}}>
-                                    <td style={{padding:"4px 0",color:C.muted,fontSize:10}}>{label}</td>
-                                    {sub && <td style={{padding:"4px 4px",color:C.muted3,fontSize:9}}>{sub}</td>}
-                                    {!sub && <td/>}
-                                    <td style={{padding:"4px 0",textAlign:"right",color:col,fontWeight:500,fontFamily:"var(--mono)"}}>{val}</td>
-                                  </tr>
-                                ))}
-                                <tr style={{borderTop:`1px solid ${C.border}`}}>
-                                  <td style={{padding:"6px 0",color:C.text,fontWeight:600,fontSize:11}} colSpan={2}>Net</td>
-                                  <td style={{padding:"6px 0",textAlign:"right",color:profitColor,fontWeight:700,fontFamily:"var(--mono)"}}>{p.profit>0?"+":""}{p.profit}</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                            <div style={{fontSize:9,color:C.muted3,marginTop:6}}>
-                              * Tahminler varsayıma dayanır. Gerçek FBA fee asin/weight bazlı değişir.
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </AccordionSection>
-                  )}
-
-                  <AccordionSection title="📉 Satış Verisi" C={C} defaultOpen={false}>
-                    {/* Finding API status badge */}
-                    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
-                      {drawerData.sold?.data_source==="browse_proxy"
-                        ? <span style={{fontSize:10,background:"rgba(251,146,60,.12)",border:"1px solid rgba(251,146,60,.4)",borderRadius:4,padding:"2px 8px",color:C.orange}}>📊 Browse proxy</span>
-                        : <span style={{fontSize:10,background:"rgba(52,211,153,.1)",border:"1px solid rgba(52,211,153,.3)",borderRadius:4,padding:"2px 8px",color:C.green}}>✓ Finding API</span>
-                      }
-                      {drawerData.sold?.backoff_active && (
-                        <span style={{fontSize:10,color:C.muted3}}>🕒 {Math.round((drawerData.sold.backoff_remaining||0)/3600)}s kaldı</span>
-                      )}
-                    </div>
-                    {drawerData.sold?.sold_avg != null
-                      ? <DrawerRow label="Finding API ort." value={`$${Math.round(drawerData.sold.sold_avg)}`} C={C}/>
-                      : <DrawerRow label="Finding API ort." value="Veri yok" C={C} valueColor={C.muted3}/>}
-                    {drawerData.sold?.sold_count != null && <DrawerRow label="Örnek sayısı" value={drawerData.sold.sold_count} C={C}/>}
-
-                    {/* ── On-demand sold scrape ─────────────────────────────── */}
-                    {(() => {
-                      const isbn = selectedAlert?.isbn;
-                      const ss = soldScrape[isbn];
-                      return (
-                        <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
-                          {/* Button — show if no data yet */}
-                          {!ss?.data && !ss?.loading && (
-                            <button
-                              onClick={()=>fetchSoldScrape(isbn)}
-                              style={{
-                                width:"100%",padding:"7px",borderRadius:6,fontSize:11,fontWeight:600,
-                                background:"none",border:`1px solid ${C.accent}`,color:C.accent,
-                                cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,
-                              }}
-                            >
-                              🔍 Satış Ortalaması Gör
-                              <span style={{fontSize:9,color:C.muted3,fontWeight:400}}>(eBay sold · on-demand)</span>
-                            </button>
-                          )}
-
-                          {/* Loading */}
-                          {ss?.loading && (
-                            <div style={{textAlign:"center",fontSize:11,color:C.muted3,padding:"8px 0"}}>
-                              ⏳ eBay sold listesi çekiliyor…
-                            </div>
-                          )}
-
-                          {/* Error */}
-                          {ss?.error && (
-                            <div style={{fontSize:11,color:C.orange,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                              <span>⚠ {ss.error}</span>
-                              <button onClick={()=>fetchSoldScrape(isbn)} style={{fontSize:10,background:"none",border:"none",color:C.accent,cursor:"pointer"}}>↺ Tekrar</button>
-                            </div>
-                          )}
-
-                          {/* Result */}
-                          {ss?.data?.ok && ss.data.count > 0 && (
-                            <div style={{background:C.surface2,borderRadius:6,padding:"10px 12px"}}>
-                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                                <span style={{fontSize:10,color:C.muted,fontWeight:600}}>SOLD · {ss.data.count} SATIŞ</span>
-                                <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                                  {ss.data.cached && <span style={{fontSize:9,color:C.muted3}}>⚡ cache</span>}
-                                  <a href={ss.data.ebay_url} target="_blank" rel="noreferrer" style={{fontSize:9,color:C.accent,textDecoration:"none"}}>eBay ↗</a>
-                                  <button onClick={()=>fetchSoldScrape(isbn)} style={{fontSize:9,background:"none",border:"none",color:C.muted3,cursor:"pointer"}}>↺</button>
-                                </div>
-                              </div>
-                              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
-                                {[
-                                  ["💰 Ort", `$${ss.data.avg}`, C.text],
-                                  ["📊 Med", `$${ss.data.median}`, C.text],
-                                  ["↓ Min", `$${ss.data.min}`, C.green],
-                                  ["↑ Max", `$${ss.data.max}`, C.muted],
-                                ].map(([label,val,col])=>(
-                                  <div key={label} style={{textAlign:"center"}}>
-                                    <div style={{fontSize:8,color:C.muted3,marginBottom:2}}>{label}</div>
-                                    <div style={{fontSize:13,fontWeight:700,color:col,fontFamily:"var(--mono)"}}>{val}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {ss?.data?.ok && ss.data.count === 0 && (
-                            <div style={{fontSize:11,color:C.muted3,textAlign:"center",padding:"6px 0"}}>
-                              Bu ISBN için satış kaydı bulunamadı.
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </AccordionSection>
-
-                  {/* Amazon — only show if configured or has data */}
-                  {(drawerData.amazon?.available || drawerData.amazon?.reason !== "not_configured") && (
-                    <AccordionSection title="🛒 Amazon" C={C} defaultOpen={false}>
-                      {drawerData.amazon?.available
-                        ? <div style={{fontSize:11,color:C.text}}>Amazon verisi mevcut</div>
-                        : <div style={{fontSize:11,color:C.muted3}}>{drawerData.amazon?.note||"ASIN gerekli"}</div>
-                      }
-                    </AccordionSection>
-                  )}
-
-                  {/* ── Score Breakdown — Explainable ──────────────────────── */}
-                  {selectedAlert.deal_score != null && (
-                    <AccordionSection title={`🧮 Score Analizi · ${selectedAlert.deal_score}/100`} C={C} defaultOpen={false}>
-                      {(() => {
-                        const s = selectedAlert;
-                        const ratioRaw  = s.limit > 0 ? Math.max(0, (1 - s.total/s.limit)) * 70 : 0;
-                        const condBonus = {brand_new:8,like_new:8,very_good:5,good:0,acceptable:-5,used_all:0}[s.condition] ?? 0;  // must match scheduler_ebay._COND_BONUS
-                        const offerBonus = s.decision === "OFFER" ? 10 : 0;
-                        const shipPenalty = s.ship_estimated ? -2 : 0;
-                        const soldPenalty = (s.sold_avg != null && s.sold_avg < s.total) ? -5 : 0;
-                        const rows = [
-                          ["🎯 Limit'e uzaklık",     `+${Math.round(ratioRaw)}`, C.green,  `${s.total} / ${s.limit}`],
-                          ["🏷 Kondisyon",            condBonus>=0?`+${condBonus}`:String(condBonus), condBonus>=0?C.green:C.orange, condLabel[s.condition]||s.condition],
-                          ["💼 Make Offer",           offerBonus?"+10":"0", offerBonus?C.blue:C.muted3, offerBonus?"OFFER modu":"—"],
-                          ["🚚 Est. shipping",        shipPenalty?String(shipPenalty):"0", shipPenalty?C.orange:C.muted3, shipPenalty?"tahmini":"sabit"],
-                          ["📉 Sold avg üstü",        soldPenalty?"-5":"0", soldPenalty?C.red:C.muted3, soldPenalty?`sold $${Math.round(s.sold_avg)} < buy $${s.total}`:s.sold_avg==null?"veri yok — ceza yok":"OK (sold ≥ buy)"],
-                        ];
-                        return (
-                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                            <tbody>
-                              {rows.map(([label,val,col,note])=>(
-                                <tr key={label} style={{borderBottom:`1px solid ${C.border}10`}}>
-                                  <td style={{padding:"5px 0",color:C.muted}}>{label}</td>
-                                  <td style={{padding:"5px 4px",color:C.muted3,fontSize:9}}>{note}</td>
-                                  <td style={{padding:"5px 0",textAlign:"right",color:col,fontWeight:700,fontFamily:"var(--mono)"}}>{val}</td>
-                                </tr>
-                              ))}
-                              <tr style={{borderTop:`1px solid ${C.border}`}}>
-                                <td colSpan={2} style={{padding:"6px 0",fontWeight:700,color:s.deal_score>=75?C.green:s.deal_score>=50?C.accent:C.muted}}>Toplam</td>
-                                <td style={{padding:"6px 0",textAlign:"right",fontWeight:700,fontSize:15,color:s.deal_score>=75?C.green:s.deal_score>=50?C.accent:C.muted,fontFamily:"var(--mono)"}}>{s.deal_score}/100</td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        );
-                      })()}
-                    </AccordionSection>
-                  )}
-
-                  {drawerData.cached && (
-                    <div style={{fontSize:10,color:C.muted3,textAlign:"center",marginTop:12}}>
-                      ⚡ Cache · {Math.round((drawerData.cache_age||0)/60)}dk önce
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* ── Footer ────────────────────────────────────────────────────── */}
-            <div style={{padding:"12px 18px",borderTop:`1px solid ${C.border}`,display:"flex",gap:8,flexShrink:0}}>
-              {selectedAlert.url && (
-                <a href={selectedAlert.url} target="_blank" rel="noreferrer" style={{
-                  flex:1,textAlign:"center",padding:"9px",borderRadius:7,fontSize:12,fontWeight:600,
-                  background:C.accent,color:C.accentText,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:6,
-                }}>
-                  <svg width="14" height="14" viewBox="0 0 32 32" fill="currentColor"><path d="M28.9 3.8C27.5 2.5 25.6 2 22.9 2H9.1C6.4 2 4.5 2.5 3.1 3.8 1.7 5.1 1 7 1 9.5v13c0 2.5.7 4.4 2.1 5.7C4.5 29.5 6.4 30 9.1 30h13.8c2.7 0 4.6-.5 6-1.8 1.4-1.3 2.1-3.2 2.1-5.7v-13c0-2.5-.7-4.4-2.1-5.7zM16 23.2c-4 0-7.2-3.2-7.2-7.2S12 8.8 16 8.8s7.2 3.2 7.2 7.2-3.2 7.2-7.2 7.2zm8.5-12.8c-.9 0-1.7-.8-1.7-1.7s.8-1.7 1.7-1.7 1.7.8 1.7 1.7-.8 1.7-1.7 1.7z"/></svg>
-                  eBay
-                </a>
-              )}
-              <a href={`https://www.amazon.com/s?k=${selectedAlert.isbn}&i=stripbooks`} target="_blank" rel="noreferrer" style={{
-                flex:0,padding:"9px 14px",borderRadius:7,fontSize:12,fontWeight:600,
-                background:"#FF9900",color:"#000",textDecoration:"none",display:"flex",alignItems:"center",gap:5,
-              }}>
-                <svg width="14" height="14" viewBox="0 0 32 32" fill="currentColor"><path d="M28.5 22.5c-7.3 5.4-17.9 8.3-27 3.3-.5-.3-.1-.7.4-.5 7.7 4.5 17.2 1.8 23.5-2.8.7-.5 1.3.3.1 1zm1.8-1.9c-.7-.9-4.5-.4-6.2-.2-.5.1-.6-.4-.1-.7 3-2.1 8-.1 8.6.7.5.8-.1 6.3-3 8.9-.4.4-.8.2-.6-.3.6-1.6 2-5.5 1.3-8.4z"/><path d="M22.4 4.9C20.9 3.1 17.3 3 15.5 3c-5.6 0-8.1 2.4-8.1 5.7 0 3.7 2.9 5.4 7.5 6.8 4.1 1.2 4.8 1.9 4.8 3.3 0 1.8-1.4 2.6-4.2 2.6-2.7 0-4.7-.6-6.1-1.8-.3-.3-.8-.3-1.1 0l-1.8 2c-.4.4-.3.9.1 1.2 2 1.7 4.7 2.7 8.4 2.7 5.5 0 9.1-2.6 9.1-7 0-3.4-2.4-5.3-7.5-6.8-3.6-1-4.8-1.5-4.8-2.8 0-1.4 1.2-2.1 3.7-2.1 2 0 3.8.5 5.1 1.4.4.3.9.2 1.1-.2l1.4-2.2c.3-.4.1-.9-.2-1z"/></svg>
-                Amazon
-              </a>
-              <button onClick={()=>{setSelectedAlert(null);setDrawerData(null);}} style={{
-                flex:0,padding:"9px 14px",borderRadius:7,fontSize:12,
-                background:"none",border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",
-              }}>Kapat</button>
-            </div>
-          </div>
-        </>
+        <DetailDrawer
+          isbn={selectedAlert.isbn}
+          alertEntry={selectedAlert}
+          drawerData={drawerData}
+          drawerLoading={drawerLoading}
+          soldScrape={soldScrape[selectedAlert.isbn]}
+          bookMeta={bookMeta}
+          C={C}
+          onClose={()=>{setSelectedAlert(null);setDrawerData(null);}}
+          onRetry={()=>openDrawer(selectedAlert)}
+          onSoldFetch={(isbn)=>fetchSoldScrape(isbn)}
+          onLightbox={(src)=>setLightboxSrc(src)}
+        />
       )}
     </div>
   );
@@ -1635,6 +1268,426 @@ function AccordionSection({ title, children, C, defaultOpen=false }) {
   );
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DetailDrawer — shared by AlertsFeedTab + WatchlistTab
+// Props:
+//   isbn         : string (required)
+//   alertEntry   : object|null — if provided, shows hero KPIs (total/limit/score)
+//   drawerData   : object|null — /alerts/details response
+//   drawerLoading: bool
+//   soldScrape   : object — { loading, data, error }
+//   bookMeta     : object
+//   C            : colors
+//   onClose      : fn
+//   onRetry      : fn
+//   onSoldFetch  : fn(isbn)
+//   onLightbox   : fn(src)  (optional — pass null to disable)
+// ══════════════════════════════════════════════════════════════════════════════
+function DetailDrawer({
+  isbn, alertEntry = null,
+  drawerData, drawerLoading,
+  soldScrape, bookMeta, C,
+  onClose, onRetry, onSoldFetch, onLightbox,
+}) {
+  const condLabel = { brand_new:"New", like_new:"Like New", very_good:"Very Good", good:"Good", acceptable:"Acceptable", used_all:"Used" };
+  const condColor = (b) => ({brand_new:C.green,like_new:C.blue,very_good:C.purple,good:C.accent,acceptable:C.orange,used_all:C.muted})[b] || C.muted;
+  const olCover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`;
+  const coverSrc = alertEntry?.image_url || olCover;
+  const meta = bookMeta?.[isbn] || {};
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:40,background:"rgba(0,0,0,.45)",backdropFilter:"blur(2px)"}}/>
+
+      {/* Panel */}
+      <div style={{
+        position:"fixed",top:0,right:0,bottom:0,zIndex:50,
+        width:440,maxWidth:"95vw",background:C.surface,
+        borderLeft:`1px solid ${C.border}`,display:"flex",flexDirection:"column",
+        boxShadow:"-8px 0 32px rgba(0,0,0,.3)",overflow:"hidden",
+      }}>
+
+        {/* ── Hero ─────────────────────────────────────────────────────────── */}
+        <div style={{padding:"16px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:14,flexShrink:0}}>
+          {/* Cover */}
+          <div
+            onClick={onLightbox ? ()=>onLightbox(coverSrc) : undefined}
+            style={{width:110,height:155,flexShrink:0,borderRadius:8,overflow:"hidden",
+              background:C.surface2,border:`1px solid ${C.border}`,
+              cursor:onLightbox?"zoom-in":"default",
+              display:"flex",alignItems:"center",justifyContent:"center",
+            }}
+          >
+            <img src={coverSrc} alt="" loading="lazy"
+              style={{width:"100%",height:"100%",objectFit:"contain"}}
+              onError={e=>{ if(e.target.src!==olCover) e.target.src=olCover; }}
+            />
+          </div>
+
+          {/* Title + meta + KPIs */}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.text,lineHeight:1.4,marginBottom:3,wordBreak:"break-word"}}>
+              {alertEntry?.title || meta.title || isbn}
+            </div>
+            <div style={{fontSize:10,color:C.muted3,fontFamily:"var(--mono)",marginBottom:10}}>
+              <span>{isbn}</span>
+              {meta.author && <span style={{marginLeft:6,color:C.muted}}>{meta.author}</span>}
+              {meta.year   && <span style={{marginLeft:4,color:C.muted3}}> · {meta.year}</span>}
+            </div>
+
+            {/* Alert KPIs — only if alertEntry provided */}
+            {alertEntry ? (
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+                {/* Total */}
+                <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
+                  <div style={{fontSize:9,color:C.muted,marginBottom:2}}>📦 TOPLAM</div>
+                  <div style={{fontSize:18,fontWeight:700,color:C.text}}>${alertEntry.total}</div>
+                  {alertEntry.ship_estimated && <div style={{fontSize:9,color:C.orange}}>🚚 est.ship</div>}
+                </div>
+                {/* Limit */}
+                <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
+                  <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🎯 LİMİT</div>
+                  <div style={{fontSize:18,fontWeight:700,color:alertEntry.total<=alertEntry.limit?C.green:C.red}}>
+                    ${alertEntry.limit}
+                  </div>
+                  <div style={{fontSize:9,color:C.muted,marginTop:1}}>
+                    {alertEntry.total<=alertEntry.limit
+                      ? `✓ $${(alertEntry.limit-alertEntry.total).toFixed(2)} altında`
+                      : `↑ $${(alertEntry.total-alertEntry.limit).toFixed(2)} üstünde`}
+                  </div>
+                </div>
+                {/* Condition */}
+                <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
+                  <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🏷 KONDİSYON</div>
+                  <div style={{fontSize:12,fontWeight:600,color:condColor(alertEntry.condition)}}>
+                    {condLabel[alertEntry.condition]||alertEntry.condition}
+                  </div>
+                  <div style={{fontSize:9,color:C.muted,marginTop:1}}>
+                    {alertEntry.match_quality==="CONFIRMED"?"✅ GTIN doğru":"⚠ unverified"}
+                  </div>
+                </div>
+                {/* Score */}
+                <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
+                  <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🔥 SKOR</div>
+                  <div style={{fontSize:18,fontWeight:700,color:alertEntry.deal_score>=75?C.green:alertEntry.deal_score>=50?C.accent:C.muted}}>
+                    {alertEntry.deal_score!=null?alertEntry.deal_score:"—"}
+                  </div>
+                  <div style={{fontSize:9,color:C.muted,marginTop:1}}>
+                    {alertEntry.decision==="OFFER"?"make offer":"fixed price"}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Watchlist mode: show active eBay KPIs if data already loaded */
+              drawerData?.ebay?.ok && (
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+                  {drawerData.ebay.used && (
+                    <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
+                      <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🧺 USED MIN</div>
+                      <div style={{fontSize:18,fontWeight:700,color:C.accent}}>${drawerData.ebay.used.min}</div>
+                      <div style={{fontSize:9,color:C.muted3}}>{drawerData.ebay.used.count} ilan · ort ${drawerData.ebay.used.avg}</div>
+                    </div>
+                  )}
+                  {drawerData.ebay.new && (
+                    <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
+                      <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🆕 NEW MIN</div>
+                      <div style={{fontSize:18,fontWeight:700,color:C.green}}>${drawerData.ebay.new.min}</div>
+                      <div style={{fontSize:9,color:C.muted3}}>{drawerData.ebay.new.count} ilan</div>
+                    </div>
+                  )}
+                </div>
+              )
+            )}
+          </div>
+
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:4,flexShrink:0,marginTop:-4}}>×</button>
+        </div>
+
+        {/* ── Body ─────────────────────────────────────────────────────────── */}
+        <div style={{flex:1,overflowY:"auto",padding:"14px 18px"}}>
+
+          {drawerLoading && (
+            <div style={{color:C.muted3,fontSize:12,textAlign:"center",paddingTop:32}}>Yükleniyor…</div>
+          )}
+
+          {!drawerLoading && drawerData && !drawerData.ok && (
+            <div style={{padding:"20px 0",textAlign:"center"}}>
+              <div style={{fontSize:24,marginBottom:8}}>⚠️</div>
+              <div style={{fontSize:12,color:C.orange,marginBottom:12}}>{drawerData.error||"Veri yüklenemedi"}</div>
+              <button onClick={onRetry} style={{fontSize:11,background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,padding:"6px 14px",cursor:"pointer"}}>↺ Tekrar dene</button>
+            </div>
+          )}
+
+          {!drawerLoading && drawerData?.ok && (
+            <>
+
+              {/* ── eBay Aktif Listeler ──────────────────────────────────── */}
+              <AccordionSection title="📊 eBay Aktif Listeler" C={C} defaultOpen={true}>
+                {drawerData.ebay?.ok ? (
+                  <>
+                    <div style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:11,marginBottom:10,padding:"8px 10px",background:C.surface2,borderRadius:6}}>
+                      {drawerData.ebay.used && <>
+                        <span>🧺 <b style={{color:C.accent}}>{drawerData.ebay.used.count}</b> used</span>
+                        <span>💸 min <b style={{color:C.accent}}>${drawerData.ebay.used.min}</b></span>
+                        <span>📈 avg <b style={{color:C.muted}}>${drawerData.ebay.used.avg}</b></span>
+                      </>}
+                      {drawerData.ebay.new && <>
+                        <span>🆕 <b style={{color:C.green}}>{drawerData.ebay.new.count}</b> new</span>
+                        <span>💸 min <b style={{color:C.green}}>${drawerData.ebay.new.min}</b></span>
+                      </>}
+                    </div>
+                    {drawerData.ebay.by_condition && Object.keys(drawerData.ebay.by_condition).length>0 && (
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                        <thead>
+                          <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                            {["Kondisyon","Adet","Min","Ort"].map(h=>(
+                              <th key={h} style={{textAlign:h==="Kondisyon"?"left":"right",padding:"3px 6px",fontSize:9,color:C.muted,fontWeight:500}}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(drawerData.ebay.by_condition)
+                            .sort((a,b)=>a[1].min-b[1].min)
+                            .map(([cond,st])=>(
+                              <tr key={cond} style={{borderBottom:`1px solid ${C.border}10`}}>
+                                <td style={{padding:"5px 6px",color:condColor(cond),fontWeight:500}}>{condLabel[cond]||cond}</td>
+                                <td style={{padding:"5px 6px",textAlign:"right",color:C.muted}}>{st.count}</td>
+                                <td style={{padding:"5px 6px",textAlign:"right",color:C.text,fontWeight:600}}>${st.min}</td>
+                                <td style={{padding:"5px 6px",textAlign:"right",color:C.muted}}>${st.avg}</td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </>
+                ) : (
+                  <div style={{fontSize:11,color:C.muted3}}>{drawerData.ebay?.error||"Veri alınamadı"}</div>
+                )}
+              </AccordionSection>
+
+              {/* ── Profit Simülasyonu ───────────────────────────────────── */}
+              {drawerData.profit && (
+                <AccordionSection title="💰 Kâr Simülasyonu" C={C} defaultOpen={true}>
+                  {(()=>{
+                    const p = drawerData.profit;
+                    const tierEmoji = {fire:"🔥",good:"👍",low:"😬",loss:"❌"}[p.roi_tier]||"";
+                    const profitColor = p.profit>0?C.green:C.red;
+                    const roiColor = p.roi_pct>=30?C.green:p.roi_pct>=15?C.accent:p.roi_pct>0?C.orange:C.red;
+                    return (
+                      <>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                          <div style={{background:C.surface2,borderRadius:7,padding:"10px 14px",border:`1px solid ${p.profit>0?C.green:C.red}20`}}>
+                            <div style={{fontSize:9,color:C.muted,marginBottom:3}}>✅ NET KÂR</div>
+                            <div style={{fontSize:22,fontWeight:700,color:profitColor}}>{p.profit>0?"+":""}${Math.abs(p.profit).toFixed(2)}</div>
+                          </div>
+                          <div style={{background:C.surface2,borderRadius:7,padding:"10px 14px"}}>
+                            <div style={{fontSize:9,color:C.muted,marginBottom:3}}>📈 ROI</div>
+                            <div style={{fontSize:22,fontWeight:700,color:roiColor}}>{p.roi_pct>0?"+":""}{p.roi_pct}%</div>
+                            <div style={{fontSize:10,color:roiColor,marginTop:2}}>{tierEmoji} {p.roi_tier}</div>
+                          </div>
+                        </div>
+                        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                          <tbody>
+                            {[
+                              ["🛒 Amazon sell price",`$${p.sell_price}`,C.text,`(${p.sell_source.replace(/_/g," ")})`],
+                              ["📦 eBay cost",`-$${p.ebay_cost}`,C.red,""],
+                              ["💸 Referral (15%)",`-$${p.referral_fee}`,C.muted,""],
+                              ["📦 Closing fee",`-$${p.closing_fee}`,C.muted,"media"],
+                              ["🚚 Fulfillment",`-$${p.fulfillment}`,C.muted,"FBA avg"],
+                              ["✈ Inbound",`-$${p.inbound}`,C.muted,"estimate"],
+                            ].map(([lbl,val,col,sub])=>(
+                              <tr key={lbl} style={{borderBottom:`1px solid ${C.border}10`}}>
+                                <td style={{padding:"4px 0",color:C.muted,fontSize:10}}>{lbl}</td>
+                                <td style={{padding:"4px 4px",color:C.muted3,fontSize:9}}>{sub}</td>
+                                <td style={{padding:"4px 0",textAlign:"right",color:col,fontWeight:500,fontFamily:"var(--mono)"}}>{val}</td>
+                              </tr>
+                            ))}
+                            <tr style={{borderTop:`1px solid ${C.border}`}}>
+                              <td colSpan={2} style={{padding:"6px 0",color:C.text,fontWeight:600,fontSize:11}}>Net</td>
+                              <td style={{padding:"6px 0",textAlign:"right",color:profitColor,fontWeight:700,fontFamily:"var(--mono)"}}>{p.profit>0?"+":""}{p.profit}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                        <div style={{fontSize:9,color:C.muted3,marginTop:6}}>* Tahminler varsayıma dayanır. Gerçek FBA fee asin/weight bazlı değişir.</div>
+                      </>
+                    );
+                  })()}
+                </AccordionSection>
+              )}
+
+              {/* ── Satış Verisi ─────────────────────────────────────────── */}
+              <AccordionSection title="📉 Satış Verisi" C={C} defaultOpen={false}>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
+                  {drawerData.sold?.data_source==="browse_proxy"
+                    ? <span style={{fontSize:10,background:"rgba(251,146,60,.12)",border:"1px solid rgba(251,146,60,.4)",borderRadius:4,padding:"2px 8px",color:C.orange}}>📊 Browse proxy</span>
+                    : <span style={{fontSize:10,background:"rgba(52,211,153,.1)",border:"1px solid rgba(52,211,153,.3)",borderRadius:4,padding:"2px 8px",color:C.green}}>✓ Finding API</span>
+                  }
+                  {drawerData.sold?.backoff_active && (
+                    <span style={{fontSize:10,color:C.muted3}}>🕒 {Math.round((drawerData.sold.backoff_remaining||0)/3600)}s kaldı</span>
+                  )}
+                </div>
+                {drawerData.sold?.sold_avg != null
+                  ? <DrawerRow label="Finding API ort." value={`$${Math.round(drawerData.sold.sold_avg)}`} C={C}/>
+                  : <DrawerRow label="Finding API ort." value="Veri yok" C={C} valueColor={C.muted3}/>}
+                {drawerData.sold?.sold_count != null && <DrawerRow label="Örnek sayısı" value={drawerData.sold.sold_count} C={C}/>}
+
+                {/* On-demand sold scrape — new/used split */}
+                {(()=>{
+                  const ss = soldScrape;
+                  return (
+                    <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                      {!ss?.data && !ss?.loading && (
+                        <button
+                          onClick={()=>onSoldFetch(isbn)}
+                          style={{width:"100%",padding:"7px",borderRadius:6,fontSize:11,fontWeight:600,
+                            background:"none",border:`1px solid ${C.accent}`,color:C.accent,
+                            cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}
+                        >
+                          🔍 Satış Ortalaması Gör
+                          <span style={{fontSize:9,color:C.muted3,fontWeight:400}}>(New + Used · on-demand)</span>
+                        </button>
+                      )}
+                      {ss?.loading && <div style={{textAlign:"center",fontSize:11,color:C.muted3,padding:"8px 0"}}>⏳ eBay sold listesi çekiliyor…</div>}
+                      {ss?.error && (
+                        <div style={{fontSize:11,color:C.orange,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <span>⚠ {ss.error}</span>
+                          <button onClick={()=>onSoldFetch(isbn)} style={{fontSize:10,background:"none",border:"none",color:C.accent,cursor:"pointer"}}>↺</button>
+                        </div>
+                      )}
+                      {ss?.data?.ok && (
+                        <div>
+                          {/* New + Used side by side */}
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                            {[["🆕 New",ss.data.new,C.green,ss.data.ebay_url_new],
+                              ["🧺 Used",ss.data.used,C.accent,ss.data.ebay_url_used]
+                            ].map(([label,st,col,url])=>(
+                              <div key={label} style={{background:C.surface2,borderRadius:6,padding:"8px 10px"}}>
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                                  <span style={{fontSize:10,color:col,fontWeight:700}}>{label}</span>
+                                  {st
+                                    ? <span style={{fontSize:9,color:C.muted3}}>{st.count} satış</span>
+                                    : <span style={{fontSize:9,color:C.muted3}}>veri yok</span>}
+                                </div>
+                                {st ? (
+                                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:3}}>
+                                    {[["Ort",st.avg],[" Med",st.median],["Min",st.min],["Max",st.max]].map(([k,v])=>(
+                                      <div key={k} style={{textAlign:"center"}}>
+                                        <div style={{fontSize:7,color:C.muted3}}>{k}</div>
+                                        <div style={{fontSize:12,fontWeight:700,color:k==="Min"?col:C.text,fontFamily:"var(--mono)"}}>${v}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div style={{fontSize:10,color:C.muted3,textAlign:"center"}}>—</div>
+                                )}
+                                <a href={url} target="_blank" rel="noreferrer"
+                                  style={{display:"block",textAlign:"center",marginTop:6,fontSize:9,color:C.muted3,textDecoration:"none"}}>eBay ↗</a>
+                              </div>
+                            ))}
+                          </div>
+                          {/* Combined */}
+                          {ss.data.combined && (
+                            <div style={{fontSize:10,color:C.muted3,textAlign:"center",padding:"4px 0"}}>
+                              Toplam {ss.data.combined.count} satış · ort <b style={{color:C.text}}>${ss.data.combined.avg}</b>
+                              {ss.data.cached && <span style={{marginLeft:6}}>⚡ cache</span>}
+                            </div>
+                          )}
+                          <button onClick={()=>onSoldFetch(isbn)} style={{display:"block",width:"100%",marginTop:6,fontSize:9,background:"none",border:"none",color:C.muted3,cursor:"pointer",textAlign:"center"}}>↺ Yenile</button>
+                        </div>
+                      )}
+                      {ss?.data?.ok && !ss.data.new && !ss.data.used && (
+                        <div style={{fontSize:11,color:C.muted3,textAlign:"center",padding:"6px 0"}}>Satış kaydı bulunamadı.</div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </AccordionSection>
+
+              {/* ── Amazon ───────────────────────────────────────────────── */}
+              {(drawerData.amazon?.available || drawerData.amazon?.reason!=="not_configured") && (
+                <AccordionSection title="🛒 Amazon" C={C} defaultOpen={false}>
+                  {drawerData.amazon?.available
+                    ? <div style={{fontSize:11,color:C.text}}>Amazon verisi mevcut</div>
+                    : <div style={{fontSize:11,color:C.muted3}}>{drawerData.amazon?.note||"ASIN gerekli"}</div>
+                  }
+                </AccordionSection>
+              )}
+
+              {/* ── Score Analizi — only for alert entries ────────────────── */}
+              {alertEntry?.deal_score != null && (
+                <AccordionSection title={`🧮 Score Analizi · ${alertEntry.deal_score}/100`} C={C} defaultOpen={false}>
+                  {(()=>{
+                    const s = alertEntry;
+                    const condLabel2 = { brand_new:"New", like_new:"Like New", very_good:"Very Good", good:"Good", acceptable:"Acceptable", used_all:"Used" };
+                    const ratioRaw  = s.limit>0 ? Math.max(0,(1-s.total/s.limit))*70 : 0;
+                    const condBonus = {brand_new:8,like_new:8,very_good:5,good:0,acceptable:-5,used_all:0}[s.condition]??0;
+                    const offerBonus = s.decision==="OFFER"?10:0;
+                    const shipPenalty = s.ship_estimated?-2:0;
+                    const soldPenalty = (s.sold_avg!=null&&s.sold_avg<s.total)?-5:0;
+                    const rows=[
+                      ["🎯 Limit'e uzaklık",`+${Math.round(ratioRaw)}`,C.green,`${s.total} / ${s.limit}`],
+                      ["🏷 Kondisyon",condBonus>=0?`+${condBonus}`:String(condBonus),condBonus>=0?C.green:C.orange,condLabel2[s.condition]||s.condition],
+                      ["💼 Make Offer",offerBonus?"+10":"0",offerBonus?C.blue:C.muted3,offerBonus?"OFFER modu":"—"],
+                      ["🚚 Est. shipping",shipPenalty?String(shipPenalty):"0",shipPenalty?C.orange:C.muted3,shipPenalty?"tahmini":"sabit"],
+                      ["📉 Sold avg üstü",soldPenalty?"-5":"0",soldPenalty?C.red:C.muted3,soldPenalty?`sold $${Math.round(s.sold_avg)} < buy $${s.total}`:s.sold_avg==null?"veri yok — ceza yok":"OK (sold ≥ buy)"],
+                    ];
+                    return (
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                        <tbody>
+                          {rows.map(([lbl,val,col,note])=>(
+                            <tr key={lbl} style={{borderBottom:`1px solid ${C.border}10`}}>
+                              <td style={{padding:"5px 0",color:C.muted}}>{lbl}</td>
+                              <td style={{padding:"5px 4px",color:C.muted3,fontSize:9}}>{note}</td>
+                              <td style={{padding:"5px 0",textAlign:"right",color:col,fontWeight:700,fontFamily:"var(--mono)"}}>{val}</td>
+                            </tr>
+                          ))}
+                          <tr style={{borderTop:`1px solid ${C.border}`}}>
+                            <td colSpan={2} style={{padding:"6px 0",fontWeight:700,color:s.deal_score>=75?C.green:s.deal_score>=50?C.accent:C.muted}}>Toplam</td>
+                            <td style={{padding:"6px 0",textAlign:"right",fontWeight:700,fontSize:15,color:s.deal_score>=75?C.green:s.deal_score>=50?C.accent:C.muted,fontFamily:"var(--mono)"}}>{s.deal_score}/100</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    );
+                  })()}
+                </AccordionSection>
+              )}
+
+              {drawerData.cached && (
+                <div style={{fontSize:10,color:C.muted3,textAlign:"center",marginTop:12}}>
+                  ⚡ Cache · {Math.round((drawerData.cache_age||0)/60)}dk önce
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* ── Footer ───────────────────────────────────────────────────────── */}
+        <div style={{padding:"12px 18px",borderTop:`1px solid ${C.border}`,display:"flex",gap:10,flexShrink:0}}>
+          <a href={buildEbaySearchUrl({isbn})} target="_blank" rel="noreferrer"
+            style={{flex:1,padding:"9px",borderRadius:7,background:"#e53238",color:"white",
+              textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
+            🛍 eBay
+          </a>
+          {alertEntry?.url && (
+            <a href={alertEntry.url} target="_blank" rel="noreferrer"
+              style={{flex:1,padding:"9px",borderRadius:7,background:"#FF9900",color:"white",
+                textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
+              🛒 İlan ↗
+            </a>
+          )}
+          <button onClick={onClose}
+            style={{flex:alertEntry?.url?0:1,padding:"9px 16px",borderRadius:7,background:"none",
+              border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",fontFamily:"var(--mono)",fontSize:12}}>
+            Kapat
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 const TABS = ["dashboard","watchlist","pricing","alerts"];
 
 export default function App() {
@@ -1658,6 +1711,41 @@ function AppReal() {
   const [runState, setRunState] = useState({});
   const [loading, setLoading] = useState(true);
   const [backoffStatus, setBackoffStatus] = useState(null);
+
+  // ── Watchlist drawer state ───────────────────────────────────────────────
+  const [wlDrawerIsbn, setWlDrawerIsbn] = useState(null);
+  const [wlDrawerData, setWlDrawerData] = useState(null);
+  const [wlDrawerLoading, setWlDrawerLoading] = useState(false);
+  const [wlSoldScrape, setWlSoldScrape] = useState({});        // { [isbn]: {loading,data,error} }
+  const [wlLightbox, setWlLightbox] = useState(null);
+  const _wlPrefetchCache = useRef({});
+
+  const openWlDrawer = useCallback(async (isbn) => {
+    setWlDrawerIsbn(isbn);
+    const cached = _wlPrefetchCache.current[isbn];
+    if (cached) { setWlDrawerData(cached); setWlDrawerLoading(false); return; }
+    setWlDrawerData(null);
+    setWlDrawerLoading(true);
+    try {
+      const d = await req(`/alerts/details?isbn=${isbn}`, {}, 20000);
+      _wlPrefetchCache.current[isbn] = d;
+      setWlDrawerData(d);
+    } catch(e) {
+      setWlDrawerData({ ok: false, error: e.message });
+    } finally {
+      setWlDrawerLoading(false);
+    }
+  }, []);
+
+  const fetchWlSoldScrape = async (isbn) => {
+    setWlSoldScrape(s=>({...s,[isbn]:{loading:true,data:null,error:null}}));
+    try {
+      const d = await req(`/ebay/sold-avg/${isbn}`, {}, 25000);
+      setWlSoldScrape(s=>({...s,[isbn]:{loading:false,data:d,error:null}}));
+    } catch(e) {
+      setWlSoldScrape(s=>({...s,[isbn]:{loading:false,data:null,error:e.message}}));
+    }
+  };
 
   const [rules, setRules] = useState({});
 
@@ -1690,7 +1778,17 @@ function AppReal() {
   const load = useCallback(async () => {
     try {
       const [a,b,c,d,e,f] = await Promise.allSettled([req("/isbns"),req("/rules"),req("/status"),req("/alerts/stats"),req("/run-state"),req("/ebay/debug/finding-backoff",{},5000)]);
-      if (a.status==="fulfilled") setIsbns(a.value.items||[]);
+      if (a.status==="fulfilled") {
+        const loaded = a.value.items||[];
+        setIsbns(loaded);
+        // Background pre-warm: watchlist drawer cache (staggered, after 2s)
+        loaded.slice(0,8).forEach((isbn,i)=>{
+          if(_wlPrefetchCache.current[isbn]) return;
+          setTimeout(async()=>{
+            try{ const d2=await req(`/alerts/details?isbn=${isbn}`,{},20000); if(d2?.ok) _wlPrefetchCache.current[isbn]=d2; }catch{}
+          }, 2000 + i*500);
+        });
+      }
       if (b.status==="fulfilled") {
         setIntervals(b.value.intervals||{});
         setRules(b.value.rules||{});
@@ -2137,7 +2235,10 @@ function AppReal() {
                       .filter(isbn => !isbnFilter || isbn.includes(isbnFilter.replace(/-/g,"")))
                       .map(isbn=>(
                     <div key={isbn} style={{...row,borderRadius:8,marginBottom:8,overflow:"hidden"}}>
-                      <div className="row-item" style={{borderBottom:editingRule===isbn?`1px solid ${C.border}`:"none",marginBottom:0,paddingBottom:editingRule===isbn?12:undefined}}>
+                      <div className="row-item"
+                        onClick={()=>{ if(!editingRule && !editing) openWlDrawer(isbn); }}
+                        style={{borderBottom:editingRule===isbn?`1px solid ${C.border}`:"none",marginBottom:0,paddingBottom:editingRule===isbn?12:undefined,cursor:(editingRule||editing)?"default":"pointer",transition:"background .12s"}}
+                      >
                         <div style={{flex:1}}>
                           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                             <span style={{fontFamily:"var(--sans)",fontSize:13,fontWeight:600}}>{isbn}</span>
@@ -2211,6 +2312,30 @@ function AppReal() {
             )}
 
             {tab==="pricing"&&<PricingTab isbns={isbns} C={C} push={push} titles={titles} rules={rules} onRulesSaved={load}/>}
+
+            {/* Watchlist lightbox */}
+            {wlLightbox && (
+              <div onClick={()=>setWlLightbox(null)} style={{position:"fixed",inset:0,zIndex:200,background:"rgba(0,0,0,.85)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"zoom-out"}}>
+                <img src={wlLightbox} alt="" style={{maxWidth:"90vw",maxHeight:"90vh",objectFit:"contain",borderRadius:8}}/>
+                <button onClick={()=>setWlLightbox(null)} style={{position:"absolute",top:20,right:24,background:"none",border:"none",color:"white",fontSize:28,cursor:"pointer"}}>×</button>
+              </div>
+            )}
+            {/* Watchlist drawer */}
+            {wlDrawerIsbn && (
+              <DetailDrawer
+                isbn={wlDrawerIsbn}
+                alertEntry={null}
+                drawerData={wlDrawerData}
+                drawerLoading={wlDrawerLoading}
+                soldScrape={wlSoldScrape[wlDrawerIsbn]}
+                bookMeta={bookMeta}
+                C={C}
+                onClose={()=>{setWlDrawerIsbn(null);setWlDrawerData(null);}}
+                onRetry={()=>openWlDrawer(wlDrawerIsbn)}
+                onSoldFetch={fetchWlSoldScrape}
+                onLightbox={setWlLightbox}
+              />
+            )}
 
 {tab==="alerts"&&<AlertsFeedTab C={C} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
           </>

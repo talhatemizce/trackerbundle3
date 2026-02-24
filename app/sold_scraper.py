@@ -1,30 +1,22 @@
 """
-On-demand eBay sold price scraper.
-Endpoint: GET /ebay/sold-avg/{isbn}
+On-demand eBay sold price scraper — new + used split.
+GET /ebay/sold-avg/{isbn}
+
+Returns:
+  { ok, isbn, new: {count,min,max,avg,median}, used: {count,min,max,avg,median},
+    combined: {...}, ebay_url_used, ebay_url_new, cached, cache_age_s }
 
 Strategy:
-  - Fetches https://www.ebay.com/sch/i.html?_nkw={isbn}&LH_Sold=1&LH_Complete=1
-  - Parses sold prices from HTML (no JS required — eBay renders them server-side)
-  - Returns: count, min, max, avg, median, last_sold_date
-  - 30-minute per-ISBN cache → low request rate, no ban risk
-  - User-triggered only (button click) — not called on every page load
-
-Rate safety:
-  - On-demand only (not scheduled)
-  - 30min TTL cache per ISBN
-  - Single request per trigger
-  - Randomised User-Agent rotation
-  - 1-2s human-like delay on cache miss
-
-eBay scrape ToS note:
-  Public sold listing pages are publicly accessible.
-  On-demand, low-frequency, single-user personal tool usage.
-  Not a commercial competitor, no systematic data harvesting.
+  - Two parallel requests: one with LH_ItemCondition=1000 (New), one with 3000 (Used)
+  - 30-min per-ISBN cache
+  - On-demand only (button click), not scheduled → no ban risk
+  - Staggered user-agent rotation + 0.8-2s human delay on cache miss
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 import re
 import time
@@ -38,8 +30,8 @@ from app.core.json_store import file_lock, _read_unsafe, _write_unsafe
 
 logger = logging.getLogger("trackerbundle.sold_scraper")
 
-_CACHE_TTL_S = 30 * 60   # 30 minutes
-_MAX_ITEMS   = 40         # parse first 40 sold items
+_CACHE_TTL_S = 30 * 60
+_MAX_ITEMS   = 60
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -48,158 +40,156 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
 ]
 
+# eBay condition filter IDs
+_COND_NEW  = "1000"   # New
+_COND_USED = "3000"   # Used (covers Used/Good/Very Good/Acceptable)
+
 
 def _cache_path() -> Path:
     return get_settings().resolved_data_dir() / "sold_scrape_cache.json"
 
 
 def _cache_get(isbn: str) -> Optional[dict]:
-    data = _read_unsafe(_cache_path(), default={"entries": {}})
-    entry = data.get("entries", {}).get(isbn)
-    if entry and time.time() - entry.get("ts", 0) < _CACHE_TTL_S:
-        return entry
+    try:
+        data = _read_unsafe(_cache_path(), default={"entries": {}})
+        entry = data.get("entries", {}).get(isbn)
+        if entry and time.time() - entry.get("ts", 0) < _CACHE_TTL_S:
+            return entry
+    except Exception:
+        pass
     return None
 
 
 def _cache_set(isbn: str, result: dict) -> None:
     p = _cache_path()
-    with file_lock(p):
-        data = _read_unsafe(p, default={"entries": {}})
-        # Evict stale entries (keep bounded)
-        now = time.time()
-        data["entries"] = {
-            k: v for k, v in data.get("entries", {}).items()
-            if now - v.get("ts", 0) < _CACHE_TTL_S * 4
-        }
-        data["entries"][isbn] = {**result, "ts": int(now)}
-        _write_unsafe(p, data)
+    try:
+        with file_lock(p):
+            data = _read_unsafe(p, default={"entries": {}})
+            now = time.time()
+            data["entries"] = {
+                k: v for k, v in data.get("entries", {}).items()
+                if now - v.get("ts", 0) < _CACHE_TTL_S * 4
+            }
+            data["entries"][isbn] = {**result, "ts": int(now)}
+            _write_unsafe(p, data)
+    except Exception:
+        pass
 
 
-def _parse_sold_prices(html: str) -> list[float]:
-    """
-    Extract sold prices from eBay completed/sold listings HTML.
-    eBay renders prices server-side in several formats:
-      - <span class="s-item__price">$12.50</span>
-      - <span class="POSITIVE">$12.50</span>  (sold price highlight)
-    We look for monetary values in expected price elements.
-    """
+def _parse_prices(html: str) -> list[float]:
+    """Extract sold prices from eBay sold-listings HTML."""
     prices: list[float] = []
-
-    # Primary: s-item__price spans (main listing price)
-    # eBay uses this consistently across regions/layouts
-    # Pattern catches: $12.50 | $1,234.56
-    pattern = re.compile(
+    # Primary: s-item__price spans
+    for m in re.finditer(
         r'class="[^"]*s-item__price[^"]*"[^>]*>\s*\$([0-9,]+(?:\.[0-9]{1,2})?)',
-        re.IGNORECASE
-    )
-    for m in pattern.finditer(html):
+        html, re.IGNORECASE
+    ):
         try:
-            val = float(m.group(1).replace(",", ""))
-            if 0.5 <= val <= 5000:  # sanity bounds for books
-                prices.append(val)
+            v = float(m.group(1).replace(",", ""))
+            if 0.25 <= v <= 5000:
+                prices.append(v)
         except ValueError:
             pass
-
-    # Fallback: any "$N.NN" near "Sold" text (for edge cases)
+    # Fallback
     if len(prices) < 3:
-        alt = re.compile(r'\$([0-9]+\.[0-9]{2})')
-        for m in alt.finditer(html):
+        for m in re.finditer(r'\$([0-9]+\.[0-9]{2})', html):
             try:
-                val = float(m.group(1))
-                if 0.5 <= val <= 500 and val not in prices:
-                    prices.append(val)
+                v = float(m.group(1))
+                if 0.25 <= v <= 500 and v not in prices:
+                    prices.append(v)
             except ValueError:
                 pass
-
     return prices[:_MAX_ITEMS]
+
+
+def _stats(prices: list[float]) -> Optional[dict]:
+    if not prices:
+        return None
+    n = len(prices)
+    s = sorted(prices)
+    med = s[n // 2] if n % 2 else round((s[n//2-1] + s[n//2]) / 2, 2)
+    return {
+        "count":  n,
+        "min":    round(min(prices), 2),
+        "max":    round(max(prices), 2),
+        "avg":    round(sum(prices) / n, 2),
+        "median": round(med, 2),
+    }
+
+
+async def _fetch_condition(
+    client: httpx.AsyncClient,
+    isbn: str,
+    cond_id: str,
+) -> tuple[list[float], str]:
+    """Fetch sold prices for one condition. Returns (prices, url)."""
+    url = (
+        f"https://www.ebay.com/sch/i.html"
+        f"?_nkw={isbn}&_sacat=267"
+        f"&LH_Sold=1&LH_Complete=1"
+        f"&LH_ItemCondition={cond_id}"
+        f"&_sop=13"
+    )
+    headers = {
+        "User-Agent":              random.choice(_USER_AGENTS),
+        "Accept":                  "text/html,application/xhtml+xml",
+        "Accept-Language":         "en-US,en;q=0.9",
+        "Accept-Encoding":         "gzip, deflate, br",
+        "Connection":              "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    try:
+        r = await client.get(url, headers=headers, timeout=18)
+        if r.status_code == 200:
+            return _parse_prices(r.text), url
+    except Exception as exc:
+        logger.debug("sold_scrape fetch cond=%s isbn=%s: %s", cond_id, isbn, exc)
+    return [], url
 
 
 async def fetch_sold_avg(isbn: str) -> dict:
     """
-    Main entry point. Returns cached result if available.
-
-    Returns:
-    {
-        "ok": True,
-        "isbn": str,
-        "count": int,
-        "min": float,
-        "max": float,
-        "avg": float,
-        "median": float,
-        "cached": bool,
-        "cache_age_s": int,
-        "ebay_url": str,
-    }
-    or {"ok": False, "error": str}
+    Fetch new + used sold averages in parallel. Returns cached if available.
     """
     isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
 
     cached = _cache_get(isbn_clean)
     if cached:
-        age = int(time.time() - cached["ts"])
+        age = int(time.time() - cached.get("ts", time.time()))
         return {**cached, "cached": True, "cache_age_s": age}
 
     # Human-like delay on live fetch
-    await asyncio.sleep(random.uniform(0.8, 2.0))
-
-    url = (
-        f"https://www.ebay.com/sch/i.html"
-        f"?_nkw={isbn_clean}&_sacat=267"
-        f"&LH_Sold=1&LH_Complete=1"
-        f"&_sop=13"  # sort by most recently sold
-    )
-
-    headers = {
-        "User-Agent": random.choice(_USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-    }
+    await asyncio.sleep(random.uniform(0.6, 1.4))
 
     try:
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=20,
-            headers=headers,
-        ) as client:
-            r = await client.get(url)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=22) as client:
+            # Parallel: new + used simultaneously
+            (new_prices, new_url), (used_prices, used_url) = await asyncio.gather(
+                _fetch_condition(client, isbn_clean, _COND_NEW),
+                _fetch_condition(client, isbn_clean, _COND_USED),
+            )
 
-        if r.status_code != 200:
-            return {"ok": False, "error": f"HTTP {r.status_code}", "isbn": isbn_clean}
-
-        prices = _parse_sold_prices(r.text)
-
-        if not prices:
-            result = {
-                "ok": True, "isbn": isbn_clean,
-                "count": 0, "min": None, "max": None,
-                "avg": None, "median": None,
-                "ebay_url": url, "cached": False, "cache_age_s": 0,
-            }
-            _cache_set(isbn_clean, result)
-            return result
-
-        prices.sort()
-        n = len(prices)
-        median = prices[n // 2] if n % 2 else round((prices[n//2-1] + prices[n//2]) / 2, 2)
+        all_prices = list({*new_prices, *used_prices})  # deduplicate across conditions
 
         result = {
-            "ok": True,
-            "isbn": isbn_clean,
-            "count": n,
-            "min": round(min(prices), 2),
-            "max": round(max(prices), 2),
-            "avg": round(sum(prices) / n, 2),
-            "median": round(median, 2),
-            "ebay_url": url,
-            "cached": False,
-            "cache_age_s": 0,
+            "ok":        True,
+            "isbn":      isbn_clean,
+            "new":       _stats(new_prices),
+            "used":      _stats(used_prices),
+            "combined":  _stats(all_prices) if all_prices else None,
+            "ebay_url_new":  new_url,
+            "ebay_url_used": used_url,
+            "cached":        False,
+            "cache_age_s":   0,
         }
+
         _cache_set(isbn_clean, result)
-        logger.info("sold_scrape isbn=%s count=%d avg=%.2f", isbn_clean, n, result["avg"])
+        logger.info(
+            "sold_scrape isbn=%s new=%d used=%d",
+            isbn_clean,
+            len(new_prices),
+            len(used_prices),
+        )
         return result
 
     except Exception as exc:
