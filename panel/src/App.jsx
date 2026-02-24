@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-24-deal-score";
+const BUILD_ID = "2026-02-24-proxy-fix";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -304,9 +304,8 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
       <div>
         {isProxy ? (
           <>
-            <PeriodBar label="Min (aktif)"  avg={p.avg_30d?.avg}  count={p.avg_30d?.count||0}  weight={0.33} C={C} />
-            <PeriodBar label="Ort. (aktif)" avg={p.avg_90d?.avg}  count={p.avg_90d?.count||0}  weight={0.67} C={C} />
-            <PeriodBar label="Med. (aktif)" avg={p.avg_365d?.avg} count={p.avg_365d?.count||0} weight={1.00} C={C} />
+            <PeriodBar label="En ucuz %40"  avg={p.avg_30d?.avg}  count={p.avg_30d?.count||0}  weight={0.5}  C={C} />
+            <PeriodBar label="Ort. (aktif)" avg={p.avg_90d?.avg}  count={p.avg_90d?.count||0}  weight={1.0}  C={C} />
           </>
         ) : (
           <>

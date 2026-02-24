@@ -390,10 +390,25 @@ async def get_suggested_price(
                 # fiyatlarını sold stats proxy olarak kullan.
                 backoff_st = finding_cache.rate_limit_status()
                 data_source = "finding_api"
+                proxy_min: Optional[float] = None
+                proxy_avg: Optional[float] = None
                 if backoff_st.get("active") and not any([v30, v90]):
                     proxy = await _browse_price_proxy(client, isbn_clean, cond_key)
                     if proxy:
-                        v30 = v90 = v365 = v3y = proxy
+                        # proxy listesi sıralı (ucuzdan pahalıya)
+                        # Min proxy: en ucuz %40 (floor fiyat, gerçek min'e yakın)
+                        # Avg proxy: tümü ortalaması (piyasa seviyesi tahmini)
+                        cut = max(1, len(proxy) * 2 // 5)   # %40
+                        proxy_min = _avg(proxy[:cut])
+                        proxy_avg = _avg(proxy)
+                        # Period slotlarına anlam yükle:
+                        # avg_30d → min proxy (cheapest listings)
+                        # avg_90d → avg proxy (all active listings)
+                        # avg_365d ve avg_3yr → None (gerçek satış yok)
+                        v30 = proxy[:cut]
+                        v90 = proxy
+                        v365 = []
+                        v3y  = []
                         data_source = "browse_proxy"
                     else:
                         data_source = "empty"
@@ -409,8 +424,14 @@ async def get_suggested_price(
                 avg_365 = _avg(v365)
                 avg_3y  = _avg(v3y)
 
-                # Suggested price formülü: ağırlıklı ortalama
-                suggested = _calc_suggested(avg_30, avg_90, avg_365, avg_3y)
+                # Browse proxy suggested: min ve avg arasındaki ortalama
+                # (sadece proxy modunda; finding_api modunda normal formül)
+                if data_source == "browse_proxy" and proxy_min is not None:
+                    suggested_raw = round((proxy_min + proxy_avg) / 2, 2) if proxy_avg else proxy_min
+                    suggested = int(round(suggested_raw)) if suggested_raw else None
+                else:
+                    # Suggested price formülü: ağırlıklı ortalama
+                    suggested = _calc_suggested(avg_30, avg_90, avg_365, avg_3y)
 
                 # Volatility
                 all_vals = v3y or v365 or v90 or v30
@@ -422,9 +443,15 @@ async def get_suggested_price(
                 # Accumulator span — kullanıcıya veri güvenilirliği göstergesi
                 span_days = sold_stats_store.snapshot_span_days(isbn_clean, cond_key)
 
+                # suggested_exact: proxy modunda ham hesap, normal modda _calc_suggested sonucu
+                if data_source == "browse_proxy":
+                    suggested_exact = suggested  # zaten int
+                else:
+                    suggested_exact = _calc_suggested(avg_30, avg_90, avg_365, avg_3y)
+
                 results[cond_key] = {
-                    "suggested": round(suggested) if suggested else None,
-                    "suggested_exact": suggested,
+                    "suggested": round(suggested) if suggested is not None else None,
+                    "suggested_exact": suggested_exact,
                     "periods": {
                         "avg_30d": {"avg": avg_30,  "count": len(v30)},
                         "avg_90d": {"avg": avg_90,  "count": len(v90)},
