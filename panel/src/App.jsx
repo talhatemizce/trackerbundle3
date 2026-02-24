@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-24-drawer-v3";
+const BUILD_ID = "2026-02-24-decision-engine";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -765,11 +765,14 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [isbnFilter, setIsbnFilter] = useState("");
-  const [condFilter, setCondFilter] = useState("");      // "" | brand_new | like_new | ...
-  const [decisionFilter, setDecisionFilter] = useState(""); // "" | BUY | OFFER
-  const [sortBy, setSortBy] = useState("ts");            // "ts" | "score" | "total"
-  const [selectedAlert, setSelectedAlert] = useState(null); // drawer
-  const [lightboxSrc, setLightboxSrc] = useState(null);    // image lightbox
+  const [condFilter, setCondFilter] = useState("");
+  const [decisionFilter, setDecisionFilter] = useState("");
+  const [sortBy, setSortBy] = useState("ts");
+  const [groupByIsbn, setGroupByIsbn] = useState(true);   // group feed by ISBN
+  const [expandedIsbns, setExpandedIsbns] = useState({});  // { isbn: bool }
+  const [mutedIsbns, setMutedIsbns] = useState({});        // { isbn: unmuteTs }
+  const [selectedAlert, setSelectedAlert] = useState(null);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
   const [drawerData, setDrawerData] = useState(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [dedupIsbn, setDedupIsbn] = useState("");
@@ -881,6 +884,14 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
           <option value="total">Fiyat ↑</option>
         </select>
 
+        {/* Group toggle */}
+        <button
+          onClick={()=>setGroupByIsbn(g=>!g)}
+          title={groupByIsbn ? "ISBN grubunu aç (düz liste)" : "ISBN'e göre grupla"}
+          style={{background:groupByIsbn?C.accent:"none",border:`1px solid ${groupByIsbn?C.accent:C.border}`,borderRadius:5,color:groupByIsbn?C.accentText:C.muted,fontFamily:"var(--mono)",fontSize:11,padding:"6px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
+          {groupByIsbn ? "⊞ Grubu Kaldır" : "⊟ ISBN'e Göre Grupla"}
+        </button>
+
         <div style={{width:1,height:24,background:C.border,flexShrink:0}}/>
 
         {/* Dedup clear — proper React state */}
@@ -944,16 +955,24 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
         </div>
       )}
 
-      {entries
-        .filter(e => !condFilter     || e.condition === condFilter)
-        .filter(e => !decisionFilter || e.decision  === decisionFilter)
-        .slice()
-        .sort((a, b) => {
+      {/* ── Alert entries — grouped or flat ─────────────────────────── */}
+      {(() => {
+        const now = Date.now();
+        const filtered = entries
+          .filter(e => !condFilter     || e.condition === condFilter)
+          .filter(e => !decisionFilter || e.decision  === decisionFilter)
+          .filter(e => {
+            const muteUntil = mutedIsbns[e.isbn];
+            return !muteUntil || now > muteUntil;
+          });
+
+        const sorted = [...filtered].sort((a, b) => {
           if (sortBy === "score") return (b.deal_score ?? -1) - (a.deal_score ?? -1);
           if (sortBy === "total") return a.total - b.total;
           return b.ts - a.ts;
-        })
-        .map((e, i) => {
+        });
+
+        const renderRow = (e, i) => {
           const cc = condColor(e.condition, C);
           const isBuy = e.decision === "BUY";
           const delta = e.limit != null ? Math.round(e.limit - e.total) : null;
@@ -977,12 +996,8 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                 minHeight:80,
               }}
             >
-              {/* A: Kapak */}
               <Thumb imageUrl={e.image_url} isbn={e.isbn} href={e.url} C={C} size={72}/>
-
-              {/* B: Orta */}
               <div style={{padding:"9px 12px",minWidth:0,display:"flex",flexDirection:"column",justifyContent:"center",gap:4}}>
-                {/* titleRow: grid 1fr auto — başlık asla badge'i kaydırmaz */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr auto",alignItems:"center",gap:8,minWidth:0}}>
                   <span style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                     {e.title || e.isbn}
@@ -991,22 +1006,19 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                     <span style={{fontSize:10,color:cc,border:`1px solid ${cc}`,borderRadius:3,padding:"1px 5px",lineHeight:1.5,whiteSpace:"nowrap"}}>
                       {condLabel[e.condition]||e.condition}
                     </span>
-                    {e.match_quality==="CONFIRMED" && <span title="ISBN GTIN doğrulandı" style={{fontSize:11,color:C.green,lineHeight:1}}>✓</span>}
-                    {e.match_quality==="UNVERIFIED_SUPER_DEAL" && <span title="Unverified — super deal eşiği geçti" style={{fontSize:11,color:C.orange}}>⚠</span>}
+                    {e.match_quality==="CONFIRMED" && <span title="ISBN GTIN doğrulandı" style={{fontSize:11,color:C.green}}>✓</span>}
+                    {e.match_quality==="UNVERIFIED_SUPER_DEAL" && <span title="Unverified — super deal" style={{fontSize:11,color:C.orange}}>⚠</span>}
                   </div>
                 </div>
-                {/* Satır 2: ISBN meta */}
                 <div style={{fontSize:10,color:C.muted3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                   <code>{e.isbn}</code>
                   {titles[e.isbn] && <span style={{marginLeft:6,color:C.muted}}>{titles[e.isbn]}</span>}
                 </div>
-                {/* Satır 3: metrikler inline */}
                 <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                   <span style={{fontSize:12,fontWeight:700,color:C.text}}>${e.total}</span>
                   <span style={{fontSize:10,color:C.muted3}}>lim ${e.limit}</span>
                   {delta != null && (
-                    <span style={{
-                      fontSize:10,fontWeight:600,padding:"0 5px",borderRadius:3,
+                    <span style={{fontSize:10,fontWeight:600,padding:"0 5px",borderRadius:3,
                       color:delta>=0?C.green:C.red,
                       background:delta>=0?"rgba(52,211,153,.1)":"rgba(248,113,113,.1)",
                       border:`1px solid ${delta>=0?C.green:C.red}`,
@@ -1018,20 +1030,10 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                   {e.ship_estimated && <span style={{fontSize:10,color:C.orange}}>⚠ est.ship</span>}
                 </div>
               </div>
-
-              {/* C: Sağ — score + action row */}
-              <div style={{
-                padding:"9px 12px",
-                display:"flex",flexDirection:"column",
-                alignItems:"flex-end",justifyContent:"space-between",
-                borderLeft:`1px solid ${C.border}`,
-                gap:4,
-              }}>
+              <div style={{padding:"9px 12px",display:"flex",flexDirection:"column",alignItems:"flex-end",justifyContent:"space-between",borderLeft:`1px solid ${C.border}`,gap:4}}>
                 <ScoreRing score={e.deal_score} C={C}/>
-                {/* BUY pill + eBay link yan yana */}
                 <div style={{display:"inline-flex",alignItems:"center",gap:6}}>
-                  <span style={{
-                    fontSize:11,fontWeight:700,padding:"2px 9px",borderRadius:20,whiteSpace:"nowrap",
+                  <span style={{fontSize:11,fontWeight:700,padding:"2px 9px",borderRadius:20,whiteSpace:"nowrap",
                     background:isBuy?"rgba(52,211,153,.15)":"rgba(96,165,250,.15)",
                     color:isBuy?C.green:C.blue,
                     border:`1px solid ${isBuy?C.green:C.blue}`,
@@ -1050,7 +1052,78 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
               </div>
             </div>
           );
-        })}
+        };
+
+        if (!groupByIsbn) {
+          return sorted.map(renderRow);
+        }
+
+        // ── Grouped view ─────────────────────────────────────────────────────
+        // Group by ISBN, pick best score per group as header
+        const groups = {};
+        for (const e of sorted) {
+          if (!groups[e.isbn]) groups[e.isbn] = [];
+          groups[e.isbn].push(e);
+        }
+
+        return Object.entries(groups).map(([isbn, rows]) => {
+          const best = rows.reduce((a,b) => (b.deal_score??0) > (a.deal_score??0) ? b : a, rows[0]);
+          const isExpanded = !!expandedIsbns[isbn];
+          const score = best.deal_score;
+          const scoreTier = score >= 75 ? "fire" : score >= 50 ? "good" : "low";
+          const tierEmoji = {fire:"🔥",good:"✨",low:"·"}[scoreTier];
+          const tierColor = {fire:C.green,good:C.accent,low:C.muted}[scoreTier];
+          const isMuted = mutedIsbns[isbn] && Date.now() < mutedIsbns[isbn];
+
+          return (
+            <div key={isbn} style={{marginBottom:8}}>
+              {/* Group header */}
+              <div style={{
+                display:"flex",alignItems:"center",gap:8,
+                background:C.surface2,border:`1px solid ${C.border}`,
+                borderRadius:isExpanded?"8px 8px 0 0":"8px",
+                padding:"8px 12px",cursor:"pointer",
+              }}>
+                <div onClick={()=>setExpandedIsbns(ex=>({...ex,[isbn]:!ex[isbn]}))} style={{flex:1,display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+                  <span style={{fontSize:12,color:C.muted3,flexShrink:0}}>{isExpanded?"▾":"▸"}</span>
+                  <span style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {titles[isbn] || isbn}
+                  </span>
+                  <span style={{fontSize:10,color:C.muted3,flexShrink:0,fontFamily:"var(--mono)"}}>{isbn}</span>
+                  <span style={{fontSize:10,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"1px 7px",color:C.muted,flexShrink:0}}>
+                    {rows.length} alert
+                  </span>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                  {score != null && (
+                    <span style={{fontSize:11,fontWeight:700,color:tierColor}}>{tierEmoji} {score}</span>
+                  )}
+                  <span style={{fontSize:10,color:C.muted3}}>${best.total}</span>
+                  {/* Mute 24h button */}
+                  <button
+                    title={isMuted ? "Sessizlik kaldır" : "24 saat sessizleştir"}
+                    onClick={e=>{e.stopPropagation();setMutedIsbns(m=>{const n={...m}; if(isMuted){delete n[isbn];}else{n[isbn]=Date.now()+86400000;} return n;});}}
+                    style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,color:isMuted?C.orange:C.muted3,fontFamily:"var(--mono)",fontSize:10,padding:"1px 7px",cursor:"pointer"}}>
+                    {isMuted?"🔔":"🔇"}
+                  </button>
+                </div>
+              </div>
+              {/* Expanded rows */}
+              {isExpanded && (
+                <div style={{border:`1px solid ${C.border}`,borderTop:"none",borderRadius:"0 0 8px 8px",overflow:"hidden"}}>
+                  {rows.map((e,i) => (
+                    <div key={e.item_id} style={{borderTop: i>0?`1px solid ${C.border}20`:"none"}}>
+                      {renderRow(e,i)}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Collapsed: show only best */}
+              {!isExpanded && renderRow(best, 0)}
+            </div>
+          );
+        });
+      })()}
 
       {/* ─── Lightbox ─────────────────────────────────────────────────────────── */}
       {lightboxSrc && (
@@ -1209,6 +1282,65 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                     )}
                   </AccordionSection>
 
+                  {/* ── Profit Simulation ─────────────────────────────────────── */}
+                  {drawerData.profit && (
+                    <AccordionSection title="💰 Kâr Simülasyonu" C={C} defaultOpen={true}>
+                      {(() => {
+                        const p = drawerData.profit;
+                        const tierEmoji = {fire:"🔥",good:"👍",low:"😬",loss:"❌"}[p.roi_tier] || "";
+                        const profitColor = p.profit > 0 ? C.green : C.red;
+                        const roiColor = p.roi_pct >= 30 ? C.green : p.roi_pct >= 15 ? C.accent : p.roi_pct > 0 ? C.orange : C.red;
+                        return (
+                          <>
+                            {/* Hero profit */}
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                              <div style={{background:C.surface2,borderRadius:7,padding:"10px 14px",border:`1px solid ${p.profit>0?C.green:C.red}20`}}>
+                                <div style={{fontSize:9,color:C.muted,marginBottom:3}}>✅ NET KÂR</div>
+                                <div style={{fontSize:22,fontWeight:700,color:profitColor}}>
+                                  {p.profit>0?"+":" "}${Math.abs(p.profit).toFixed(2)}
+                                </div>
+                              </div>
+                              <div style={{background:C.surface2,borderRadius:7,padding:"10px 14px"}}>
+                                <div style={{fontSize:9,color:C.muted,marginBottom:3}}>📈 ROI</div>
+                                <div style={{fontSize:22,fontWeight:700,color:roiColor}}>
+                                  {p.roi_pct > 0 ? "+" : ""}{p.roi_pct}%
+                                </div>
+                                <div style={{fontSize:10,color:roiColor,marginTop:2}}>{tierEmoji} {p.roi_tier}</div>
+                              </div>
+                            </div>
+                            {/* Fee breakdown */}
+                            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                              <tbody>
+                                {[
+                                  ["🛒 Amazon sell price", `$${p.sell_price}`, C.text, `(${p.sell_source.replace(/_/g," ")})`],
+                                  ["📦 eBay cost",         `-$${p.ebay_cost}`,  C.red, ""],
+                                  ["💸 Referral (15%)",    `-$${p.referral_fee}`,C.muted, ""],
+                                  ["📦 Closing fee",        `-$${p.closing_fee}`,C.muted, "media"],
+                                  ["🚚 Fulfillment",        `-$${p.fulfillment}`, C.muted, "FBA avg"],
+                                  ["✈ Inbound",            `-$${p.inbound}`,    C.muted, "estimate"],
+                                ].map(([label, val, col, sub])=>(
+                                  <tr key={label} style={{borderBottom:`1px solid ${C.border}10`}}>
+                                    <td style={{padding:"4px 0",color:C.muted,fontSize:10}}>{label}</td>
+                                    {sub && <td style={{padding:"4px 4px",color:C.muted3,fontSize:9}}>{sub}</td>}
+                                    {!sub && <td/>}
+                                    <td style={{padding:"4px 0",textAlign:"right",color:col,fontWeight:500,fontFamily:"var(--mono)"}}>{val}</td>
+                                  </tr>
+                                ))}
+                                <tr style={{borderTop:`1px solid ${C.border}`}}>
+                                  <td style={{padding:"6px 0",color:C.text,fontWeight:600,fontSize:11}} colSpan={2}>Net</td>
+                                  <td style={{padding:"6px 0",textAlign:"right",color:profitColor,fontWeight:700,fontFamily:"var(--mono)"}}>{p.profit>0?"+":""}{p.profit}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                            <div style={{fontSize:9,color:C.muted3,marginTop:6}}>
+                              * Tahminler varsayıma dayanır. Gerçek FBA fee asin/weight bazlı değişir.
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </AccordionSection>
+                  )}
+
                   <AccordionSection title="📉 Satış Verisi" C={C} defaultOpen={false}>
                     <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
                       {drawerData.sold?.data_source==="browse_proxy"
@@ -1232,6 +1364,44 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                         ? <div style={{fontSize:11,color:C.text}}>Amazon verisi mevcut</div>
                         : <div style={{fontSize:11,color:C.muted3}}>{drawerData.amazon?.note||"ASIN gerekli"}</div>
                       }
+                    </AccordionSection>
+                  )}
+
+                  {/* ── Score Breakdown — Explainable ──────────────────────── */}
+                  {selectedAlert.deal_score != null && (
+                    <AccordionSection title={`🧮 Score Analizi · ${selectedAlert.deal_score}/100`} C={C} defaultOpen={false}>
+                      {(() => {
+                        const s = selectedAlert;
+                        const ratioRaw  = s.limit > 0 ? Math.max(0, (1 - s.total/s.limit)) * 70 : 0;
+                        const condBonus = {brand_new:8,like_new:8,very_good:5,good:0,acceptable:-5,used_all:0}[s.condition] ?? 0;  // must match scheduler_ebay._COND_BONUS
+                        const offerBonus = s.decision === "OFFER" ? 10 : 0;
+                        const shipPenalty = s.ship_estimated ? -2 : 0;
+                        const soldPenalty = (s.sold_avg != null && s.sold_avg < s.total) ? -5 : 0;
+                        const rows = [
+                          ["🎯 Limit'e uzaklık",     `+${Math.round(ratioRaw)}`, C.green,  `${s.total} / ${s.limit}`],
+                          ["🏷 Kondisyon",            condBonus>=0?`+${condBonus}`:String(condBonus), condBonus>=0?C.green:C.orange, condLabel[s.condition]||s.condition],
+                          ["💼 Make Offer",           offerBonus?"+10":"0", offerBonus?C.blue:C.muted3, offerBonus?"OFFER modu":"—"],
+                          ["🚚 Est. shipping",        shipPenalty?String(shipPenalty):"0", shipPenalty?C.orange:C.muted3, shipPenalty?"tahmini":"sabit"],
+                          ["📉 Sold avg üstü",        soldPenalty?"-5":"0", soldPenalty?C.red:C.muted3, soldPenalty?`sold $${Math.round(s.sold_avg)} < buy $${s.total}`:s.sold_avg==null?"veri yok — ceza yok":"OK (sold ≥ buy)"],
+                        ];
+                        return (
+                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                            <tbody>
+                              {rows.map(([label,val,col,note])=>(
+                                <tr key={label} style={{borderBottom:`1px solid ${C.border}10`}}>
+                                  <td style={{padding:"5px 0",color:C.muted}}>{label}</td>
+                                  <td style={{padding:"5px 4px",color:C.muted3,fontSize:9}}>{note}</td>
+                                  <td style={{padding:"5px 0",textAlign:"right",color:col,fontWeight:700,fontFamily:"var(--mono)"}}>{val}</td>
+                                </tr>
+                              ))}
+                              <tr style={{borderTop:`1px solid ${C.border}`}}>
+                                <td colSpan={2} style={{padding:"6px 0",fontWeight:700,color:s.deal_score>=75?C.green:s.deal_score>=50?C.accent:C.muted}}>Toplam</td>
+                                <td style={{padding:"6px 0",textAlign:"right",fontWeight:700,fontSize:15,color:s.deal_score>=75?C.green:s.deal_score>=50?C.accent:C.muted,fontFamily:"var(--mono)"}}>{s.deal_score}/100</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        );
+                      })()}
                     </AccordionSection>
                   )}
 

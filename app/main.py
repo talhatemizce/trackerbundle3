@@ -390,12 +390,35 @@ async def alert_details(isbn: str, ebay_item_id: str = ""):
     except Exception:
         amazon_data["reason"] = "module_error"
 
+    # ── Profit simulation (if amazon available) ──────────────────────────────
+    from app.profit_calc import calculate as _profit_calc, DEFAULT_FEES
+    profit_data: dict | None = None
+
+    # Use cheapest eBay active listing as cost basis
+    _ebay_used_min = (ebay_data.get("used") or {}).get("min")
+    _ebay_new_min  = (ebay_data.get("new")  or {}).get("min")
+    _cost_basis    = _ebay_used_min or _ebay_new_min
+
+    # Profit: calculate whenever we have a cost basis.
+    # profit_calc returns None if Amazon sell price is unavailable — UI handles None gracefully.
+    if _cost_basis:
+        pr = _profit_calc(float(_cost_basis), amazon_data, DEFAULT_FEES)
+        if pr:
+            profit_data = pr.to_dict()
+            profit_data["fees_config"] = {
+                "referral_pct": DEFAULT_FEES.referral_pct,
+                "closing_fee":  DEFAULT_FEES.closing_fee,
+                "fulfillment":  DEFAULT_FEES.fulfillment,
+                "inbound":      DEFAULT_FEES.inbound,
+            }
+
     result = {
         "ok": True,
         "isbn": isbn_clean,
         "ebay": ebay_data,
         "sold": sold_data,
         "amazon": amazon_data,
+        "profit": profit_data,
         "updated_at": int(now),
         "cached": False,
         "cache_age": 0,
