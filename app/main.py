@@ -307,6 +307,15 @@ async def alert_details(isbn: str, ebay_item_id: str = ""):
     Drawer için tek endpoint: eBay active stats + sold proxy + Amazon buybox.
     15 dakika cache — her tıklamada canlı çağrı yapmaz.
     """
+    import traceback as _tb
+    try:
+        return await _alert_details_inner(isbn, ebay_item_id)
+    except Exception as _exc:
+        _tb.print_exc()
+        return {"ok": False, "error": f"{type(_exc).__name__}: {_exc}"}
+
+
+async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
     from app.ebay_client import browse_search_isbn, normalize_condition, item_total_price
     from app.core.config import get_settings as _gs
     from app import finding_cache
@@ -529,8 +538,13 @@ async def ebay_sold_avg(isbn: str):
     User-triggered only (button click). 30min cache per ISBN.
     Returns count/min/max/avg/median from completed sold listings.
     """
-    from app.sold_scraper import fetch_sold_avg
-    return await fetch_sold_avg(isbn)
+    import traceback as _tb
+    try:
+        from app.sold_scraper import fetch_sold_avg
+        return await fetch_sold_avg(isbn)
+    except Exception as e:
+        _tb.print_exc()
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
 @app.get("/telemetry/link-broken")
