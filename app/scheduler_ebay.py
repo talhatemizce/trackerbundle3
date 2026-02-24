@@ -14,6 +14,7 @@ from app.rules_store import get_rule, effective_limit
 from app import run_state
 from app.ebay_client import browse_search_isbn, finding_sold_stats, normalize_condition, item_total_price, hybrid_verify_items
 from app.alert_store import check_and_mark
+from app.smart_dedup import should_send as smart_should_send
 from app import alert_history_store
 from app import sold_stats_store
 
@@ -50,7 +51,7 @@ def deal_score(
     bonus += 10 if make_offer else 0
     bonus += _COND_BONUS.get(bucket, 0)
     bonus += -2 if ship_estimated else 0  # est.ship penalty: minor uncertainty signal
-    bonus += -5 if (sold_avg is not None and sold_avg < total) else 0
+    bonus += -5 if (sold_avg is not None and sold_avg < total) else 0  # None = no data = no penalty
     return max(0, min(100, int(round(ratio_score + bonus))))
 
 
@@ -322,11 +323,6 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
         if not item_id:
             continue
 
-        already = check_and_mark(isbn, item_id)
-        if already:
-            logger.info("isbn=%s item=%s skip=already_notified", isbn, item_id)
-            continue
-
         bucket = bucket_map.get(item_id, "used_all")
         total  = float(item_total_price(it, calc_ship_est=calc_est) or 0)
         limit  = limit_map.get(item_id, 0.0)
@@ -355,6 +351,13 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
             ship_estimated=ship_est,
             sold_avg=float(avg_for_msg) if avg_for_msg is not None else None,
         )
+
+        # Smart dedup: price-tolerant, TTL-based, score-override
+        send_ok, dedup_reason = smart_should_send(isbn, bucket, total, score, item_id)
+        if not send_ok:
+            logger.info("isbn=%s item=%s skip=%s", isbn, item_id, dedup_reason)
+            continue
+        logger.info("isbn=%s item=%s dedup=%s score=%d", isbn, item_id, dedup_reason, score)
 
         # Image URL
         image_url = ""
