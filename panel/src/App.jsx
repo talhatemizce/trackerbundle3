@@ -1678,6 +1678,14 @@ function DetailDrawer({
               textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
             📈 C3
           </a>
+          <a
+            href={`https://keepa.com/#!search/1-${encodeURIComponent(drawerData?.amazon?.asin || isbn)}`}
+            target="_blank" rel="noreferrer"
+            title="Keepa'da fiyat geçmişini gör"
+            style={{flex:1,padding:"9px",borderRadius:7,background:"#f08200",color:"white",
+              textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
+            🐝 Keepa
+          </a>
           {alertEntry?.url && (
             <a href={alertEntry.url} target="_blank" rel="noreferrer"
               style={{flex:1,padding:"9px",borderRadius:7,background:"#FF9900",color:"white",
