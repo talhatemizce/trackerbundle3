@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-24-proxy-fix";
+const BUILD_ID = "2026-02-24-ux-clean";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -422,35 +422,6 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
 
   return (
     <div>
-      {/* Finding API Backoff Banner */}
-      {backoff?.active && (
-        <div style={{background:"rgba(248,113,113,.08)",border:`1px solid ${C.red}`,borderRadius:8,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
-          <span style={{fontSize:18}}>⏸</span>
-          <div style={{flex:1}}>
-            <div style={{color:C.red,fontSize:12,fontWeight:600}}>Finding API Backoff Aktif — Sold Stats Devre Dışı</div>
-            <div style={{color:C.muted,fontSize:11,marginTop:2,lineHeight:1.7}}>
-              {backoff.backoff_until_epoch
-                ? <>Bitiş: <b style={{color:C.orange}}>
-                    {new Date(backoff.backoff_until_epoch*1000).toLocaleString("tr-TR")}
-                  </b> · kalan: <b style={{color:C.orange}}>{
-                    backoff.remaining_seconds >= 3600
-                      ? `${Math.round(backoff.remaining_seconds/3600)} saat`
-                      : `${Math.round(backoff.remaining_seconds/60)} dk`
-                  }</b></>
-                : "Süre bilinmiyor"
-              }<br/>
-              <span style={{fontSize:10,color:C.muted3}}>
-                Fiyat tahmini aktif listelerden hesaplanıyor (Browse proxy) — "sold avg" değil.
-                Temizlemek eBay kotasını sıfırlamaz; sadece yerel kilidi kaldırır.
-              </span>
-            </div>
-          </div>
-          <button onClick={clearBackoff} style={{background:"none",border:`1px solid ${C.red}`,borderRadius:5,color:C.red,fontFamily:"var(--mono)",fontSize:11,padding:"5px 12px",cursor:"pointer",whiteSpace:"nowrap"}}>
-            🔓 Kilidi Kaldır
-          </button>
-        </div>
-      )}
-
       {/* Limit Tablosu */}
       <div style={{background:C.cardBg,border:`1px solid ${C.cardBorder}`,borderRadius:12,padding:24,marginBottom:20}}>
         <ST C={C} style={{marginBottom:16}}>Fiyat Limitleri (USD)</ST>
@@ -741,40 +712,42 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
 
 // ─── Deal Score Badge ─────────────────────────────────────────────────────────
 // score null → eski entry, gösterme
-function ScoreBadge({ score, C }) {
-  if (score == null) return null;
-  const color  = score >= 75 ? C.green : score >= 50 ? C.accent : C.muted;
-  const label  = score >= 75 ? "🔥" : score >= 50 ? "✨" : "";
-  const border = `1px solid ${color}`;
+// ─── Score ring: büyük, net, tek bakışta ─────────────────────────────────────
+function ScoreRing({ score, C }) {
+  if (score == null) return <div style={{width:44,height:44}}/>;
+  const tier = score >= 75 ? "fire" : score >= 50 ? "good" : "low";
+  const color = tier === "fire" ? C.green : tier === "good" ? C.accent : C.muted2;
+  const emoji = tier === "fire" ? "🔥" : tier === "good" ? "✨" : null;
   return (
-    <span title={`Deal Score: ${score}/100`} style={{
-      fontSize:11, fontWeight:700, color,
-      background:"rgba(255,255,255,.04)", border, borderRadius:4,
-      padding:"1px 7px", letterSpacing:"0.02em", flexShrink:0,
+    <div title={`Deal Score ${score}/100`} style={{
+      width:44, height:44, borderRadius:"50%",
+      border:`2px solid ${color}`,
+      display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      flexShrink:0, gap:0,
+      background: tier === "fire" ? "rgba(52,211,153,.08)" : tier === "good" ? "rgba(240,165,0,.07)" : "transparent",
     }}>
-      {label}{score}
-    </span>
+      {emoji && <span style={{fontSize:10,lineHeight:1}}>{emoji}</span>}
+      <span style={{fontSize:13,fontWeight:700,color,lineHeight:1}}>{score}</span>
+    </div>
   );
 }
 
 // Thumbnail with eBay → OpenLibrary fallback, safe against infinite onError loops
-function Thumb({ imageUrl, isbn, href, C }) {
+function Thumb({ imageUrl, isbn, href, C, size = 56 }) {
   const olCover = `https://covers.openlibrary.org/b/isbn/${isbn}-S.jpg`;
   const [src, setSrc] = useState(imageUrl || olCover);
-  const [triedOl, setTriedOl] = useState(!imageUrl); // if no eBay url, already on OL
+  const [triedOl, setTriedOl] = useState(!imageUrl);
   return (
-    <a href={href || "#"} target="_blank" rel="noreferrer" style={{flexShrink:0}}>
+    <a href={href || "#"} target="_blank" rel="noreferrer"
+      style={{display:"block",width:size,height:"100%",flexShrink:0,minHeight:size}}>
       <img
         src={src}
         loading="lazy"
-        width={56} height={56}
-        style={{borderRadius:6,objectFit:"cover",background:C.surface2,border:`1px solid ${C.border}`,display:"block"}}
+        width={size} height={size}
+        style={{width:size,height:"100%",minHeight:size,objectFit:"cover",background:C.surface2,display:"block"}}
         onError={() => {
-          if (!triedOl) {
-            setTriedOl(true);
-            setSrc(olCover);
-          }
-          // if OL also fails, leave broken (img hides itself gracefully with background)
+          if (!triedOl) { setTriedOl(true); setSrc(olCover); }
         }}
         alt=""
       />
@@ -953,54 +926,126 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
         .filter(e => !decisionFilter || e.decision  === decisionFilter)
         .slice()
         .sort((a, b) => {
-          if (sortBy === "score")  return (b.deal_score ?? -1) - (a.deal_score ?? -1);
-          if (sortBy === "total")  return a.total - b.total;
-          return b.ts - a.ts; // default: newest first
+          if (sortBy === "score") return (b.deal_score ?? -1) - (a.deal_score ?? -1);
+          if (sortBy === "total") return a.total - b.total;
+          return b.ts - a.ts;
         })
         .map((e, i) => {
-        return (
-          <div key={`${e.item_id}-${i}`} style={{background:C.rowBg,border:`1px solid ${C.rowBorder}`,borderLeft:`3px solid ${condColor(e.condition,C)}`,borderRadius:8,padding:"12px 14px",marginBottom:8,display:"flex",gap:12,alignItems:"flex-start"}}>
-            {/* Thumbnail — eBay imageUrl → OL cover fallback (safe, no loop) */}
-            <Thumb imageUrl={e.image_url} isbn={e.isbn} href={e.url} C={C} />
-            {/* Content */}
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:3}}>
-                <span style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:280}}>{e.title||e.isbn}</span>
-                <span style={{fontSize:10,color:condColor(e.condition,C),background:"rgba(255,255,255,.04)",border:`1px solid ${condColor(e.condition,C)}`,borderRadius:3,padding:"1px 6px"}}>{condLabel[e.condition]||e.condition}</span>
-                <span style={{fontSize:11,fontWeight:600,color:e.decision==="BUY"?C.green:C.blue}}>
-                  {e.decision==="BUY"?"🟢 BUY":"🟡 OFFER"}
+          const cc = condColor(e.condition, C);
+          const isBuy = e.decision === "BUY";
+          const delta = e.limit != null ? Math.round(e.limit - e.total) : null;
+          return (
+            <div key={`${e.item_id}-${i}`} style={{
+              display:"grid",
+              gridTemplateColumns:"56px 1fr 148px",
+              gap:0,
+              background:C.rowBg,
+              border:`1px solid ${C.rowBorder}`,
+              borderLeft:`3px solid ${cc}`,
+              borderRadius:10,
+              marginBottom:8,
+              overflow:"hidden",
+              transition:"border-color .15s",
+            }}
+            onMouseEnter={el=>el.currentTarget.style.borderColor=cc}
+            onMouseLeave={el=>el.currentTarget.style.borderColor=C.rowBorder}
+            >
+              {/* A: Kapak */}
+              <div style={{display:"flex",alignItems:"stretch"}}>
+                <Thumb imageUrl={e.image_url} isbn={e.isbn} href={e.url} C={C} size={56}/>
+              </div>
+
+              {/* B: Orta — başlık + meta */}
+              <div style={{padding:"10px 12px",minWidth:0,display:"flex",flexDirection:"column",justifyContent:"center",gap:5}}>
+                {/* Satır 1: başlık + kondisyon chip */}
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{
+                    fontSize:13, fontWeight:600, color:C.text,
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                  }}>
+                    {e.title || e.isbn}
+                  </span>
+                  <span style={{
+                    flexShrink:0, fontSize:10, color:cc,
+                    border:`1px solid ${cc}`, borderRadius:3,
+                    padding:"1px 5px", lineHeight:"1.5",
+                  }}>
+                    {condLabel[e.condition] || e.condition}
+                  </span>
+                  {e.match_quality === "UNVERIFIED_SUPER_DEAL" && (
+                    <span title="Unverified — super deal threshold geçti" style={{flexShrink:0,fontSize:10,color:C.orange}}>⚠</span>
+                  )}
+                  {e.match_quality === "CONFIRMED" && (
+                    <span title="ISBN GTIN doğrulandı" style={{flexShrink:0,fontSize:10,color:C.green}}>✓</span>
+                  )}
+                </div>
+                {/* Satır 2: ISBN · kısa başlık */}
+                <div style={{fontSize:10,color:C.muted3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  <code style={{letterSpacing:"0.03em"}}>{e.isbn}</code>
+                  {titles[e.isbn] && <span style={{marginLeft:6}}>{titles[e.isbn]}</span>}
+                </div>
+                {/* Satır 3: metrikler */}
+                <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.text}}>${e.total}</span>
+                  <span style={{fontSize:10,color:C.muted3}}>limit ${e.limit}</span>
+                  {delta != null && (
+                    <span style={{
+                      fontSize:10, fontWeight:600,
+                      color: delta >= 0 ? C.green : C.red,
+                      background: delta >= 0 ? "rgba(52,211,153,.1)" : "rgba(248,113,113,.1)",
+                      border:`1px solid ${delta >= 0 ? C.green : C.red}`,
+                      borderRadius:3, padding:"0 5px",
+                    }}>
+                      {delta >= 0 ? `-$${delta}` : `+$${Math.abs(delta)}`}
+                    </span>
+                  )}
+                  {e.sold_avg != null && (
+                    <span style={{fontSize:10,color:C.muted}}>sold ~${Math.round(e.sold_avg)}</span>
+                  )}
+                  {e.ship_estimated && (
+                    <span style={{fontSize:10,color:C.orange}}>⚠ est.ship</span>
+                  )}
+                </div>
+              </div>
+
+              {/* C: Sağ — score + karar + link + zaman */}
+              <div style={{
+                padding:"10px 12px",
+                display:"flex", flexDirection:"column",
+                alignItems:"flex-end", justifyContent:"space-between",
+                borderLeft:`1px solid ${C.border}`,
+                gap:6,
+              }}>
+                {/* Üst: score ring */}
+                <ScoreRing score={e.deal_score} C={C} />
+                {/* Orta: karar pill */}
+                <span style={{
+                  fontSize:11, fontWeight:700, letterSpacing:"0.04em",
+                  padding:"3px 10px", borderRadius:20,
+                  background: isBuy ? "rgba(52,211,153,.15)" : "rgba(96,165,250,.15)",
+                  color: isBuy ? C.green : C.blue,
+                  border:`1px solid ${isBuy ? C.green : C.blue}`,
+                }}>
+                  {isBuy ? "BUY" : "OFFER"}
                 </span>
-                <ScoreBadge score={e.deal_score} C={C} />
-                {e.match_quality==="CONFIRMED"
-                  ? <span style={{fontSize:10,color:C.green,background:"rgba(52,211,153,.1)",border:`1px solid ${C.green}`,borderRadius:3,padding:"1px 6px"}}>✅ confirmed</span>
-                  : e.match_quality==="UNVERIFIED_SUPER_DEAL"
-                    ? <span style={{fontSize:10,color:C.orange,background:"rgba(251,146,60,.1)",border:`1px solid ${C.orange}`,borderRadius:3,padding:"1px 6px"}}>⚠ super deal</span>
-                    : null
-                }
-              </div>
-              <div style={{fontSize:11,color:C.muted,display:"flex",gap:12,flexWrap:"wrap"}}>
-                <span>ISBN: {e.isbn}{titles[e.isbn]?` · ${titles[e.isbn]}`:""}</span>
-                <span style={{color:C.text,fontWeight:600}}>${e.total}</span>
-                <span style={{color:C.muted3}}>limit: ${e.limit}</span>
-                {e.sold_avg && <span>sold avg: ${e.sold_avg}</span>}
-                {e.ship_estimated && <span style={{color:C.orange}}>⚠ est.ship</span>}
-                {e.verification_reason && e.verification_reason!=="gtins_match" && (
-                  <span style={{fontSize:10,color:C.muted3}}>{e.verification_reason}</span>
-                )}
+                {/* Alt: zaman + eBay link */}
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+                  <span style={{fontSize:10,color:C.muted3}}>{fmtTs(e.ts)}</span>
+                  {e.url && (
+                    <a href={e.url} target="_blank" rel="noreferrer" style={{
+                      fontSize:11, color:C.accent, textDecoration:"none",
+                      border:`1px solid ${C.accent}`, borderRadius:5,
+                      padding:"2px 9px", whiteSpace:"nowrap",
+                      fontWeight:500, letterSpacing:"0.02em",
+                    }}>
+                      eBay ↗
+                    </a>
+                  )}
+                </div>
               </div>
             </div>
-            {/* Time + link */}
-            <div style={{flexShrink:0,textAlign:"right"}}>
-              <div style={{fontSize:10,color:C.muted3,marginBottom:6}}>{fmtTs(e.ts)}</div>
-              {e.url && (
-                <a href={e.url} target="_blank" rel="noreferrer" style={{fontSize:11,color:C.accent,textDecoration:"none",border:`1px solid ${C.accent}`,borderRadius:4,padding:"2px 8px",whiteSpace:"nowrap"}}>
-                  eBay →
-                </a>
-              )}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
     </div>
   );
 }
@@ -1205,32 +1250,40 @@ export default function App() {
                   <StatCard C={C} icon="🔔" label="Bot Token" value={status?.has_bot_token?"✓":"✗"} sub={status?.has_bot_token?"Telegram aktif":"Token yok"} accent={status?.has_bot_token?C.green:C.red}/>
                 </div>
 
-                {/* Finding API Backoff Banner — dashboard */}
+                {/* Finding API Backoff — compact amber pill */}
                 {backoffStatus?.active && (
-                  <div style={{background:"rgba(248,113,113,.07)",border:`1px solid ${C.red}`,borderRadius:10,padding:"14px 18px",marginBottom:20,display:"flex",alignItems:"center",gap:14}}>
-                    <span style={{fontSize:20}}>⏸</span>
-                    <div style={{flex:1}}>
-                      <div style={{color:C.red,fontSize:12,fontWeight:600,marginBottom:3}}>Finding API Backoff — Sold Stats Devre Dışı</div>
-                      <div style={{color:C.muted,fontSize:11}}>
-                        Bitiş: <b style={{color:C.orange}}>
-                          {new Date(backoffStatus.backoff_until_epoch*1000).toLocaleString("tr-TR")}
-                        </b>
-                        {" · "}kalan: <b style={{color:C.orange}}>{
-                          backoffStatus.remaining_seconds >= 3600
-                            ? `${Math.round(backoffStatus.remaining_seconds/3600)} saat`
-                            : `${Math.round(backoffStatus.remaining_seconds/60)} dk`
-                        }</b>
-                        <span style={{color:C.muted3,fontSize:10,marginLeft:8}}>· Fiyat tahmini Browse proxy üzerinden çalışıyor</span>
-                      </div>
+                  <div style={{
+                    display:"flex", alignItems:"center", gap:10,
+                    background:"rgba(240,165,0,.08)", border:`1px solid rgba(240,165,0,.35)`,
+                    borderRadius:8, padding:"8px 14px", marginBottom:16,
+                    maxWidth:560,
+                  }}>
+                    <span style={{fontSize:14}}>⚠</span>
+                    <div style={{flex:1,fontSize:11,color:C.accent,lineHeight:1.5}}>
+                      <b>Sold stats geçici olarak devre dışı</b> · Browse proxy aktif
+                      {backoffStatus.backoff_until_epoch > 0 && (
+                        <span style={{color:C.muted,marginLeft:6}}>
+                          · bitiş {new Date(backoffStatus.backoff_until_epoch*1000).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}
+                          {" ("}
+                          {backoffStatus.remaining_seconds >= 3600
+                            ? `${Math.round(backoffStatus.remaining_seconds/3600)}s`
+                            : `${Math.round(backoffStatus.remaining_seconds/60)}dk`}
+                          {")"}
+                        </span>
+                      )}
                     </div>
                     <button onClick={async()=>{
                       try {
                         await fetch(BASE+"/ebay/debug/finding-backoff",{method:"DELETE"});
-                        setBackoffStatus({active:false,remaining_seconds:0,backoff_until_epoch:0});
+                        setBackoffStatus({active:false});
                         push("Backoff kilidi kaldırıldı","success");
                       } catch(e){push(e.message,"error");}
-                    }} style={{background:"none",border:`1px solid ${C.red}`,borderRadius:5,color:C.red,fontFamily:"var(--mono)",fontSize:11,padding:"6px 14px",cursor:"pointer",whiteSpace:"nowrap"}}>
-                      🔓 Kilidi Kaldır
+                    }} style={{
+                      background:"none", border:`1px solid rgba(240,165,0,.4)`,
+                      borderRadius:5, color:C.accent, fontSize:11,
+                      padding:"3px 10px", cursor:"pointer", whiteSpace:"nowrap",
+                    }}>
+                      Kilidi kaldır
                     </button>
                   </div>
                 )}

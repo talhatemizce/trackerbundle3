@@ -41,6 +41,44 @@ def pretty(text: str) -> str:
     except Exception:
         return text
 
+# ── Human-readable formatters (JSON spam biter) ───────────────────────────────
+
+def fmt_status(text: str) -> str:
+    try:
+        d = json.loads(text)
+    except Exception:
+        return text
+    ok = "✅" if d.get("ok") else "❌"
+    t = (d.get("time_utc") or "")[:16].replace("T", " ")
+    token = "✓" if d.get("has_bot_token") else "✗"
+    return (
+        f"{ok} <b>API</b>: {d.get('service', '-')}\n"
+        f"🕒 {t} UTC\n"
+        f"📚 {d.get('isbn_count', 0)} ISBN takipte\n"
+        f"🤖 Bot token: {token}"
+    )
+
+def fmt_health(text: str) -> str:
+    try:
+        d = json.loads(text)
+    except Exception:
+        return text
+    return "✅ Sistem sağlıklı" if d.get("ok") else "❌ Sistem yanıt vermiyor"
+
+def fmt_list(text: str) -> str:
+    try:
+        d = json.loads(text)
+    except Exception:
+        return text
+    items = d.get("items") or []
+    n = len(items)
+    if n == 0:
+        return "📚 Watchlist boş.\n/add ile ISBN ekle."
+    lines = [f"📚 <b>Watchlist</b> · {n} ISBN"]
+    for isbn in items:
+        lines.append(f"  • <code>{isbn}</code>")
+    return "\n".join(lines)
+
 def _money_int(x):
     try:
         return int(round(float(x)))
@@ -131,31 +169,49 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("awaiting", None)
     await update.message.reply_text("TrackerBundle Bot ✅\nMenüden seç.", reply_markup=MENU, parse_mode=None)
 
-async def _reply(update: Update, text: str) -> None:
+async def _reply(update: Update, text: str, html: bool = False) -> None:
     """Ortak reply helper — metin çok uzunsa kesiyor."""
-    await update.message.reply_text(text[:4000], reply_markup=MENU, parse_mode=None)
+    await update.message.reply_text(
+        text[:4000],
+        reply_markup=MENU,
+        parse_mode="HTML" if html else None,
+    )
 
+async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _log_update(update)
+    try:
+        r = await api("GET", "/health")
+        await _reply(update, fmt_health(r.text))
+    except RuntimeError as e:
+        await _reply(update, f"⚠️ {e}")
+
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _log_update(update)
+    try:
+        r = await api("GET", "/status")
+        await _reply(update, fmt_status(r.text), html=True)
+    except RuntimeError as e:
+        await _reply(update, f"⚠️ {e}")
+
+async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _log_update(update)
+    try:
+        r = await api("GET", "/isbns")
+        await _reply(update, fmt_list(r.text), html=True)
+    except RuntimeError as e:
+        await _reply(update, f"⚠️ {e}")
 
 async def _api_reply(update: Update, method: str, path: str, **kwargs) -> bool:
-    """API çağır, sonucu kullanıcıya gönder. Hata olursa Türkçe mesaj ver. True = başarı."""
+    """Fallback raw API reply — sadece wizard içi hata mesajları için."""
     try:
         r = await api(method, path, **kwargs)
-        text = f"HTTP {r.status_code}\n{pretty(r.text)}"
-        await _reply(update, text)
-        return r.status_code < 400
+        if not r.is_success:
+            await _reply(update, f"⚠️ HTTP {r.status_code}")
+            return False
+        return True
     except RuntimeError as e:
         await _reply(update, f"⚠️ {e}")
         return False
-
-
-async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _api_reply(update, "GET", "/health")
-
-async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _api_reply(update, "GET", "/status")
-
-async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _api_reply(update, "GET", "/isbns")
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/add [isbn] — wizard başlatır; ISBN inline verilmişse doğrudan fiyat adımına geçer."""
@@ -250,7 +306,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             r = await api("DELETE", f"/isbns/{isbn}")
             context.user_data.clear()
-            return await _reply(update, f"HTTP {r.status_code}\n{pretty(r.text)}")
+            if r.is_success:
+                deleted = r.json().get("deleted", False)
+                msg = f"🗑 <code>{isbn}</code> {'silindi' if deleted else 'zaten listede yoktu'}"
+            else:
+                msg = f"⚠️ Silinemedi (HTTP {r.status_code})"
+            return await _reply(update, msg, html=True)
         except RuntimeError as e:
             context.user_data.clear()
             return await _reply(update, f"⚠️ {e}")
@@ -265,7 +326,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             if r.status_code == 200:
                 return await _reply(update, format_decision_short(r.text))
-            return await _reply(update, f"HTTP {r.status_code}\n{pretty(r.text)}")
+            return await _reply(update, f"⚠️ ASIN bulunamadı (HTTP {r.status_code})")
         except RuntimeError as e:
             context.user_data.clear()
             return await _reply(update, f"⚠️ {e}")
