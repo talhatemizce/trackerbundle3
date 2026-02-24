@@ -49,7 +49,7 @@ def deal_score(
     bonus = 0
     bonus += 10 if make_offer else 0
     bonus += _COND_BONUS.get(bucket, 0)
-    bonus += -8 if ship_estimated else 0
+    bonus += 0  # est.ship penalty removed (score-neutral per product decision)
     bonus += -5 if (sold_avg is not None and sold_avg < total) else 0
     return max(0, min(100, int(round(ratio_score + bonus))))
 

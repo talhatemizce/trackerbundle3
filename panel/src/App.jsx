@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-24-drawer";
+const BUILD_ID = "2026-02-24-drawer-v2";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -769,6 +769,7 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
   const [decisionFilter, setDecisionFilter] = useState(""); // "" | BUY | OFFER
   const [sortBy, setSortBy] = useState("ts");            // "ts" | "score" | "total"
   const [selectedAlert, setSelectedAlert] = useState(null); // drawer
+  const [lightboxSrc, setLightboxSrc] = useState(null);    // image lightbox
   const [drawerData, setDrawerData] = useState(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [dedupIsbn, setDedupIsbn] = useState("");
@@ -804,7 +805,7 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
     if (!dedupIsbn) { push("ISBN seç", "error"); return; }
     try {
       await req(`/alerts/dedup/${dedupIsbn}`, {method:"DELETE"});
-      push(`${dedupIsbn} dedup temizlendi — bir sonraki scheduler tick'inde tekrar alert gönderilir`, "success");
+      push(`${dedupIsbn} tekrar gönderilmek üzere işaretlendi — scheduler bir sonraki taramada alert atar`, "success");
     } catch(e) { push("Hata: "+e.message, "error"); }
   };
 
@@ -890,10 +891,10 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
         <button
           onClick={clearDedup}
           disabled={!dedupIsbn}
-          title="Seçili ISBN'in dedup kaydını sil — scheduler bir sonraki tick'te tekrar alert gönderebilir"
+          title="Seçili ISBN'in tekrar kaydını sil — scheduler bir sonraki taramada yeniden alert gönderir"
           style={{background:"none",border:`1px solid ${dedupIsbn?C.orange:C.border}`,borderRadius:5,color:dedupIsbn?C.orange:C.muted3,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:dedupIsbn?"pointer":"default",whiteSpace:"nowrap",transition:"all .15s"}}
         >
-          🗑 Dedup Sil
+          🗑 Tekrarları temizle
         </button>
 
         <div style={{width:1,height:24,background:C.border,flexShrink:0}}/>
@@ -938,7 +939,7 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
             Scheduler bir deal bulup Telegram'a gönderdikten sonra burada görünür.
           </span><br/>
           <span style={{fontSize:10}}>
-            Test için: <b style={{color:C.accent}}>💉</b> butonu · Dedup dolu olabilir: dropdown'dan ISBN seç → <b style={{color:C.orange}}>🗑 Dedup Sil</b>
+            Test için: <b style={{color:C.accent}}>💉</b> butonu · Dedup dolu olabilir: dropdown'dan ISBN seç → <b style={{color:C.orange}}>🗑 Tekrarları temizle</b>
           </span>
         </div>
       )}
@@ -1051,6 +1052,17 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
           );
         })}
 
+      {/* ─── Lightbox ─────────────────────────────────────────────────────────── */}
+      {lightboxSrc && (
+        <div onClick={()=>setLightboxSrc(null)} style={{
+          position:"fixed",inset:0,zIndex:200,background:"rgba(0,0,0,.85)",
+          display:"flex",alignItems:"center",justifyContent:"center",cursor:"zoom-out",
+        }}>
+          <img src={lightboxSrc} alt="" style={{maxWidth:"90vw",maxHeight:"90vh",objectFit:"contain",borderRadius:8,boxShadow:"0 8px 40px rgba(0,0,0,.6)"}}/>
+          <button onClick={()=>setLightboxSrc(null)} style={{position:"absolute",top:20,right:24,background:"none",border:"none",color:"white",fontSize:28,cursor:"pointer",lineHeight:1}}>×</button>
+        </div>
+      )}
+
       {/* ─── Detail Drawer ──────────────────────────────────────────────────── */}
       {selectedAlert && (
         <>
@@ -1062,135 +1074,169 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
           {/* Drawer panel */}
           <div style={{
             position:"fixed",top:0,right:0,bottom:0,zIndex:50,
-            width:420,maxWidth:"92vw",
+            width:440,maxWidth:"95vw",
             background:C.surface,
             borderLeft:`1px solid ${C.border}`,
             display:"flex",flexDirection:"column",
-            boxShadow:"-8px 0 32px rgba(0,0,0,.25)",
+            boxShadow:"-8px 0 32px rgba(0,0,0,.3)",
             overflow:"hidden",
           }}>
-            {/* Drawer header */}
-            <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:12,flexShrink:0}}>
-              <Thumb imageUrl={selectedAlert.image_url} isbn={selectedAlert.isbn} href={selectedAlert.url} C={C} size={88}/>
+            {/* ── A: Hero header ─────────────────────────────────────────────── */}
+            <div style={{padding:"16px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:14,flexShrink:0,background:C.surface}}>
+              {/* Large cover — click to lightbox */}
+              {(() => {
+                const olCover = `https://covers.openlibrary.org/b/isbn/${selectedAlert.isbn}-M.jpg`;
+                const src = selectedAlert.image_url || olCover;
+                return (
+                  <div onClick={()=>setLightboxSrc(src)} style={{
+                    width:120,height:170,flexShrink:0,borderRadius:8,overflow:"hidden",
+                    background:C.surface2,border:`1px solid ${C.border}`,cursor:"zoom-in",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                  }}>
+                    <img src={src} alt="" loading="lazy"
+                      style={{width:"100%",height:"100%",objectFit:"contain"}}
+                      onError={e=>{ if(e.target.src!==olCover) e.target.src=olCover; }}
+                    />
+                  </div>
+                );
+              })()}
+              {/* Title + key metrics */}
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:600,color:C.text,lineHeight:1.4,marginBottom:4}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.text,lineHeight:1.4,marginBottom:4,wordBreak:"break-word"}}>
                   {selectedAlert.title||selectedAlert.isbn}
                 </div>
-                <div style={{fontSize:10,color:C.muted3,marginBottom:6}}>
-                  <code>{selectedAlert.isbn}</code>
-                  {titles[selectedAlert.isbn] && <span style={{marginLeft:6}}>{titles[selectedAlert.isbn]}</span>}
+                <div style={{fontSize:10,color:C.muted3,fontFamily:"var(--mono)",marginBottom:10}}>
+                  {selectedAlert.isbn}
+                  {bookMeta[selectedAlert.isbn]?.author && <span style={{marginLeft:6,color:C.muted}}>{bookMeta[selectedAlert.isbn].author}</span>}
+                  {bookMeta[selectedAlert.isbn]?.year   && <span style={{marginLeft:4,color:C.muted3}}>{bookMeta[selectedAlert.isbn].year}</span>}
                 </div>
-                <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-                  <span style={{fontSize:11,fontWeight:700,color:C.text}}>${selectedAlert.total}</span>
-                  <span style={{fontSize:10,color:C.muted3}}>lim ${selectedAlert.limit}</span>
-                  {selectedAlert.deal_score!=null && (
-                    <span style={{fontSize:11,fontWeight:700,color:selectedAlert.deal_score>=75?C.green:selectedAlert.deal_score>=50?C.accent:C.muted}}>
-                      {selectedAlert.deal_score>=75?"🔥":"✨"}{selectedAlert.deal_score}
-                    </span>
-                  )}
-                  <span style={{fontSize:10,color:condColor(selectedAlert.condition,C),border:`1px solid ${condColor(selectedAlert.condition,C)}`,borderRadius:3,padding:"0 5px"}}>
-                    {condLabel[selectedAlert.condition]||selectedAlert.condition}
-                  </span>
+                {/* ── B: KPI bar ─────────────────────────────────────────────── */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div style={{background:C.surface2,borderRadius:7,padding:"8px 12px"}}>
+                    <div style={{fontSize:9,color:C.muted,marginBottom:2}}>📦 TOPLAM</div>
+                    <div style={{fontSize:20,fontWeight:700,color:C.text}}>${selectedAlert.total}</div>
+                    {selectedAlert.ship_estimated && (
+                      <div style={{fontSize:9,color:C.orange,marginTop:1}}>🚚 est. shipping</div>
+                    )}
+                  </div>
+                  <div style={{background:C.surface2,borderRadius:7,padding:"8px 12px"}}>
+                    <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🎯 LİMİT</div>
+                    <div style={{fontSize:20,fontWeight:700,color:selectedAlert.total<=selectedAlert.limit?C.green:C.red}}>
+                      ${selectedAlert.limit}
+                    </div>
+                    <div style={{fontSize:9,color:C.muted,marginTop:1}}>
+                      {selectedAlert.total<=selectedAlert.limit
+                        ? `✓ $${(selectedAlert.limit-selectedAlert.total).toFixed(2)} altında`
+                        : `↑ $${(selectedAlert.total-selectedAlert.limit).toFixed(2)} üstünde`}
+                    </div>
+                  </div>
+                  <div style={{background:C.surface2,borderRadius:7,padding:"8px 12px"}}>
+                    <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🏷 KONDİSYON</div>
+                    <div style={{fontSize:12,fontWeight:600,color:condColor(selectedAlert.condition,C)}}>
+                      {condLabel[selectedAlert.condition]||selectedAlert.condition}
+                    </div>
+                    <div style={{fontSize:9,color:C.muted,marginTop:1}}>
+                      {selectedAlert.match_quality==="CONFIRMED"?"✅ GTIN doğru":"⚠ unverified"}
+                    </div>
+                  </div>
+                  <div style={{background:C.surface2,borderRadius:7,padding:"8px 12px"}}>
+                    <div style={{fontSize:9,color:C.muted,marginBottom:2}}>🔥 SKOR</div>
+                    <div style={{fontSize:20,fontWeight:700,color:selectedAlert.deal_score>=75?C.green:selectedAlert.deal_score>=50?C.accent:C.muted}}>
+                      {selectedAlert.deal_score!=null?selectedAlert.deal_score:"—"}
+                    </div>
+                    <div style={{fontSize:9,color:C.muted,marginTop:1}}>
+                      {selectedAlert.decision==="OFFER"?"make offer":"fixed price"}
+                    </div>
+                  </div>
                 </div>
               </div>
               <button onClick={()=>{setSelectedAlert(null);setDrawerData(null);}} style={{
                 background:"none",border:"none",color:C.muted,cursor:"pointer",
-                fontSize:20,lineHeight:1,padding:4,flexShrink:0,
+                fontSize:20,lineHeight:1,padding:4,flexShrink:0,marginTop:-4,
               }}>×</button>
             </div>
 
-            {/* Drawer body */}
-            <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
+            {/* ── Drawer scrollable body ─────────────────────────────────────── */}
+            <div style={{flex:1,overflowY:"auto",padding:"14px 18px"}}>
               {drawerLoading && (
                 <div style={{color:C.muted3,fontSize:12,textAlign:"center",paddingTop:32}}>Yükleniyor…</div>
               )}
               {!drawerLoading && drawerData && (
                 <>
-                  {/* eBay Active Stats */}
-                  <DrawerSection title="eBay Aktif Listeler" C={C}>
+                  {/* ── C: Details accordion ──────────────────────────────────── */}
+                  <AccordionSection title="📊 eBay Aktif Listeler" C={C} defaultOpen={true}>
                     {drawerData.ebay?.ok ? (
                       <>
-                        <DrawerRow label="Toplam ilan" value={drawerData.ebay.total_listings} C={C}/>
-                        {drawerData.ebay.used && <>
-                          <DrawerRow label="Used — min" value={`$${drawerData.ebay.used.min}`} C={C}/>
-                          <DrawerRow label="Used — ort." value={`$${drawerData.ebay.used.avg}`} C={C}/>
-                          <DrawerRow label="Used — adet" value={drawerData.ebay.used.count} C={C}/>
-                        </>}
-                        {drawerData.ebay.new && <>
-                          <DrawerRow label="New — min" value={`$${drawerData.ebay.new.min}`} C={C}/>
-                          <DrawerRow label="New — ort." value={`$${drawerData.ebay.new.avg}`} C={C}/>
-                        </>}
-                        {/* Per-condition breakdown */}
+                        {/* KPI row */}
+                        <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:11,marginBottom:10,padding:"8px 10px",background:C.surface2,borderRadius:6}}>
+                          {drawerData.ebay.used && <>
+                            <span>🧺 <b style={{color:C.accent}}>{drawerData.ebay.used.count}</b> used</span>
+                            <span>💸 min <b style={{color:C.accent}}>${drawerData.ebay.used.min}</b></span>
+                            <span>📈 avg <b style={{color:C.muted}}>${drawerData.ebay.used.avg}</b></span>
+                          </>}
+                          {drawerData.ebay.new && <>
+                            <span>🆕 <b style={{color:C.green}}>{drawerData.ebay.new.count}</b> new</span>
+                            <span>💸 min <b style={{color:C.green}}>${drawerData.ebay.new.min}</b></span>
+                          </>}
+                        </div>
+                        {/* Condition table */}
                         {drawerData.ebay.by_condition && Object.keys(drawerData.ebay.by_condition).length > 0 && (
-                          <div style={{marginTop:10}}>
-                            <div style={{fontSize:10,color:C.muted3,marginBottom:6}}>Kondisyon bazlı</div>
-                            {Object.entries(drawerData.ebay.by_condition)
-                              .sort((a,b)=>a[1].min-b[1].min)
-                              .map(([cond,st])=>(
-                                <div key={cond} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.text,padding:"3px 0",borderBottom:`1px solid ${C.border}`}}>
-                                  <span style={{color:condColor(cond,C)}}>{condLabel[cond]||cond}</span>
-                                  <span style={{color:C.muted3}}>{st.count}x · min ${st.min} · ort ${st.avg}</span>
-                                </div>
-                              ))}
-                          </div>
+                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                            <thead>
+                              <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                                {["Kondisyon","Adet","Min","Ort"].map(h=>(
+                                  <th key={h} style={{textAlign:h==="Kondisyon"?"left":"right",padding:"3px 6px",fontSize:9,color:C.muted,fontWeight:500}}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(drawerData.ebay.by_condition)
+                                .sort((a,b)=>a[1].min-b[1].min)
+                                .map(([cond,st])=>(
+                                  <tr key={cond} style={{borderBottom:`1px solid ${C.border}10`}}>
+                                    <td style={{padding:"5px 6px",color:condColor(cond,C),fontWeight:500}}>{condLabel[cond]||cond}</td>
+                                    <td style={{padding:"5px 6px",textAlign:"right",color:C.muted}}>{st.count}</td>
+                                    <td style={{padding:"5px 6px",textAlign:"right",color:C.text,fontWeight:600}}>${st.min}</td>
+                                    <td style={{padding:"5px 6px",textAlign:"right",color:C.muted}}>${st.avg}</td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
                         )}
                       </>
                     ) : (
-                      <div style={{fontSize:11,color:C.red}}>{drawerData.ebay?.error||"Veri alınamadı"}</div>
+                      <div style={{fontSize:11,color:C.muted3}}>{drawerData.ebay?.error||"Veri alınamadı"}</div>
                     )}
-                  </DrawerSection>
+                  </AccordionSection>
 
-                  {/* Sold Stats */}
-                  <DrawerSection title="Satış Verisi" C={C}>
-                    <DrawerRow
-                      label="Kaynak"
-                      value={drawerData.sold?.data_source==="browse_proxy"?"Browse proxy (backoff aktif)":"Finding API"}
-                      C={C}
-                      valueColor={drawerData.sold?.data_source==="browse_proxy"?C.orange:C.green}
-                    />
+                  <AccordionSection title="📉 Satış Verisi" C={C} defaultOpen={false}>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
+                      {drawerData.sold?.data_source==="browse_proxy"
+                        ? <span style={{fontSize:10,background:"rgba(251,146,60,.12)",border:"1px solid rgba(251,146,60,.4)",borderRadius:4,padding:"2px 8px",color:C.orange}}>📊 Browse proxy</span>
+                        : <span style={{fontSize:10,background:"rgba(52,211,153,.1)",border:"1px solid rgba(52,211,153,.3)",borderRadius:4,padding:"2px 8px",color:C.green}}>✓ Finding API</span>
+                      }
+                      {drawerData.sold?.backoff_active && (
+                        <span style={{fontSize:10,color:C.muted3}}>🕒 {Math.round((drawerData.sold.backoff_remaining||0)/3600)}s kaldı</span>
+                      )}
+                    </div>
                     {drawerData.sold?.sold_avg != null
                       ? <DrawerRow label="Used sold ort." value={`$${Math.round(drawerData.sold.sold_avg)}`} C={C}/>
                       : <DrawerRow label="Used sold ort." value="Veri yok" C={C} valueColor={C.muted3}/>}
                     {drawerData.sold?.sold_count != null && <DrawerRow label="Örnek sayısı" value={drawerData.sold.sold_count} C={C}/>}
-                    {drawerData.sold?.backoff_active && (
-                      <div style={{fontSize:10,color:C.orange,marginTop:6}}>
-                        ⚠ Finding API backoff — {Math.round((drawerData.sold.backoff_remaining||0)/60)} dk kaldı
-                      </div>
-                    )}
-                  </DrawerSection>
+                  </AccordionSection>
 
-                  {/* Amazon */}
-                  <DrawerSection title="Amazon" C={C}>
-                    {drawerData.amazon?.available
-                      ? <div style={{fontSize:11,color:C.text}}>Amazon verisi mevcut</div>
-                      : <div style={{fontSize:11,color:C.muted3}}>
-                          {drawerData.amazon?.note || (drawerData.amazon?.reason==="not_configured" ? "SP-API yapılandırılmamış" : "ASIN gerekli")}
-                        </div>
-                    }
-                    {selectedAlert.url && (
-                      <div style={{marginTop:8}}>
-                        <a href={`https://www.amazon.com/s?k=${selectedAlert.isbn}&i=stripbooks`} target="_blank" rel="noreferrer"
-                          style={{fontSize:11,color:C.accent,textDecoration:"none"}}>Amazon'da ara →</a>
-                      </div>
-                    )}
-                  </DrawerSection>
-
-                  {/* Deal Score breakdown */}
-                  {selectedAlert.deal_score != null && (
-                    <DrawerSection title="Score Analizi" C={C}>
-                      <DrawerRow label="Toplam score" value={`${selectedAlert.deal_score}/100`} C={C}
-                        valueColor={selectedAlert.deal_score>=75?C.green:selectedAlert.deal_score>=50?C.accent:C.muted}/>
-                      <DrawerRow label="Kondisyon" value={condLabel[selectedAlert.condition]||selectedAlert.condition} C={C}/>
-                      <DrawerRow label="Make Offer" value={selectedAlert.decision==="OFFER"?"Var (+10)":"Yok"} C={C}/>
-                      <DrawerRow label="Est. shipping" value={selectedAlert.ship_estimated?"Var (-8)":"Yok"} C={C}
-                        valueColor={selectedAlert.ship_estimated?C.orange:C.muted}/>
-                      <DrawerRow label="Match" value={selectedAlert.match_quality==="CONFIRMED"?"GTIN doğrulandı ✓":"Unverified ⚠"} C={C}
-                        valueColor={selectedAlert.match_quality==="CONFIRMED"?C.green:C.orange}/>
-                    </DrawerSection>
+                  {/* Amazon — only show if configured or has data */}
+                  {(drawerData.amazon?.available || drawerData.amazon?.reason !== "not_configured") && (
+                    <AccordionSection title="🛒 Amazon" C={C} defaultOpen={false}>
+                      {drawerData.amazon?.available
+                        ? <div style={{fontSize:11,color:C.text}}>Amazon verisi mevcut</div>
+                        : <div style={{fontSize:11,color:C.muted3}}>{drawerData.amazon?.note||"ASIN gerekli"}</div>
+                      }
+                    </AccordionSection>
                   )}
 
                   {drawerData.cached && (
-                    <div style={{fontSize:10,color:C.muted3,textAlign:"center",marginTop:8}}>
+                    <div style={{fontSize:10,color:C.muted3,textAlign:"center",marginTop:12}}>
                       ⚡ Cache · {Math.round((drawerData.cache_age||0)/60)}dk önce
                     </div>
                   )}
@@ -1198,16 +1244,26 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
               )}
             </div>
 
-            {/* Drawer footer */}
-            <div style={{padding:"12px 20px",borderTop:`1px solid ${C.border}`,display:"flex",gap:8,flexShrink:0}}>
+            {/* ── Footer ────────────────────────────────────────────────────── */}
+            <div style={{padding:"12px 18px",borderTop:`1px solid ${C.border}`,display:"flex",gap:8,flexShrink:0}}>
               {selectedAlert.url && (
                 <a href={selectedAlert.url} target="_blank" rel="noreferrer" style={{
-                  flex:1,textAlign:"center",padding:"8px",borderRadius:7,fontSize:12,fontWeight:600,
-                  background:C.accent,color:C.accentText,textDecoration:"none",
-                }}>eBay'de Gör ↗</a>
+                  flex:1,textAlign:"center",padding:"9px",borderRadius:7,fontSize:12,fontWeight:600,
+                  background:C.accent,color:C.accentText,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 32 32" fill="currentColor"><path d="M28.9 3.8C27.5 2.5 25.6 2 22.9 2H9.1C6.4 2 4.5 2.5 3.1 3.8 1.7 5.1 1 7 1 9.5v13c0 2.5.7 4.4 2.1 5.7C4.5 29.5 6.4 30 9.1 30h13.8c2.7 0 4.6-.5 6-1.8 1.4-1.3 2.1-3.2 2.1-5.7v-13c0-2.5-.7-4.4-2.1-5.7zM16 23.2c-4 0-7.2-3.2-7.2-7.2S12 8.8 16 8.8s7.2 3.2 7.2 7.2-3.2 7.2-7.2 7.2zm8.5-12.8c-.9 0-1.7-.8-1.7-1.7s.8-1.7 1.7-1.7 1.7.8 1.7 1.7-.8 1.7-1.7 1.7z"/></svg>
+                  eBay
+                </a>
               )}
+              <a href={`https://www.amazon.com/s?k=${selectedAlert.isbn}&i=stripbooks`} target="_blank" rel="noreferrer" style={{
+                flex:0,padding:"9px 14px",borderRadius:7,fontSize:12,fontWeight:600,
+                background:"#FF9900",color:"#000",textDecoration:"none",display:"flex",alignItems:"center",gap:5,
+              }}>
+                <svg width="14" height="14" viewBox="0 0 32 32" fill="currentColor"><path d="M28.5 22.5c-7.3 5.4-17.9 8.3-27 3.3-.5-.3-.1-.7.4-.5 7.7 4.5 17.2 1.8 23.5-2.8.7-.5 1.3.3.1 1zm1.8-1.9c-.7-.9-4.5-.4-6.2-.2-.5.1-.6-.4-.1-.7 3-2.1 8-.1 8.6.7.5.8-.1 6.3-3 8.9-.4.4-.8.2-.6-.3.6-1.6 2-5.5 1.3-8.4z"/><path d="M22.4 4.9C20.9 3.1 17.3 3 15.5 3c-5.6 0-8.1 2.4-8.1 5.7 0 3.7 2.9 5.4 7.5 6.8 4.1 1.2 4.8 1.9 4.8 3.3 0 1.8-1.4 2.6-4.2 2.6-2.7 0-4.7-.6-6.1-1.8-.3-.3-.8-.3-1.1 0l-1.8 2c-.4.4-.3.9.1 1.2 2 1.7 4.7 2.7 8.4 2.7 5.5 0 9.1-2.6 9.1-7 0-3.4-2.4-5.3-7.5-6.8-3.6-1-4.8-1.5-4.8-2.8 0-1.4 1.2-2.1 3.7-2.1 2 0 3.8.5 5.1 1.4.4.3.9.2 1.1-.2l1.4-2.2c.3-.4.1-.9-.2-1z"/></svg>
+                Amazon
+              </a>
               <button onClick={()=>{setSelectedAlert(null);setDrawerData(null);}} style={{
-                flex:0,padding:"8px 16px",borderRadius:7,fontSize:12,
+                flex:0,padding:"9px 14px",borderRadius:7,fontSize:12,
                 background:"none",border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",
               }}>Kapat</button>
             </div>
@@ -1234,6 +1290,22 @@ function DrawerRow({ label, value, C, valueColor }) {
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0",fontSize:11}}>
       <span style={{color:C.muted}}>{label}</span>
       <span style={{color:valueColor||C.text,fontWeight:500}}>{value}</span>
+    </div>
+  );
+}
+function AccordionSection({ title, children, C, defaultOpen=false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{marginBottom:12,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+      <button onClick={()=>setOpen(o=>!o)} style={{
+        width:"100%",textAlign:"left",background:C.surface2,border:"none",
+        padding:"9px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",
+        color:C.text,fontSize:11,fontWeight:600,
+      }}>
+        <span>{title}</span>
+        <span style={{color:C.muted3,fontSize:10,transition:"transform .2s",transform:open?"rotate(180deg)":"none"}}>▼</span>
+      </button>
+      {open && <div style={{padding:"12px 14px"}}>{children}</div>}
     </div>
   );
 }
