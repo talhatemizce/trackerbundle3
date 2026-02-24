@@ -293,22 +293,47 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         default_hint = "30" if new_max is None else str(int(round(new_max * 0.60)))
         return await _reply(update, f"Used (kullanılmış) Good kondisyon için max fiyat? (USD)\nörnk: {default_hint} — boş bırakırsan varsayılan (30) kullanılır.\n\nNot: Acceptable={int(round(float(default_hint)*0.8))}, VeryGood={int(round(float(default_hint)*1.1))}, LikeNew={int(round(float(default_hint)*1.15))} otomatik türetilir.")
 
-    # Adım 3: Used max → kaydet
+    # Adım 3: Used max → interval adımına geç
     if awaiting == "add_used_max":
         try:
             used_max = _parse_price(txt)
         except ValueError as e:
             return await _reply(update, f"⚠️ {e}")
 
-        isbn = context.user_data.get("pending_isbn")
+        context.user_data["pending_used_max"] = used_max
+        _set_awaiting(context, "add_interval")
+        logger.info("wizard add_used_max used_max=%s → add_interval", used_max)
+        return await _reply(
+            update,
+            "Tarama aralığı? (varsayılan: 4 saat)\n"
+            "Formatlar: 30m · 1h · 4h · 8h · 12h · 24h · 2d\n"
+            "Boş bırakırsan 4h kullanılır.",
+        )
+
+    # Adım 4: Interval → kaydet
+    if awaiting == "add_interval":
+        import re as _re
+        interval_secs: int | None = None
+        raw_interval = txt.strip()
+        if raw_interval and raw_interval.lower() not in ("skip", "-", "default", "varsayılan", "v"):
+            m = _re.match(r"^(\d+(?:\.\d+)?)(d|h|m|s)?$", raw_interval.lower())
+            if not m:
+                return await _reply(update, "⚠️ Geçersiz format. Örn: 30m, 4h, 1d — ya da boş bırak (4h).")
+            n, u = float(m.group(1)), (m.group(2) or "h")
+            interval_secs = int(n * {"d": 86400, "h": 3600, "m": 60, "s": 1}[u])
+            if interval_secs < 60 or interval_secs > 30 * 86400:
+                return await _reply(update, "⚠️ Aralık 1 dakika ile 30 gün arasında olmalı.")
+
+        isbn    = context.user_data.get("pending_isbn")
         new_max = context.user_data.get("pending_new_max")
+        used_max = context.user_data.get("pending_used_max")
         context.user_data.clear()
 
         if not isbn:
             return await _reply(update, "⚠️ Oturum hatası, tekrar başlat.")
 
         try:
-            logger.info("wizard add_used_max isbn=%s new_max=%s used_max=%s → saving", isbn, new_max, used_max)
+            logger.info("wizard add_interval isbn=%s new_max=%s used_max=%s interval_secs=%s → saving", isbn, new_max, used_max, interval_secs)
             # 1. ISBN watchlist'e ekle
             r = await api("POST", "/isbns", json={"isbn": isbn})
             added = r.status_code == 200 and r.json().get("added", False)
@@ -322,12 +347,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 })
                 logger.info("wizard PUT /rules/%s/override http=%d", isbn, rr.status_code)
 
+            # 3. Interval kaydet (varsa)
+            if interval_secs is not None:
+                ri = await api("PUT", f"/rules/{isbn}/interval", json={"interval_seconds": interval_secs})
+                logger.info("wizard PUT /rules/%s/interval http=%d secs=%d", isbn, ri.status_code, interval_secs)
+
+            def _fmt_secs(s):
+                if s is None: return "4h (varsayılan)"
+                if s >= 86400: return f"{round(s/86400)}g"
+                if s >= 3600:  return f"{round(s/3600)}s"
+                if s >= 60:    return f"{round(s/60)}dk"
+                return f"{s}s"
+
             lines = [f"✅ ISBN {isbn} {'eklendi' if added else 'zaten vardı'}"]
             if new_max is not None:
                 lines.append(f"  New max: ${new_max}")
             if used_max is not None:
                 lines.append(f"  Used max: ${used_max}")
-            lines.append("(Limitler güncellendi)" if (new_max or used_max) else "(Varsayılan limitler)")
+            lines.append(f"  Aralık: {_fmt_secs(interval_secs)}")
             return await _reply(update, "\n".join(lines))
 
         except RuntimeError as e:
