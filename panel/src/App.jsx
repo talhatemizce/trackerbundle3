@@ -1670,6 +1670,14 @@ function DetailDrawer({
               textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
             🛍 eBay
           </a>
+          <a
+            href={`https://camelcamelcamel.com/search?s=${encodeURIComponent(drawerData?.amazon?.asin || isbn)}`}
+            target="_blank" rel="noreferrer"
+            title="CamelCamelCamel'de fiyat geçmişini gör"
+            style={{flex:1,padding:"9px",borderRadius:7,background:"#6366f1",color:"white",
+              textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
+            📈 C3
+          </a>
           {alertEntry?.url && (
             <a href={alertEntry.url} target="_blank" rel="noreferrer"
               style={{flex:1,padding:"9px",borderRadius:7,background:"#FF9900",color:"white",
