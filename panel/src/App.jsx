@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Component } from "react";
 
 const BASE = import.meta.env.PROD ? "" : "/api";
 const req = async (path, opts = {}, timeoutMs = 15000) => {
@@ -13,6 +13,39 @@ const req = async (path, opts = {}, timeoutMs = 15000) => {
     throw e;
   } finally { clearTimeout(timer); }
 };
+
+// ── ErrorBoundary — prevents white screen on any JS exception ──────────────
+class ErrorBoundary extends Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { console.error("[TB ErrorBoundary]", err, info); }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div style={{
+        minHeight:"100vh",background:"#0a0a0f",color:"#e2e2e2",
+        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+        fontFamily:"monospace",padding:32,gap:16,
+      }}>
+        <div style={{fontSize:32}}>⚠️</div>
+        <div style={{fontSize:16,fontWeight:700,color:"#f87171"}}>UI Error</div>
+        <div style={{fontSize:12,color:"#888",maxWidth:480,textAlign:"center",wordBreak:"break-word"}}>
+          {String(this.state.err?.message || this.state.err)}
+        </div>
+        <button
+          onClick={()=>window.location.reload()}
+          style={{marginTop:8,padding:"8px 24px",background:"#f0a500",color:"#000",border:"none",borderRadius:6,fontFamily:"monospace",fontSize:13,fontWeight:700,cursor:"pointer"}}
+        >
+          ↺ Reload
+        </button>
+        <details style={{fontSize:10,color:"#444",maxWidth:560,wordBreak:"break-word"}}>
+          <summary style={{cursor:"pointer",color:"#555"}}>stack trace</summary>
+          <pre style={{marginTop:8,whiteSpace:"pre-wrap"}}>{this.state.err?.stack}</pre>
+        </details>
+      </div>
+    );
+  }
+}
 
 const DARK = {
   bg: "#0a0a0f", surface: "#0d0d14", surface2: "#111117", border: "#1a1a2e", border2: "#161622",
@@ -1234,7 +1267,14 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
               {drawerLoading && (
                 <div style={{color:C.muted3,fontSize:12,textAlign:"center",paddingTop:32}}>Yükleniyor…</div>
               )}
-              {!drawerLoading && drawerData && (
+              {!drawerLoading && drawerData && !drawerData.ok && (
+                <div style={{padding:"20px 0",textAlign:"center"}}>
+                  <div style={{fontSize:24,marginBottom:8}}>⚠️</div>
+                  <div style={{fontSize:12,color:C.orange,marginBottom:12}}>{drawerData.error || "Veri yüklenemedi"}</div>
+                  <button onClick={()=>openDrawer(selectedAlert)} style={{fontSize:11,background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.muted,padding:"6px 14px",cursor:"pointer"}}>↺ Tekrar dene</button>
+                </div>
+              )}
+              {!drawerLoading && drawerData?.ok && (
                 <>
                   {/* ── C: Details accordion ──────────────────────────────────── */}
                   <AccordionSection title="📊 eBay Aktif Listeler" C={C} defaultOpen={true}>
@@ -1483,6 +1523,9 @@ function AccordionSection({ title, children, C, defaultOpen=false }) {
 const TABS = ["dashboard","watchlist","pricing","alerts"];
 
 export default function App() {
+  return <ErrorBoundary><AppReal /></ErrorBoundary>;
+}
+function AppReal() {
   const [isDark, setIsDark] = useState(() => {
     try { return localStorage.getItem("tb_theme") !== "light"; } catch { return true; }
   });
