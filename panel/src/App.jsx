@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-24-v8-watchlist-drawer";
+const BUILD_ID = "2026-02-24-v9-bookfinder-c3-keepa";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -287,13 +287,7 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
 
   return (
     <div style={{background:C.surface2,border:`1px solid ${isProxy?C.orange:data.volatile_warning?C.orange:C.border}`,borderRadius:10,padding:20,flex:1}}>
-      {/* Proxy banner */}
-      {isProxy && (
-        <div style={{background:"rgba(251,146,60,.1)",border:`1px solid ${C.orange}`,borderRadius:6,padding:"6px 10px",marginBottom:12,fontSize:10,color:C.orange,lineHeight:1.5}}>
-          📊 <b>Proxy veri</b> — Satış verisi yok (Finding API kota aşımı). Aktif eBay listeleme fiyatlarından hesaplandı.
-          Gerçek satış fiyatından sapma olabilir.
-        </div>
-      )}
+      {/* Proxy banner — removed (Finding API deprecated) */}
       {/* Başlık + Önerilen fiyat */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
         <div>
@@ -401,18 +395,7 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
     finally { setSavingRule(false); }
   };
 
-  useEffect(() => {
-    req("/ebay/debug/finding-backoff", {}, 5000).then(setBackoff).catch(() => setBackoff(null));
-  }, []);
-
-  const clearBackoff = async () => {
-    try {
-      await fetch(BASE + "/ebay/debug/finding-backoff", {method:"DELETE"});
-      const b = await req("/ebay/debug/finding-backoff", {}, 5000);
-      setBackoff(b);
-      push("Backoff temizlendi — bir sonraki hesaplamada Finding API yeniden denenir", "success");
-    } catch(e) { push("Temizlenemedi: " + e.message, "error"); }
-  };
+  /* Finding API backoff — deprecated, removed from UI */
 
   const limits = {
     new: newLimit, like_new: Math.round(goodLimit*1.15), very_good: Math.round(goodLimit*1.10),
@@ -845,6 +828,17 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
     }
   };
 
+  const [bfData, setBfData] = useState({});  // { [isbn]: {loading, data, error} }
+  const fetchBookfinder = async (isbn) => {
+    setBfData(s => ({...s, [isbn]: {loading:true, data:null, error:null}}));
+    try {
+      const d = await req(`/bookfinder/${isbn}`, {}, 25000);
+      setBfData(s => ({...s, [isbn]: {loading:false, data:d, error:null}}));
+    } catch(e) {
+      setBfData(s => ({...s, [isbn]: {loading:false, data:null, error:e.message}}));
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -1220,11 +1214,13 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
           drawerData={drawerData}
           drawerLoading={drawerLoading}
           soldScrape={soldScrape[selectedAlert.isbn]}
+          bfScrape={bfData[selectedAlert.isbn]}
           bookMeta={bookMeta}
           C={C}
           onClose={()=>{setSelectedAlert(null);setDrawerData(null);}}
           onRetry={()=>openDrawer(selectedAlert)}
           onSoldFetch={(isbn)=>fetchSoldScrape(isbn)}
+          onBfFetch={(isbn)=>fetchBookfinder(isbn)}
           onLightbox={(src)=>setLightboxSrc(src)}
         />
       )}
@@ -1277,18 +1273,20 @@ function AccordionSection({ title, children, C, defaultOpen=false }) {
 //   drawerData   : object|null — /alerts/details response
 //   drawerLoading: bool
 //   soldScrape   : object — { loading, data, error }
+//   bfScrape     : object — { loading, data, error } (BookFinder)
 //   bookMeta     : object
 //   C            : colors
 //   onClose      : fn
 //   onRetry      : fn
 //   onSoldFetch  : fn(isbn)
+//   onBfFetch    : fn(isbn)
 //   onLightbox   : fn(src)  (optional — pass null to disable)
 // ══════════════════════════════════════════════════════════════════════════════
 function DetailDrawer({
   isbn, alertEntry = null,
   drawerData, drawerLoading,
-  soldScrape, bookMeta, C,
-  onClose, onRetry, onSoldFetch, onLightbox,
+  soldScrape, bfScrape, bookMeta, C,
+  onClose, onRetry, onSoldFetch, onBfFetch, onLightbox,
 }) {
   const condLabel = { brand_new:"New", like_new:"Like New", very_good:"Very Good", good:"Good", acceptable:"Acceptable", used_all:"Used" };
   const condColor = (b) => ({brand_new:C.green,like_new:C.blue,very_good:C.purple,good:C.accent,acceptable:C.orange,used_all:C.muted})[b] || C.muted;
@@ -1519,20 +1517,6 @@ function DetailDrawer({
 
               {/* ── Satış Verisi ─────────────────────────────────────────── */}
               <AccordionSection title="📉 Satış Verisi" C={C} defaultOpen={false}>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
-                  {drawerData.sold?.data_source==="browse_proxy"
-                    ? <span style={{fontSize:10,background:"rgba(251,146,60,.12)",border:"1px solid rgba(251,146,60,.4)",borderRadius:4,padding:"2px 8px",color:C.orange}}>📊 Browse proxy</span>
-                    : <span style={{fontSize:10,background:"rgba(52,211,153,.1)",border:"1px solid rgba(52,211,153,.3)",borderRadius:4,padding:"2px 8px",color:C.green}}>✓ Finding API</span>
-                  }
-                  {drawerData.sold?.backoff_active && (
-                    <span style={{fontSize:10,color:C.muted3}}>🕒 {Math.round((drawerData.sold.backoff_remaining||0)/3600)}s kaldı</span>
-                  )}
-                </div>
-                {drawerData.sold?.sold_avg != null
-                  ? <DrawerRow label="Finding API ort." value={`$${Math.round(drawerData.sold.sold_avg)}`} C={C}/>
-                  : <DrawerRow label="Finding API ort." value="Veri yok" C={C} valueColor={C.muted3}/>}
-                {drawerData.sold?.sold_count != null && <DrawerRow label="Örnek sayısı" value={drawerData.sold.sold_count} C={C}/>}
-
                 {/* On-demand sold scrape — new/used split */}
                 {(()=>{
                   const ss = soldScrape;
@@ -1614,6 +1598,109 @@ function DetailDrawer({
                   }
                 </AccordionSection>
               )}
+
+              {/* ── BookFinder Fiyat Karşılaştırma ─────────────────────── */}
+              <AccordionSection title="📚 Fiyat Karşılaştır" C={C} defaultOpen={false}>
+                {(()=>{
+                  const bf = bfScrape;
+                  return (
+                    <div>
+                      {!bf?.data && !bf?.loading && (
+                        <button
+                          onClick={()=>onBfFetch && onBfFetch(isbn)}
+                          style={{width:"100%",padding:"8px",borderRadius:6,fontSize:11,fontWeight:600,
+                            background:"none",border:`1px solid ${C.purple||"#7c3aed"}`,color:C.purple||"#7c3aed",
+                            cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}
+                        >
+                          📚 BookFinder Fiyatlarını Getir
+                          <span style={{fontSize:9,color:C.muted3,fontWeight:400}}>(AbeBooks · Alibris · Biblio · eBay)</span>
+                        </button>
+                      )}
+                      {bf?.loading && <div style={{textAlign:"center",fontSize:11,color:C.muted3,padding:"8px 0"}}>⏳ BookFinder fiyatları çekiliyor…</div>}
+                      {bf?.error && (
+                        <div style={{fontSize:11,color:C.orange,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <span>⚠ {bf.error}</span>
+                          <button onClick={()=>onBfFetch && onBfFetch(isbn)} style={{fontSize:10,background:"none",border:"none",color:C.accent,cursor:"pointer"}}>↺</button>
+                        </div>
+                      )}
+                      {bf?.data?.ok && (
+                        <div>
+                          {/* Summary: New + Used side by side */}
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                            {[["🆕 New",bf.data.new,C.green],["🧺 Used",bf.data.used,C.accent]].map(([label,st,col])=>(
+                              <div key={label} style={{background:C.surface2,borderRadius:6,padding:"8px 10px"}}>
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                                  <span style={{fontSize:10,color:col,fontWeight:700}}>{label}</span>
+                                  {st
+                                    ? <span style={{fontSize:9,color:C.muted3}}>{st.count} ilan</span>
+                                    : <span style={{fontSize:9,color:C.muted3}}>yok</span>}
+                                </div>
+                                {st ? (
+                                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:3}}>
+                                    {[["Min",st.min],["Avg",st.avg],["Max",st.max],["#",st.count]].map(([k,v])=>(
+                                      <div key={k} style={{textAlign:"center"}}>
+                                        <div style={{fontSize:7,color:C.muted3}}>{k}</div>
+                                        <div style={{fontSize:12,fontWeight:700,color:k==="Min"?col:C.text,fontFamily:"var(--mono)"}}>{k==="#"?v:`$${v}`}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div style={{fontSize:10,color:C.muted3,textAlign:"center"}}>—</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          {/* Average across all offers */}
+                          {bf.data.all_avg != null && (
+                            <div style={{fontSize:10,color:C.muted3,textAlign:"center",padding:"4px 0",marginBottom:8}}>
+                              Toplam {bf.data.total_offers} ilan · genel ort <b style={{color:C.text}}>${bf.data.all_avg}</b>
+                              {bf.data.cached && <span style={{marginLeft:6}}>⚡ cache</span>}
+                            </div>
+                          )}
+                          {/* Per-seller breakdown table */}
+                          {(bf.data.used?.offers || bf.data.new?.offers) && (
+                            <div style={{marginTop:4}}>
+                              <div style={{fontSize:9,color:C.muted,fontWeight:600,marginBottom:4,letterSpacing:"0.04em"}}>EN UCUZ İLANLAR</div>
+                              <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
+                                <thead>
+                                  <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                                    {["Satıcı","Durum","Fiyat","Kargo","Toplam"].map(h=>(
+                                      <th key={h} style={{textAlign:h==="Satıcı"||h==="Durum"?"left":"right",padding:"3px 4px",fontSize:8,color:C.muted,fontWeight:500}}>{h}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {[...(bf.data.used?.offers||[]).slice(0,6),...(bf.data.new?.offers||[]).slice(0,4)]
+                                    .sort((a,b)=>a.total-b.total)
+                                    .slice(0,10)
+                                    .map((o,i)=>(
+                                      <tr key={i} style={{borderBottom:`1px solid ${C.border}10`}}>
+                                        <td style={{padding:"4px",color:C.text,fontWeight:500,maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.seller}</td>
+                                        <td style={{padding:"4px",color:o.condition==="NEW"?C.green:C.accent,fontSize:9}}>{o.condition==="NEW"?"New":"Used"}</td>
+                                        <td style={{padding:"4px",textAlign:"right",color:C.muted,fontFamily:"var(--mono)"}}>${o.price}</td>
+                                        <td style={{padding:"4px",textAlign:"right",color:C.muted3,fontFamily:"var(--mono)"}}>{o.shipping>0?`$${o.shipping}`:"free"}</td>
+                                        <td style={{padding:"4px",textAlign:"right",color:C.text,fontWeight:700,fontFamily:"var(--mono)"}}>${o.total}</td>
+                                      </tr>
+                                    ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {/* BookFinder link + refresh */}
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+                            <a href={bf.data.bookfinder_url} target="_blank" rel="noreferrer"
+                              style={{fontSize:9,color:C.muted3,textDecoration:"none"}}>BookFinder ↗</a>
+                            <button onClick={()=>onBfFetch && onBfFetch(isbn)} style={{fontSize:9,background:"none",border:"none",color:C.muted3,cursor:"pointer"}}>↺ Yenile</button>
+                          </div>
+                        </div>
+                      )}
+                      {bf?.data?.ok && !bf.data.new && !bf.data.used && (
+                        <div style={{fontSize:11,color:C.muted3,textAlign:"center",padding:"6px 0"}}>Bu ISBN için ilan bulunamadı.</div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </AccordionSection>
 
               {/* ── Score Analizi — only for alert entries ────────────────── */}
               {alertEntry?.deal_score != null && (
@@ -1763,6 +1850,17 @@ function AppReal() {
     }
   };
 
+  const [wlBfData, setWlBfData] = useState({});
+  const fetchWlBookfinder = async (isbn) => {
+    setWlBfData(s=>({...s,[isbn]:{loading:true,data:null,error:null}}));
+    try {
+      const d = await req(`/bookfinder/${isbn}`, {}, 25000);
+      setWlBfData(s=>({...s,[isbn]:{loading:false,data:d,error:null}}));
+    } catch(e) {
+      setWlBfData(s=>({...s,[isbn]:{loading:false,data:null,error:e.message}}));
+    }
+  };
+
   const [rules, setRules] = useState({});
 
   // Add Wizard state
@@ -1793,7 +1891,7 @@ function AppReal() {
 
   const load = useCallback(async () => {
     try {
-      const [a,b,c,d,e,f] = await Promise.allSettled([req("/isbns"),req("/rules"),req("/status"),req("/alerts/stats"),req("/run-state"),req("/ebay/debug/finding-backoff",{},5000)]);
+      const [a,b,c,d,e] = await Promise.allSettled([req("/isbns"),req("/rules"),req("/status"),req("/alerts/stats"),req("/run-state")]);
       if (a.status==="fulfilled") {
         const loaded = a.value.items||[];
         setIsbns(loaded);
@@ -1812,7 +1910,7 @@ function AppReal() {
       if (c.status==="fulfilled") setStatus(c.value);
       if (d.status==="fulfilled") setAlertStats(d.value.stats||{});
       if (e.status==="fulfilled") setRunState(e.value.by_isbn||{});
-      if (f.status==="fulfilled") setBackoffStatus(f.value);
+      /* Finding API backoff — deprecated, no longer fetched */
     } catch(err) { push("Yüklenirken hata: "+err.message,"error"); }
     finally { setLoading(false); }
   }, [push]);
@@ -1958,43 +2056,7 @@ function AppReal() {
                   <StatCard C={C} icon="🔔" label="Bot Token" value={status?.has_bot_token?"✓":"✗"} sub={status?.has_bot_token?"Telegram aktif":"Token yok"} accent={status?.has_bot_token?C.green:C.red}/>
                 </div>
 
-                {/* Finding API Backoff — compact amber pill */}
-                {backoffStatus?.active && (
-                  <div style={{
-                    display:"flex", alignItems:"center", gap:10,
-                    background:"rgba(240,165,0,.08)", border:`1px solid rgba(240,165,0,.35)`,
-                    borderRadius:8, padding:"8px 14px", marginBottom:16,
-                    maxWidth:560,
-                  }}>
-                    <span style={{fontSize:14}}>⚠</span>
-                    <div style={{flex:1,fontSize:11,color:C.accent,lineHeight:1.5}}>
-                      <b>Sold stats geçici olarak devre dışı</b> · Browse proxy aktif
-                      {backoffStatus.backoff_until_epoch > 0 && (
-                        <span style={{color:C.muted,marginLeft:6}}>
-                          · bitiş {new Date(backoffStatus.backoff_until_epoch*1000).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}
-                          {" ("}
-                          {backoffStatus.remaining_seconds >= 3600
-                            ? `${Math.round(backoffStatus.remaining_seconds/3600)}s`
-                            : `${Math.round(backoffStatus.remaining_seconds/60)}dk`}
-                          {")"}
-                        </span>
-                      )}
-                    </div>
-                    <button onClick={async()=>{
-                      try {
-                        await fetch(BASE+"/ebay/debug/finding-backoff",{method:"DELETE"});
-                        setBackoffStatus({active:false});
-                        push("Backoff kilidi kaldırıldı","success");
-                      } catch(e){push(e.message,"error");}
-                    }} style={{
-                      background:"none", border:`1px solid rgba(240,165,0,.4)`,
-                      borderRadius:5, color:C.accent, fontSize:11,
-                      padding:"3px 10px", cursor:"pointer", whiteSpace:"nowrap",
-                    }}>
-                      Kilidi kaldır
-                    </button>
-                  </div>
-                )}
+                {/* Finding API Backoff — removed (Finding API deprecated) */}
                 {Object.keys(alertStats).length>0&&(
                   <div style={{marginBottom:24}}>
                     <ST C={C}>Bildirim Gönderilen ISBNler</ST>
@@ -2344,11 +2406,13 @@ function AppReal() {
                 drawerData={wlDrawerData}
                 drawerLoading={wlDrawerLoading}
                 soldScrape={wlSoldScrape[wlDrawerIsbn]}
+                bfScrape={wlBfData[wlDrawerIsbn]}
                 bookMeta={bookMeta}
                 C={C}
                 onClose={()=>{setWlDrawerIsbn(null);setWlDrawerData(null);}}
                 onRetry={()=>openWlDrawer(wlDrawerIsbn)}
                 onSoldFetch={fetchWlSoldScrape}
+                onBfFetch={fetchWlBookfinder}
                 onLightbox={setWlLightbox}
               />
             )}

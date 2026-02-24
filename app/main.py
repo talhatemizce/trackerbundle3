@@ -547,6 +547,22 @@ async def ebay_sold_avg(isbn: str):
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/bookfinder/{isbn}")
+async def bookfinder_prices(isbn: str):
+    """
+    On-demand BookFinder.com price comparison.
+    User-triggered only (button click). 30min cache per ISBN.
+    Returns new/used offers from AbeBooks, Alibris, Biblio, BetterWorldBooks, etc.
+    """
+    import traceback as _tb
+    try:
+        from app.bookfinder_client import fetch_bookfinder
+        return await fetch_bookfinder(isbn)
+    except Exception as e:
+        _tb.print_exc()
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/telemetry/link-broken")
 async def get_link_telemetry(limit: int = 50):
     """Read last N broken-link reports."""

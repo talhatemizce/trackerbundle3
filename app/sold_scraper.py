@@ -77,7 +77,15 @@ def _cache_set(isbn: str, result: dict) -> None:
 
 
 def _parse_prices(html: str) -> list[float]:
-    """Extract sold prices from eBay sold-listings HTML."""
+    """Extract sold prices from eBay sold-listings HTML.
+
+    Notes:
+      - eBay always inserts a promotional "Shop on eBay" card as the first
+        s-item result.  Its price is irrelevant and must be skipped.
+      - The old fallback regex (any $XX.XX on the page) was catching UI
+        chrome prices (e.g. shipping labels, promo banners) and returning
+        false positives ($20 for every ISBN).  Removed entirely.
+    """
     prices: list[float] = []
     # Primary: s-item__price spans
     for m in re.finditer(
@@ -90,15 +98,9 @@ def _parse_prices(html: str) -> list[float]:
                 prices.append(v)
         except ValueError:
             pass
-    # Fallback
-    if len(prices) < 3:
-        for m in re.finditer(r'\$([0-9]+\.[0-9]{2})', html):
-            try:
-                v = float(m.group(1))
-                if 0.25 <= v <= 500 and v not in prices:
-                    prices.append(v)
-            except ValueError:
-                pass
+    # Skip the first match — always a promotional / placeholder item
+    if prices:
+        prices = prices[1:]
     return prices[:_MAX_ITEMS]
 
 
