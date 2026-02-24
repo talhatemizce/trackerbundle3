@@ -296,6 +296,114 @@ def clear_alerts(isbn: str):
     _alert_history.clear_isbn(isbn)
     return {"ok": True, "isbn": isbn}
 
+# ── Alert details — drawer için, 15dk cache ──────────────────────────────────
+import time as _time
+_details_cache: dict = {}  # key: isbn → {ts, data}
+_DETAILS_TTL = 900  # 15 dakika
+
+@app.get("/alerts/details")
+async def alert_details(isbn: str, ebay_item_id: str = ""):
+    """
+    Drawer için tek endpoint: eBay active stats + sold proxy + Amazon buybox.
+    15 dakika cache — her tıklamada canlı çağrı yapmaz.
+    """
+    from app.ebay_client import browse_search_isbn, normalize_condition, item_total_price
+    from app.core.config import get_settings as _gs
+    from app import finding_cache
+
+    isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
+    now = _time.time()
+
+    cached = _details_cache.get(isbn_clean)
+    if cached and now - cached["ts"] < _DETAILS_TTL:
+        return {**cached["data"], "cached": True, "cache_age": int(now - cached["ts"])}
+
+    s = _gs()
+    calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else None
+
+    # ── eBay active stats ─────────────────────────────────────────────────────
+    ebay_data: dict = {"ok": False, "error": None}
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient() as client:
+            items = await browse_search_isbn(client, isbn_clean, limit=50, strict=False)
+
+        buckets: dict = {}
+        for it in items:
+            total = item_total_price(it, calc_ship_est=calc_est)
+            if total is None:
+                continue
+            bucket = normalize_condition(it.get("condition"), it.get("conditionId"))
+            buckets.setdefault(bucket, []).append(round(float(total), 2))
+
+        def _st(prices):
+            if not prices: return None
+            return {"count": len(prices), "min": round(min(prices), 2), "avg": round(sum(prices)/len(prices), 2)}
+
+        _NEW = {"brand_new"}
+        by_cond = {b: _st(p) for b, p in buckets.items() if _st(p)}
+        new_p  = [p for b, ps in buckets.items() if b in _NEW  for p in ps]
+        used_p = [p for b, ps in buckets.items() if b not in _NEW for p in ps]
+
+        ebay_data = {
+            "ok": True,
+            "by_condition": by_cond,
+            "new":  _st(new_p),
+            "used": _st(used_p),
+            "total_listings": sum(len(ps) for ps in buckets.values()),
+        }
+    except Exception as exc:
+        ebay_data["error"] = str(exc)
+
+    # ── Sold proxy / Finding status ───────────────────────────────────────────
+    backoff = finding_cache.rate_limit_status()
+    sold_data = {
+        "data_source": "browse_proxy" if backoff.get("active") else "finding_api",
+        "backoff_active": backoff.get("active", False),
+        "backoff_remaining": int(backoff.get("remaining_seconds", 0)),
+        "sold_avg": None,
+        "sold_count": None,
+    }
+    # sold_stats_store'dan en güncel snapshot'ı çek
+    try:
+        from app import sold_stats_store as _sss
+        v = _sss.query_window(isbn_clean, 90, "used")
+        if v:
+            sold_data["sold_avg"] = round(sum(v)/len(v), 2)
+            sold_data["sold_count"] = len(v)
+    except Exception:
+        pass
+
+    # ── Amazon buybox (SP-API, opsiyonel) ─────────────────────────────────────
+    amazon_data: dict = {"available": False, "reason": "not_configured"}
+    try:
+        from app import amazon_client as _az
+        # amazon_client'ın price endpoint'ini çağır — ASIN yok, ISBN'den lookup yapmıyoruz
+        # Sadece "configured" olup olmadığını raporla
+        az_cfg = s.amazon_sp_refresh_token if hasattr(s, "amazon_sp_refresh_token") else None
+        if not az_cfg:
+            amazon_data["reason"] = "not_configured"
+        else:
+            amazon_data["available"] = False
+            amazon_data["reason"] = "isbn_to_asin_required"
+            amazon_data["note"] = "ASIN gerekli — ISBN→ASIN lookup henüz otomatik değil"
+    except Exception:
+        amazon_data["reason"] = "module_error"
+
+    result = {
+        "ok": True,
+        "isbn": isbn_clean,
+        "ebay": ebay_data,
+        "sold": sold_data,
+        "amazon": amazon_data,
+        "updated_at": int(now),
+        "cached": False,
+        "cache_age": 0,
+    }
+    _details_cache[isbn_clean] = {"ts": now, "data": result}
+    return result
+
+
 @app.post("/debug/inject-history")
 def inject_test_history():
     """Test amaçlı — alert history'ye sahte entry ekler. UI'ı test etmek için kullan."""

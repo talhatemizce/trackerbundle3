@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-24-ux-clean";
+const BUILD_ID = "2026-02-24-drawer";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -227,7 +227,7 @@ function StatCard({ icon, label, value, sub, accent, C }) {
 }
 
 function ST({ children, C, style }) {
-  return <div style={{fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase",color:C.muted,marginBottom:12,...style}}>{children}</div>;
+  return <div style={{fontSize:11,letterSpacing:"0.03em",color:C.muted,marginBottom:12,...style}}>{children}</div>;
 }
 
 function PeriodBar({ label, avg, count, weight, C, isBase }) {
@@ -263,7 +263,7 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
       {/* Başlık + Önerilen fiyat */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
         <div>
-          <div style={{fontSize:11,color:C.muted,marginBottom:4,letterSpacing:"0.06em",textTransform:"uppercase"}}>{label}</div>
+          <div style={{fontSize:11,color:C.muted,marginBottom:4,letterSpacing:"0.02em"}}>{label}</div>
           {hasData
             ? <div style={{fontSize:36,fontWeight:700,color,lineHeight:1}}>{dollar(data.suggested)}</div>
             : <div style={{fontSize:20,color:C.muted3,fontWeight:600}}>Veri yok</div>}
@@ -529,7 +529,7 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
             {/* By condition table */}
             {Object.keys(activeStats.by_condition||{}).length > 0 && (
               <div style={{marginBottom:20}}>
-                <div style={{fontSize:10,color:C.muted,marginBottom:8,letterSpacing:"0.08em",textTransform:"uppercase"}}>Kondisyon Kırılımı</div>
+                <div style={{fontSize:10,color:C.muted,marginBottom:8,letterSpacing:"0.08em",fontWeight:500}}>Kondisyon Kırılımı</div>
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                   <thead>
                     <tr style={{borderBottom:`1px solid ${C.border}`}}>
@@ -567,7 +567,7 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
             {/* Top 10 cheapest */}
             {activeStats.top_cheapest?.length > 0 && (
               <div>
-                <div style={{fontSize:10,color:C.muted,marginBottom:8,letterSpacing:"0.08em",textTransform:"uppercase"}}>En Ucuz 10 İlan</div>
+                <div style={{fontSize:10,color:C.muted,marginBottom:8,letterSpacing:"0.08em",fontWeight:500}}>En Ucuz 10 İlan</div>
                 {activeStats.top_cheapest.map((it,i)=>{
                   const condColors = {brand_new:C.green,like_new:C.blue,very_good:C.purple,good:C.accent,acceptable:C.orange,used_all:C.muted};
                   const condLabels = {brand_new:"New",like_new:"Like New",very_good:"Very Good",good:"Good",acceptable:"Acceptable",used_all:"Used"};
@@ -734,23 +734,28 @@ function ScoreRing({ score, C }) {
 }
 
 // Thumbnail with eBay → OpenLibrary fallback, safe against infinite onError loops
-function Thumb({ imageUrl, isbn, href, C, size = 56 }) {
-  const olCover = `https://covers.openlibrary.org/b/isbn/${isbn}-S.jpg`;
+function Thumb({ imageUrl, isbn, href, C, size = 72 }) {
+  const olCover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`;
   const [src, setSrc] = useState(imageUrl || olCover);
   const [triedOl, setTriedOl] = useState(!imageUrl);
   return (
     <a href={href || "#"} target="_blank" rel="noreferrer"
-      style={{display:"block",width:size,height:"100%",flexShrink:0,minHeight:size}}>
-      <img
-        src={src}
-        loading="lazy"
-        width={size} height={size}
-        style={{width:size,height:"100%",minHeight:size,objectFit:"cover",background:C.surface2,display:"block"}}
-        onError={() => {
-          if (!triedOl) { setTriedOl(true); setSrc(olCover); }
-        }}
-        alt=""
-      />
+      onClick={e => e.stopPropagation()}
+      style={{display:"flex",alignItems:"stretch",width:size,flexShrink:0}}>
+      <div style={{
+        width:size, minHeight:size, flexShrink:0,
+        background:C.surface2,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        overflow:"hidden",
+      }}>
+        <img
+          src={src}
+          loading="lazy"
+          style={{width:"100%",height:"100%",objectFit:"contain",display:"block"}}
+          onError={() => { if (!triedOl) { setTriedOl(true); setSrc(olCover); }}}
+          alt=""
+        />
+      </div>
     </a>
   );
 }
@@ -763,7 +768,24 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
   const [condFilter, setCondFilter] = useState("");      // "" | brand_new | like_new | ...
   const [decisionFilter, setDecisionFilter] = useState(""); // "" | BUY | OFFER
   const [sortBy, setSortBy] = useState("ts");            // "ts" | "score" | "total"
-  const [dedupIsbn, setDedupIsbn] = useState("");   // React state — no getElementById
+  const [selectedAlert, setSelectedAlert] = useState(null); // drawer
+  const [drawerData, setDrawerData] = useState(null);
+  const [drawerLoading, setDrawerLoading] = useState(false);
+  const [dedupIsbn, setDedupIsbn] = useState("");
+
+  const openDrawer = useCallback(async (e) => {
+    setSelectedAlert(e);
+    setDrawerData(null);
+    setDrawerLoading(true);
+    try {
+      const d = await req(`/alerts/details?isbn=${e.isbn}&ebay_item_id=${e.item_id||""}`);
+      setDrawerData(d);
+    } catch(err) {
+      setDrawerData({ ok: false, error: err.message });
+    } finally {
+      setDrawerLoading(false);
+    }
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -934,118 +956,284 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
           const cc = condColor(e.condition, C);
           const isBuy = e.decision === "BUY";
           const delta = e.limit != null ? Math.round(e.limit - e.total) : null;
+          const isSelected = selectedAlert?.item_id === e.item_id;
           return (
-            <div key={`${e.item_id}-${i}`} style={{
-              display:"grid",
-              gridTemplateColumns:"56px 1fr 148px",
-              gap:0,
-              background:C.rowBg,
-              border:`1px solid ${C.rowBorder}`,
-              borderLeft:`3px solid ${cc}`,
-              borderRadius:10,
-              marginBottom:8,
-              overflow:"hidden",
-              transition:"border-color .15s",
-            }}
-            onMouseEnter={el=>el.currentTarget.style.borderColor=cc}
-            onMouseLeave={el=>el.currentTarget.style.borderColor=C.rowBorder}
+            <div
+              key={`${e.item_id}-${i}`}
+              onClick={() => openDrawer(e)}
+              style={{
+                display:"grid",
+                gridTemplateColumns:"72px 1fr 160px",
+                gap:0,
+                background: isSelected ? (C===DARK?"#13131c":C.surface) : C.rowBg,
+                border:`1px solid ${isSelected ? cc : C.rowBorder}`,
+                borderLeft:`3px solid ${cc}`,
+                borderRadius:10,
+                marginBottom:6,
+                overflow:"hidden",
+                cursor:"pointer",
+                transition:"background .12s, border-color .12s",
+                minHeight:80,
+              }}
             >
               {/* A: Kapak */}
-              <div style={{display:"flex",alignItems:"stretch"}}>
-                <Thumb imageUrl={e.image_url} isbn={e.isbn} href={e.url} C={C} size={56}/>
-              </div>
+              <Thumb imageUrl={e.image_url} isbn={e.isbn} href={e.url} C={C} size={72}/>
 
-              {/* B: Orta — başlık + meta */}
-              <div style={{padding:"10px 12px",minWidth:0,display:"flex",flexDirection:"column",justifyContent:"center",gap:5}}>
-                {/* Satır 1: başlık + kondisyon chip */}
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{
-                    fontSize:13, fontWeight:600, color:C.text,
-                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-                  }}>
+              {/* B: Orta */}
+              <div style={{padding:"9px 12px",minWidth:0,display:"flex",flexDirection:"column",justifyContent:"center",gap:4}}>
+                {/* titleRow: grid 1fr auto — başlık asla badge'i kaydırmaz */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr auto",alignItems:"center",gap:8,minWidth:0}}>
+                  <span style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                     {e.title || e.isbn}
                   </span>
-                  <span style={{
-                    flexShrink:0, fontSize:10, color:cc,
-                    border:`1px solid ${cc}`, borderRadius:3,
-                    padding:"1px 5px", lineHeight:"1.5",
-                  }}>
-                    {condLabel[e.condition] || e.condition}
-                  </span>
-                  {e.match_quality === "UNVERIFIED_SUPER_DEAL" && (
-                    <span title="Unverified — super deal threshold geçti" style={{flexShrink:0,fontSize:10,color:C.orange}}>⚠</span>
-                  )}
-                  {e.match_quality === "CONFIRMED" && (
-                    <span title="ISBN GTIN doğrulandı" style={{flexShrink:0,fontSize:10,color:C.green}}>✓</span>
-                  )}
+                  <div style={{display:"inline-flex",alignItems:"center",gap:5,flexShrink:0}}>
+                    <span style={{fontSize:10,color:cc,border:`1px solid ${cc}`,borderRadius:3,padding:"1px 5px",lineHeight:1.5,whiteSpace:"nowrap"}}>
+                      {condLabel[e.condition]||e.condition}
+                    </span>
+                    {e.match_quality==="CONFIRMED" && <span title="ISBN GTIN doğrulandı" style={{fontSize:11,color:C.green,lineHeight:1}}>✓</span>}
+                    {e.match_quality==="UNVERIFIED_SUPER_DEAL" && <span title="Unverified — super deal eşiği geçti" style={{fontSize:11,color:C.orange}}>⚠</span>}
+                  </div>
                 </div>
-                {/* Satır 2: ISBN · kısa başlık */}
+                {/* Satır 2: ISBN meta */}
                 <div style={{fontSize:10,color:C.muted3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                  <code style={{letterSpacing:"0.03em"}}>{e.isbn}</code>
-                  {titles[e.isbn] && <span style={{marginLeft:6}}>{titles[e.isbn]}</span>}
+                  <code>{e.isbn}</code>
+                  {titles[e.isbn] && <span style={{marginLeft:6,color:C.muted}}>{titles[e.isbn]}</span>}
                 </div>
-                {/* Satır 3: metrikler */}
-                <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                {/* Satır 3: metrikler inline */}
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                   <span style={{fontSize:12,fontWeight:700,color:C.text}}>${e.total}</span>
-                  <span style={{fontSize:10,color:C.muted3}}>limit ${e.limit}</span>
+                  <span style={{fontSize:10,color:C.muted3}}>lim ${e.limit}</span>
                   {delta != null && (
                     <span style={{
-                      fontSize:10, fontWeight:600,
-                      color: delta >= 0 ? C.green : C.red,
-                      background: delta >= 0 ? "rgba(52,211,153,.1)" : "rgba(248,113,113,.1)",
-                      border:`1px solid ${delta >= 0 ? C.green : C.red}`,
-                      borderRadius:3, padding:"0 5px",
+                      fontSize:10,fontWeight:600,padding:"0 5px",borderRadius:3,
+                      color:delta>=0?C.green:C.red,
+                      background:delta>=0?"rgba(52,211,153,.1)":"rgba(248,113,113,.1)",
+                      border:`1px solid ${delta>=0?C.green:C.red}`,
                     }}>
-                      {delta >= 0 ? `-$${delta}` : `+$${Math.abs(delta)}`}
+                      {delta>=0?`-$${delta}`:`+$${Math.abs(delta)}`}
                     </span>
                   )}
-                  {e.sold_avg != null && (
-                    <span style={{fontSize:10,color:C.muted}}>sold ~${Math.round(e.sold_avg)}</span>
-                  )}
-                  {e.ship_estimated && (
-                    <span style={{fontSize:10,color:C.orange}}>⚠ est.ship</span>
-                  )}
+                  {e.sold_avg!=null && <span style={{fontSize:10,color:C.muted}}>sold ~${Math.round(e.sold_avg)}</span>}
+                  {e.ship_estimated && <span style={{fontSize:10,color:C.orange}}>⚠ est.ship</span>}
                 </div>
               </div>
 
-              {/* C: Sağ — score + karar + link + zaman */}
+              {/* C: Sağ — score + action row */}
               <div style={{
-                padding:"10px 12px",
-                display:"flex", flexDirection:"column",
-                alignItems:"flex-end", justifyContent:"space-between",
+                padding:"9px 12px",
+                display:"flex",flexDirection:"column",
+                alignItems:"flex-end",justifyContent:"space-between",
                 borderLeft:`1px solid ${C.border}`,
-                gap:6,
+                gap:4,
               }}>
-                {/* Üst: score ring */}
-                <ScoreRing score={e.deal_score} C={C} />
-                {/* Orta: karar pill */}
-                <span style={{
-                  fontSize:11, fontWeight:700, letterSpacing:"0.04em",
-                  padding:"3px 10px", borderRadius:20,
-                  background: isBuy ? "rgba(52,211,153,.15)" : "rgba(96,165,250,.15)",
-                  color: isBuy ? C.green : C.blue,
-                  border:`1px solid ${isBuy ? C.green : C.blue}`,
-                }}>
-                  {isBuy ? "BUY" : "OFFER"}
-                </span>
-                {/* Alt: zaman + eBay link */}
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
-                  <span style={{fontSize:10,color:C.muted3}}>{fmtTs(e.ts)}</span>
+                <ScoreRing score={e.deal_score} C={C}/>
+                {/* BUY pill + eBay link yan yana */}
+                <div style={{display:"inline-flex",alignItems:"center",gap:6}}>
+                  <span style={{
+                    fontSize:11,fontWeight:700,padding:"2px 9px",borderRadius:20,whiteSpace:"nowrap",
+                    background:isBuy?"rgba(52,211,153,.15)":"rgba(96,165,250,.15)",
+                    color:isBuy?C.green:C.blue,
+                    border:`1px solid ${isBuy?C.green:C.blue}`,
+                  }}>
+                    {isBuy?"BUY":"OFFER"}
+                  </span>
                   {e.url && (
-                    <a href={e.url} target="_blank" rel="noreferrer" style={{
-                      fontSize:11, color:C.accent, textDecoration:"none",
-                      border:`1px solid ${C.accent}`, borderRadius:5,
-                      padding:"2px 9px", whiteSpace:"nowrap",
-                      fontWeight:500, letterSpacing:"0.02em",
-                    }}>
-                      eBay ↗
-                    </a>
+                    <a href={e.url} target="_blank" rel="noreferrer" onClick={ev=>ev.stopPropagation()} style={{
+                      fontSize:11,color:C.accent,textDecoration:"none",
+                      border:`1px solid ${C.accent}`,borderRadius:5,
+                      padding:"2px 8px",whiteSpace:"nowrap",fontWeight:500,
+                    }}>eBay ↗</a>
                   )}
                 </div>
+                <span style={{fontSize:10,color:C.muted3}}>{fmtTs(e.ts)}</span>
               </div>
             </div>
           );
         })}
+
+      {/* ─── Detail Drawer ──────────────────────────────────────────────────── */}
+      {selectedAlert && (
+        <>
+          {/* Backdrop */}
+          <div onClick={()=>{setSelectedAlert(null);setDrawerData(null);}} style={{
+            position:"fixed",inset:0,zIndex:40,
+            background:"rgba(0,0,0,.45)",backdropFilter:"blur(2px)",
+          }}/>
+          {/* Drawer panel */}
+          <div style={{
+            position:"fixed",top:0,right:0,bottom:0,zIndex:50,
+            width:420,maxWidth:"92vw",
+            background:C.surface,
+            borderLeft:`1px solid ${C.border}`,
+            display:"flex",flexDirection:"column",
+            boxShadow:"-8px 0 32px rgba(0,0,0,.25)",
+            overflow:"hidden",
+          }}>
+            {/* Drawer header */}
+            <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:12,flexShrink:0}}>
+              <Thumb imageUrl={selectedAlert.image_url} isbn={selectedAlert.isbn} href={selectedAlert.url} C={C} size={88}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.text,lineHeight:1.4,marginBottom:4}}>
+                  {selectedAlert.title||selectedAlert.isbn}
+                </div>
+                <div style={{fontSize:10,color:C.muted3,marginBottom:6}}>
+                  <code>{selectedAlert.isbn}</code>
+                  {titles[selectedAlert.isbn] && <span style={{marginLeft:6}}>{titles[selectedAlert.isbn]}</span>}
+                </div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                  <span style={{fontSize:11,fontWeight:700,color:C.text}}>${selectedAlert.total}</span>
+                  <span style={{fontSize:10,color:C.muted3}}>lim ${selectedAlert.limit}</span>
+                  {selectedAlert.deal_score!=null && (
+                    <span style={{fontSize:11,fontWeight:700,color:selectedAlert.deal_score>=75?C.green:selectedAlert.deal_score>=50?C.accent:C.muted}}>
+                      {selectedAlert.deal_score>=75?"🔥":"✨"}{selectedAlert.deal_score}
+                    </span>
+                  )}
+                  <span style={{fontSize:10,color:condColor(selectedAlert.condition,C),border:`1px solid ${condColor(selectedAlert.condition,C)}`,borderRadius:3,padding:"0 5px"}}>
+                    {condLabel[selectedAlert.condition]||selectedAlert.condition}
+                  </span>
+                </div>
+              </div>
+              <button onClick={()=>{setSelectedAlert(null);setDrawerData(null);}} style={{
+                background:"none",border:"none",color:C.muted,cursor:"pointer",
+                fontSize:20,lineHeight:1,padding:4,flexShrink:0,
+              }}>×</button>
+            </div>
+
+            {/* Drawer body */}
+            <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
+              {drawerLoading && (
+                <div style={{color:C.muted3,fontSize:12,textAlign:"center",paddingTop:32}}>Yükleniyor…</div>
+              )}
+              {!drawerLoading && drawerData && (
+                <>
+                  {/* eBay Active Stats */}
+                  <DrawerSection title="eBay Aktif Listeler" C={C}>
+                    {drawerData.ebay?.ok ? (
+                      <>
+                        <DrawerRow label="Toplam ilan" value={drawerData.ebay.total_listings} C={C}/>
+                        {drawerData.ebay.used && <>
+                          <DrawerRow label="Used — min" value={`$${drawerData.ebay.used.min}`} C={C}/>
+                          <DrawerRow label="Used — ort." value={`$${drawerData.ebay.used.avg}`} C={C}/>
+                          <DrawerRow label="Used — adet" value={drawerData.ebay.used.count} C={C}/>
+                        </>}
+                        {drawerData.ebay.new && <>
+                          <DrawerRow label="New — min" value={`$${drawerData.ebay.new.min}`} C={C}/>
+                          <DrawerRow label="New — ort." value={`$${drawerData.ebay.new.avg}`} C={C}/>
+                        </>}
+                        {/* Per-condition breakdown */}
+                        {drawerData.ebay.by_condition && Object.keys(drawerData.ebay.by_condition).length > 0 && (
+                          <div style={{marginTop:10}}>
+                            <div style={{fontSize:10,color:C.muted3,marginBottom:6}}>Kondisyon bazlı</div>
+                            {Object.entries(drawerData.ebay.by_condition)
+                              .sort((a,b)=>a[1].min-b[1].min)
+                              .map(([cond,st])=>(
+                                <div key={cond} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.text,padding:"3px 0",borderBottom:`1px solid ${C.border}`}}>
+                                  <span style={{color:condColor(cond,C)}}>{condLabel[cond]||cond}</span>
+                                  <span style={{color:C.muted3}}>{st.count}x · min ${st.min} · ort ${st.avg}</span>
+                                </div>
+                              ))}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div style={{fontSize:11,color:C.red}}>{drawerData.ebay?.error||"Veri alınamadı"}</div>
+                    )}
+                  </DrawerSection>
+
+                  {/* Sold Stats */}
+                  <DrawerSection title="Satış Verisi" C={C}>
+                    <DrawerRow
+                      label="Kaynak"
+                      value={drawerData.sold?.data_source==="browse_proxy"?"Browse proxy (backoff aktif)":"Finding API"}
+                      C={C}
+                      valueColor={drawerData.sold?.data_source==="browse_proxy"?C.orange:C.green}
+                    />
+                    {drawerData.sold?.sold_avg != null
+                      ? <DrawerRow label="Used sold ort." value={`$${Math.round(drawerData.sold.sold_avg)}`} C={C}/>
+                      : <DrawerRow label="Used sold ort." value="Veri yok" C={C} valueColor={C.muted3}/>}
+                    {drawerData.sold?.sold_count != null && <DrawerRow label="Örnek sayısı" value={drawerData.sold.sold_count} C={C}/>}
+                    {drawerData.sold?.backoff_active && (
+                      <div style={{fontSize:10,color:C.orange,marginTop:6}}>
+                        ⚠ Finding API backoff — {Math.round((drawerData.sold.backoff_remaining||0)/60)} dk kaldı
+                      </div>
+                    )}
+                  </DrawerSection>
+
+                  {/* Amazon */}
+                  <DrawerSection title="Amazon" C={C}>
+                    {drawerData.amazon?.available
+                      ? <div style={{fontSize:11,color:C.text}}>Amazon verisi mevcut</div>
+                      : <div style={{fontSize:11,color:C.muted3}}>
+                          {drawerData.amazon?.note || (drawerData.amazon?.reason==="not_configured" ? "SP-API yapılandırılmamış" : "ASIN gerekli")}
+                        </div>
+                    }
+                    {selectedAlert.url && (
+                      <div style={{marginTop:8}}>
+                        <a href={`https://www.amazon.com/s?k=${selectedAlert.isbn}&i=stripbooks`} target="_blank" rel="noreferrer"
+                          style={{fontSize:11,color:C.accent,textDecoration:"none"}}>Amazon'da ara →</a>
+                      </div>
+                    )}
+                  </DrawerSection>
+
+                  {/* Deal Score breakdown */}
+                  {selectedAlert.deal_score != null && (
+                    <DrawerSection title="Score Analizi" C={C}>
+                      <DrawerRow label="Toplam score" value={`${selectedAlert.deal_score}/100`} C={C}
+                        valueColor={selectedAlert.deal_score>=75?C.green:selectedAlert.deal_score>=50?C.accent:C.muted}/>
+                      <DrawerRow label="Kondisyon" value={condLabel[selectedAlert.condition]||selectedAlert.condition} C={C}/>
+                      <DrawerRow label="Make Offer" value={selectedAlert.decision==="OFFER"?"Var (+10)":"Yok"} C={C}/>
+                      <DrawerRow label="Est. shipping" value={selectedAlert.ship_estimated?"Var (-8)":"Yok"} C={C}
+                        valueColor={selectedAlert.ship_estimated?C.orange:C.muted}/>
+                      <DrawerRow label="Match" value={selectedAlert.match_quality==="CONFIRMED"?"GTIN doğrulandı ✓":"Unverified ⚠"} C={C}
+                        valueColor={selectedAlert.match_quality==="CONFIRMED"?C.green:C.orange}/>
+                    </DrawerSection>
+                  )}
+
+                  {drawerData.cached && (
+                    <div style={{fontSize:10,color:C.muted3,textAlign:"center",marginTop:8}}>
+                      ⚡ Cache · {Math.round((drawerData.cache_age||0)/60)}dk önce
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Drawer footer */}
+            <div style={{padding:"12px 20px",borderTop:`1px solid ${C.border}`,display:"flex",gap:8,flexShrink:0}}>
+              {selectedAlert.url && (
+                <a href={selectedAlert.url} target="_blank" rel="noreferrer" style={{
+                  flex:1,textAlign:"center",padding:"8px",borderRadius:7,fontSize:12,fontWeight:600,
+                  background:C.accent,color:C.accentText,textDecoration:"none",
+                }}>eBay'de Gör ↗</a>
+              )}
+              <button onClick={()=>{setSelectedAlert(null);setDrawerData(null);}} style={{
+                flex:0,padding:"8px 16px",borderRadius:7,fontSize:12,
+                background:"none",border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",
+              }}>Kapat</button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Drawer helpers ────────────────────────────────────────────────────────────
+function DrawerSection({ title, children, C }) {
+  return (
+    <div style={{marginBottom:20}}>
+      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:8,letterSpacing:"0.04em",paddingBottom:4,borderBottom:`1px solid ${C.border}`}}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+function DrawerRow({ label, value, C, valueColor }) {
+  return (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0",fontSize:11}}>
+      <span style={{color:C.muted}}>{label}</span>
+      <span style={{color:valueColor||C.text,fontWeight:500}}>{value}</span>
     </div>
   );
 }
@@ -1053,8 +1241,13 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
 const TABS = ["dashboard","watchlist","pricing","alerts"];
 
 export default function App() {
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(() => {
+    try { return localStorage.getItem("tb_theme") !== "light"; } catch { return true; }
+  });
   const C = isDark ? DARK : LIGHT;
+  useEffect(() => {
+    try { localStorage.setItem("tb_theme", isDark ? "dark" : "light"); } catch {}
+  }, [isDark]);
   const [tab, setTab] = useState("dashboard");
   const { toasts, push } = useToast();
 
@@ -1228,9 +1421,10 @@ export default function App() {
           </div>
         </div>
         <div style={{display:"flex"}}>
-          {TABS.map(t=>(
-            <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:11,letterSpacing:"0.08em",textTransform:"uppercase",color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400}}>{t}</button>
-          ))}
+          {TABS.map(t=>{
+            const label = {dashboard:"Dashboard",watchlist:"Watchlist",pricing:"Pricing",alerts:"Alerts"}[t]||t;
+            return <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:12,color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400,letterSpacing:"0.01em"}}>{label}</button>;
+          })}
         </div>
       </div>
 
@@ -1240,7 +1434,7 @@ export default function App() {
           <>
             {tab==="dashboard"&&(
               <div>
-                <div style={{marginBottom:10,color:C.muted3,fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase"}}>
+                <div style={{marginBottom:10,color:C.muted3,fontSize:11,letterSpacing:"0.01em"}}>
                   Overview · {new Date().toLocaleDateString("tr-TR",{day:"numeric",month:"long",year:"numeric"})}
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:16}}>
