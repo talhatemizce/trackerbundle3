@@ -224,9 +224,8 @@ def item_total_price(
     # opts == [] → free shipping
 
     result = round(price + ship, 2)
-    # Annotate for caller awareness
-    if ship_estimated:
-        item["_shipping_estimated"] = True
+    # Always explicitly annotate (prevents stale True if dict is reused)
+    item["_shipping_estimated"] = ship_estimated
     return result
 
 
