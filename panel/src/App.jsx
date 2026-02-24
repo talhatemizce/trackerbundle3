@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Component } from "react";
+import { useState, useEffect, useCallback, useRef, Component } from "react";
 
 const BASE = import.meta.env.PROD ? "" : "/api";
 const req = async (path, opts = {}, timeoutMs = 15000) => {
@@ -810,14 +810,23 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
   const [drawerData, setDrawerData] = useState(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [soldScrape, setSoldScrape] = useState({});       // { [isbn]: {loading,data,error} }
+  const _prefetchCache = useRef({});   // { [isbn]: data } — in-memory, avoids re-fetch within session
   const [dedupIsbn, setDedupIsbn] = useState("");
 
   const openDrawer = useCallback(async (e) => {
     setSelectedAlert(e);
+    // Cache-first: if already prefetched, show instantly
+    const cached = _prefetchCache.current[e.isbn];
+    if (cached) {
+      setDrawerData(cached);
+      setDrawerLoading(false);
+      return;
+    }
     setDrawerData(null);
     setDrawerLoading(true);
     try {
       const d = await req(`/alerts/details?isbn=${e.isbn}&ebay_item_id=${e.item_id||""}`);
+      _prefetchCache.current[e.isbn] = d;
       setDrawerData(d);
     } catch(err) {
       setDrawerData({ ok: false, error: err.message });
@@ -841,7 +850,29 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
     try {
       const url = isbnFilter ? `/alerts/history?limit=100&isbn=${isbnFilter}` : "/alerts/history?limit=100";
       const [h, s] = await Promise.allSettled([req(url), req("/alerts/summary")]);
-      if (h.status === "fulfilled") setEntries(h.value.entries || []);
+      if (h.status === "fulfilled") {
+        const loaded = h.value.entries || [];
+        setEntries(loaded);
+        // Pre-warm details cache for top unique ISBNs (background, silent)
+        // Staggered to avoid hammering — 400ms between each
+        const seen = new Set();
+        const toWarm = [];
+        for (const e of loaded) {
+          if (!seen.has(e.isbn) && !_prefetchCache.current[e.isbn]) {
+            seen.add(e.isbn);
+            toWarm.push(e.isbn);
+            if (toWarm.length >= 6) break;  // max 6 ISBNs per load cycle
+          }
+        }
+        toWarm.forEach((isbn, i) => {
+          setTimeout(async () => {
+            try {
+              const d = await req(`/alerts/details?isbn=${isbn}`, {}, 20000);
+              if (d?.ok) _prefetchCache.current[isbn] = d;
+            } catch { /* silent — prefetch failure is non-critical */ }
+          }, i * 450);  // stagger: 0ms, 450ms, 900ms …
+        });
+      }
       if (s.status === "fulfilled") setSummary(s.value);
     } catch(e) { push("Yüklenemedi: "+e.message, "error"); }
     finally { setLoading(false); }
