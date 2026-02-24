@@ -640,7 +640,7 @@ async def _browse_fetch_one(
         "q": q,
         "limit": str(max(1, min(limit, 200))),
         "category_ids": BOOKS_CATEGORY_ID,
-        "filter": "buyingOptions:{FIXED_PRICE}",
+        "filter": "buyingOptions:{FIXED_PRICE|BEST_OFFER}",
     }
     headers = {"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"}
     r = await client.get(f"{_browse_base()}/item_summary/search", params=params, headers=headers, timeout=20)
@@ -662,7 +662,7 @@ async def _browse_gtin_search(
         "gtin": gtin,
         "limit": str(max(1, min(limit, 200))),
         "category_ids": BOOKS_CATEGORY_ID,
-        "filter": "buyingOptions:{FIXED_PRICE}",
+        "filter": "buyingOptions:{FIXED_PRICE|BEST_OFFER}",
     }
     headers = {"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"}
     r = await client.get(

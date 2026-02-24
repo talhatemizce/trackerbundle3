@@ -100,9 +100,10 @@ function buildEbaySearchUrl({ isbn, condition = null, sort = "cheapest" } = {}) 
   const params = new URLSearchParams({
     _nkw:   isbn,
     _sacat: "267",
-    LH_BIN: "1",
+    // LH_BIN removed: including Best Offer (Accepts Offers) listings alongside BIN
+    LH_BO:  "1",        // Best Offer included
     rt:     "nc",
-    _sop:   sort === "cheapest" ? "15" : "12",   // 15=price+ship asc, 12=best match
+    _sop:   sort === "cheapest" ? "15" : "12",
   });
   const cid = condition && _EBAY_COND_IDS[condition];
   if (cid) params.set("LH_ItemCondition", cid);
@@ -113,11 +114,11 @@ function buildEbaySearchUrl({ isbn, condition = null, sort = "cheapest" } = {}) 
 ;(() => {
   const cases = [
     { input: { isbn: "9780132350884" },
-      expect: "https://www.ebay.com/sch/i.html?_nkw=9780132350884&_sacat=267&LH_BIN=1&rt=nc&_sop=15" },
+      expect: "https://www.ebay.com/sch/i.html?_nkw=9780132350884&_sacat=267&LH_BO=1&rt=nc&_sop=15" },
     { input: { isbn: "9780132350884", condition: "good" },
-      expect: "https://www.ebay.com/sch/i.html?_nkw=9780132350884&_sacat=267&LH_BIN=1&rt=nc&_sop=15&LH_ItemCondition=5000" },
+      expect: "https://www.ebay.com/sch/i.html?_nkw=9780132350884&_sacat=267&LH_BO=1&rt=nc&_sop=15&LH_ItemCondition=5000" },
     { input: { isbn: "9780974769431", condition: "like_new", sort: "cheapest" },
-      expect: "https://www.ebay.com/sch/i.html?_nkw=9780974769431&_sacat=267&LH_BIN=1&rt=nc&_sop=15&LH_ItemCondition=3000" },
+      expect: "https://www.ebay.com/sch/i.html?_nkw=9780974769431&_sacat=267&LH_BO=1&rt=nc&_sop=15&LH_ItemCondition=3000" },
   ];
   cases.forEach(({ input, expect }) => {
     const got = buildEbaySearchUrl(input);
@@ -793,7 +794,7 @@ function Thumb({ imageUrl, isbn, href, C, size = 72 }) {
   );
 }
 
-function AlertsFeedTab({ C, push, isbns, titles }) {
+function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
   const [entries, setEntries] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -808,6 +809,7 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [drawerData, setDrawerData] = useState(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const [soldScrape, setSoldScrape] = useState({});       // { [isbn]: {loading,data,error} }
   const [dedupIsbn, setDedupIsbn] = useState("");
 
   const openDrawer = useCallback(async (e) => {
@@ -823,6 +825,16 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
       setDrawerLoading(false);
     }
   }, []);
+
+  const fetchSoldScrape = async (isbn) => {
+    setSoldScrape(s => ({...s, [isbn]: {loading:true, data:null, error:null}}));
+    try {
+      const d = await req(`/ebay/sold-avg/${isbn}`, {}, 25000);
+      setSoldScrape(s => ({...s, [isbn]: {loading:false, data:d, error:null}}));
+    } catch(e) {
+      setSoldScrape(s => ({...s, [isbn]: {loading:false, data:null, error:e.message}}));
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -1382,7 +1394,8 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                   )}
 
                   <AccordionSection title="📉 Satış Verisi" C={C} defaultOpen={false}>
-                    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
+                    {/* Finding API status badge */}
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
                       {drawerData.sold?.data_source==="browse_proxy"
                         ? <span style={{fontSize:10,background:"rgba(251,146,60,.12)",border:"1px solid rgba(251,146,60,.4)",borderRadius:4,padding:"2px 8px",color:C.orange}}>📊 Browse proxy</span>
                         : <span style={{fontSize:10,background:"rgba(52,211,153,.1)",border:"1px solid rgba(52,211,153,.3)",borderRadius:4,padding:"2px 8px",color:C.green}}>✓ Finding API</span>
@@ -1392,9 +1405,80 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                       )}
                     </div>
                     {drawerData.sold?.sold_avg != null
-                      ? <DrawerRow label="Used sold ort." value={`$${Math.round(drawerData.sold.sold_avg)}`} C={C}/>
-                      : <DrawerRow label="Used sold ort." value="Veri yok" C={C} valueColor={C.muted3}/>}
+                      ? <DrawerRow label="Finding API ort." value={`$${Math.round(drawerData.sold.sold_avg)}`} C={C}/>
+                      : <DrawerRow label="Finding API ort." value="Veri yok" C={C} valueColor={C.muted3}/>}
                     {drawerData.sold?.sold_count != null && <DrawerRow label="Örnek sayısı" value={drawerData.sold.sold_count} C={C}/>}
+
+                    {/* ── On-demand sold scrape ─────────────────────────────── */}
+                    {(() => {
+                      const isbn = selectedAlert?.isbn;
+                      const ss = soldScrape[isbn];
+                      return (
+                        <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                          {/* Button — show if no data yet */}
+                          {!ss?.data && !ss?.loading && (
+                            <button
+                              onClick={()=>fetchSoldScrape(isbn)}
+                              style={{
+                                width:"100%",padding:"7px",borderRadius:6,fontSize:11,fontWeight:600,
+                                background:"none",border:`1px solid ${C.accent}`,color:C.accent,
+                                cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+                              }}
+                            >
+                              🔍 Satış Ortalaması Gör
+                              <span style={{fontSize:9,color:C.muted3,fontWeight:400}}>(eBay sold · on-demand)</span>
+                            </button>
+                          )}
+
+                          {/* Loading */}
+                          {ss?.loading && (
+                            <div style={{textAlign:"center",fontSize:11,color:C.muted3,padding:"8px 0"}}>
+                              ⏳ eBay sold listesi çekiliyor…
+                            </div>
+                          )}
+
+                          {/* Error */}
+                          {ss?.error && (
+                            <div style={{fontSize:11,color:C.orange,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                              <span>⚠ {ss.error}</span>
+                              <button onClick={()=>fetchSoldScrape(isbn)} style={{fontSize:10,background:"none",border:"none",color:C.accent,cursor:"pointer"}}>↺ Tekrar</button>
+                            </div>
+                          )}
+
+                          {/* Result */}
+                          {ss?.data?.ok && ss.data.count > 0 && (
+                            <div style={{background:C.surface2,borderRadius:6,padding:"10px 12px"}}>
+                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                                <span style={{fontSize:10,color:C.muted,fontWeight:600}}>SOLD · {ss.data.count} SATIŞ</span>
+                                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                                  {ss.data.cached && <span style={{fontSize:9,color:C.muted3}}>⚡ cache</span>}
+                                  <a href={ss.data.ebay_url} target="_blank" rel="noreferrer" style={{fontSize:9,color:C.accent,textDecoration:"none"}}>eBay ↗</a>
+                                  <button onClick={()=>fetchSoldScrape(isbn)} style={{fontSize:9,background:"none",border:"none",color:C.muted3,cursor:"pointer"}}>↺</button>
+                                </div>
+                              </div>
+                              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
+                                {[
+                                  ["💰 Ort", `$${ss.data.avg}`, C.text],
+                                  ["📊 Med", `$${ss.data.median}`, C.text],
+                                  ["↓ Min", `$${ss.data.min}`, C.green],
+                                  ["↑ Max", `$${ss.data.max}`, C.muted],
+                                ].map(([label,val,col])=>(
+                                  <div key={label} style={{textAlign:"center"}}>
+                                    <div style={{fontSize:8,color:C.muted3,marginBottom:2}}>{label}</div>
+                                    <div style={{fontSize:13,fontWeight:700,color:col,fontFamily:"var(--mono)"}}>{val}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {ss?.data?.ok && ss.data.count === 0 && (
+                            <div style={{fontSize:11,color:C.muted3,textAlign:"center",padding:"6px 0"}}>
+                              Bu ISBN için satış kaydı bulunamadı.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </AccordionSection>
 
                   {/* Amazon — only show if configured or has data */}
@@ -2097,7 +2181,7 @@ function AppReal() {
 
             {tab==="pricing"&&<PricingTab isbns={isbns} C={C} push={push} titles={titles} rules={rules} onRulesSaved={load}/>}
 
-{tab==="alerts"&&<AlertsFeedTab C={C} push={push} isbns={isbns} titles={titles}/>}
+{tab==="alerts"&&<AlertsFeedTab C={C} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
           </>
         )}
       </div>

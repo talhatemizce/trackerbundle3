@@ -522,6 +522,17 @@ async def report_broken_link(request: Request):
     return {"ok": True}
 
 
+@app.get("/ebay/sold-avg/{isbn}")
+async def ebay_sold_avg(isbn: str):
+    """
+    On-demand eBay sold price scraper.
+    User-triggered only (button click). 30min cache per ISBN.
+    Returns count/min/max/avg/median from completed sold listings.
+    """
+    from app.sold_scraper import fetch_sold_avg
+    return await fetch_sold_avg(isbn)
+
+
 @app.get("/telemetry/link-broken")
 async def get_link_telemetry(limit: int = 50):
     """Read last N broken-link reports."""
