@@ -20,6 +20,40 @@ from app import sold_stats_store
 logger = logging.getLogger("trackerbundle.scheduler_ebay")
 
 
+# ── Deal Score ────────────────────────────────────────────────────────────────
+# 0-100 arası tek sayı. Yüksek = daha iyi fırsat.
+# Formül:
+#   Baz puan:   (1 - total/base_limit) * 70   → limit'e ne kadar yakın (0-70)
+#   Make Offer: +10 (pazarlık var)
+#   Condition:  brand_new/like_new +8, very_good +5, good 0, acceptable -5
+#   Ship est.:  -8 (gerçek maliyet belirsiz)
+#   Sold below: avg_for_msg < total → -5 (aktif fiyat piyasanın üstünde)
+# Sonuç [0, 100] arasına kısılır.
+
+_COND_BONUS = {
+    "brand_new": 8, "like_new": 8, "very_good": 5,
+    "good": 0, "acceptable": -5, "used_all": 0,
+}
+
+def deal_score(
+    total: float,
+    base_limit: float,        # make_offer multiplier UYGULANMAMIŞ limit
+    bucket: str,
+    make_offer: bool = False,
+    ship_estimated: bool = False,
+    sold_avg: float | None = None,
+) -> int:
+    if base_limit <= 0:
+        return 0
+    ratio_score = max(0.0, (1.0 - total / base_limit)) * 70.0
+    bonus = 0
+    bonus += 10 if make_offer else 0
+    bonus += _COND_BONUS.get(bucket, 0)
+    bonus += -8 if ship_estimated else 0
+    bonus += -5 if (sold_avg is not None and sold_avg < total) else 0
+    return max(0, min(100, int(round(ratio_score + bonus))))
+
+
 async def _send_telegram(message: str) -> bool:
     s = get_settings()
     if not s.telegram_bot_token or not s.telegram_chat_id:
@@ -54,6 +88,7 @@ def _format_message(
     sold_count: int | None = None,
     ship_estimated: bool = False,
     match_quality: str = "CONFIRMED",
+    score: int | None = None,
 ) -> str:
     title = (item.get("title") or "")[:90]
     url = item.get("itemWebUrl") or ""
@@ -82,12 +117,23 @@ def _format_message(
 
     offer_str = " · Make Offer" if make_offer else ""
     verify_badge = "" if match_quality == "CONFIRMED" else " ⚠️ unverified"
-
     ship_note = " · est. ship" if ship_estimated else ""
+
+    # Score badge
+    if score is not None:
+        if score >= 75:
+            score_str = f" 🔥{score}"
+        elif score >= 50:
+            score_str = f" ✨{score}"
+        else:
+            score_str = f" [{score}]"
+    else:
+        score_str = ""
+
     msg = (
         f"📚 <b>{title}</b>\n"
         f"ISBN: {isbn} | {label}{offer_str}{verify_badge}\n"
-        f"Total: <b>${total_i}</b>{ship_note} (limit ${limit_i}) → {decision_str}\n"
+        f"Total: <b>${total_i}</b>{ship_note} (limit ${limit_i}) → {decision_str}{score_str}\n"
     )
 
     # Sold stats satırı
@@ -95,8 +141,6 @@ def _format_message(
         sold_str = f"Sold avg: ${sold_avg}"
         if sold_count is not None:
             sold_str += f" ({sold_count} sold)"
-
-        # overpriced uyarısı: aktif fiyat ucuz ama sold avg çok düşükse
         if sold_avg < total_i:
             sold_str += " ⚠️ sold avg < listing"
         msg += f"{sold_str}\n"
@@ -297,6 +341,20 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
 
         make_offer = "BEST_OFFER" in (it.get("buyingOptions") or [])
         decision   = "OFFER" if make_offer else "BUY"
+        ship_est   = it.get("_shipping_estimated", False)
+
+        # base_limit = make_offer multiplier uygulanmadan önceki limit
+        s_cfg = get_settings()
+        base_limit = limit / float(s_cfg.make_offer_multiplier) if make_offer else limit
+
+        score = deal_score(
+            total=total,
+            base_limit=base_limit,
+            bucket=bucket,
+            make_offer=make_offer,
+            ship_estimated=ship_est,
+            sold_avg=float(avg_for_msg) if avg_for_msg is not None else None,
+        )
 
         # Image URL
         image_url = ""
@@ -311,8 +369,9 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
         msg = _format_message(
             isbn, it, bucket, total, limit,
             sold_avg=avg_for_msg, sold_count=count_for_msg,
-            ship_estimated=it.get("_shipping_estimated", False),
+            ship_estimated=ship_est,
             match_quality=match_quality,
+            score=score,
         )
 
         ok = await _send_telegram(msg)
@@ -331,14 +390,15 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
                     image_url=image_url,
                     sold_avg=avg_for_msg,
                     sold_count=count_for_msg,
-                    ship_estimated=it.get("_shipping_estimated", False),
+                    ship_estimated=ship_est,
                     match_quality=match_quality,
                     verified=verified_flag,
                     verification_reason=verify_reason,
+                    deal_score=score,
                 )
                 logger.info(
-                    "HISTORY_WRITE isbn=%s item=%s decision=%s total=%.2f quality=%s",
-                    isbn, item_id, decision, total, match_quality,
+                    "HISTORY_WRITE isbn=%s item=%s decision=%s total=%.2f score=%d quality=%s",
+                    isbn, item_id, decision, total, score, match_quality,
                 )
             except Exception as _he:
                 logger.warning("alert_history write failed: %s", _he)

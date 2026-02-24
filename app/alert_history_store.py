@@ -33,6 +33,7 @@ def add_entry(
     match_quality: str = "CONFIRMED",        # "CONFIRMED" | "UNVERIFIED_SUPER_DEAL"
     verified: bool = True,
     verification_reason: str = "gtins_match",
+    deal_score: Optional[int] = None,
 ) -> None:
     entry = {
         "ts": int(time.time()),
@@ -51,6 +52,7 @@ def add_entry(
         "match_quality": match_quality,
         "verified": verified,
         "verification_reason": verification_reason,
+        "deal_score": deal_score,
     }
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)

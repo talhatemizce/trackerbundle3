@@ -31,7 +31,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-23-bot-interval";
+const BUILD_ID = "2026-02-24-deal-score";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -740,6 +740,24 @@ function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
 
 
 
+// ─── Deal Score Badge ─────────────────────────────────────────────────────────
+// score null → eski entry, gösterme
+function ScoreBadge({ score, C }) {
+  if (score == null) return null;
+  const color  = score >= 75 ? C.green : score >= 50 ? C.accent : C.muted;
+  const label  = score >= 75 ? "🔥" : score >= 50 ? "✨" : "";
+  const border = `1px solid ${color}`;
+  return (
+    <span title={`Deal Score: ${score}/100`} style={{
+      fontSize:11, fontWeight:700, color,
+      background:"rgba(255,255,255,.04)", border, borderRadius:4,
+      padding:"1px 7px", letterSpacing:"0.02em", flexShrink:0,
+    }}>
+      {label}{score}
+    </span>
+  );
+}
+
 // Thumbnail with eBay → OpenLibrary fallback, safe against infinite onError loops
 function Thumb({ imageUrl, isbn, href, C }) {
   const olCover = `https://covers.openlibrary.org/b/isbn/${isbn}-S.jpg`;
@@ -772,6 +790,7 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
   const [isbnFilter, setIsbnFilter] = useState("");
   const [condFilter, setCondFilter] = useState("");      // "" | brand_new | like_new | ...
   const [decisionFilter, setDecisionFilter] = useState(""); // "" | BUY | OFFER
+  const [sortBy, setSortBy] = useState("ts");            // "ts" | "score" | "total"
   const [dedupIsbn, setDedupIsbn] = useState("");   // React state — no getElementById
 
   const load = async () => {
@@ -860,6 +879,13 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
           <option value="OFFER">🟡 OFFER</option>
         </select>
 
+        {/* Sort */}
+        <select className="inp" value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{flex:"0 1 110px",minWidth:90,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text,fontSize:12}}>
+          <option value="ts">En yeni</option>
+          <option value="score">Score ↓</option>
+          <option value="total">Fiyat ↑</option>
+        </select>
+
         <div style={{width:1,height:24,background:C.border,flexShrink:0}}/>
 
         {/* Dedup clear — proper React state */}
@@ -926,6 +952,12 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
       {entries
         .filter(e => !condFilter     || e.condition === condFilter)
         .filter(e => !decisionFilter || e.decision  === decisionFilter)
+        .slice()
+        .sort((a, b) => {
+          if (sortBy === "score")  return (b.deal_score ?? -1) - (a.deal_score ?? -1);
+          if (sortBy === "total")  return a.total - b.total;
+          return b.ts - a.ts; // default: newest first
+        })
         .map((e, i) => {
         return (
           <div key={`${e.item_id}-${i}`} style={{background:C.rowBg,border:`1px solid ${C.rowBorder}`,borderLeft:`3px solid ${condColor(e.condition,C)}`,borderRadius:8,padding:"12px 14px",marginBottom:8,display:"flex",gap:12,alignItems:"flex-start"}}>
@@ -934,11 +966,12 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
             {/* Content */}
             <div style={{flex:1,minWidth:0}}>
               <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:3}}>
-                <span style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:340}}>{e.title||e.isbn}</span>
+                <span style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:280}}>{e.title||e.isbn}</span>
                 <span style={{fontSize:10,color:condColor(e.condition,C),background:"rgba(255,255,255,.04)",border:`1px solid ${condColor(e.condition,C)}`,borderRadius:3,padding:"1px 6px"}}>{condLabel[e.condition]||e.condition}</span>
                 <span style={{fontSize:11,fontWeight:600,color:e.decision==="BUY"?C.green:C.blue}}>
                   {e.decision==="BUY"?"🟢 BUY":"🟡 OFFER"}
                 </span>
+                <ScoreBadge score={e.deal_score} C={C} />
                 {e.match_quality==="CONFIRMED"
                   ? <span style={{fontSize:10,color:C.green,background:"rgba(52,211,153,.1)",border:`1px solid ${C.green}`,borderRadius:3,padding:"1px 6px"}}>✅ confirmed</span>
                   : e.match_quality==="UNVERIFIED_SUPER_DEAL"
@@ -951,7 +984,7 @@ function AlertsFeedTab({ C, push, isbns, titles }) {
                 <span style={{color:C.text,fontWeight:600}}>${e.total}</span>
                 <span style={{color:C.muted3}}>limit: ${e.limit}</span>
                 {e.sold_avg && <span>sold avg: ${e.sold_avg}</span>}
-                {e.ship_estimated && <span style={{color:C.orange}}>est.ship</span>}
+                {e.ship_estimated && <span style={{color:C.orange}}>⚠ est.ship</span>}
                 {e.verification_reason && e.verification_reason!=="gtins_match" && (
                   <span style={{fontSize:10,color:C.muted3}}>{e.verification_reason}</span>
                 )}

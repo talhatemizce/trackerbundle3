@@ -313,6 +313,7 @@ def inject_test_history():
         sold_avg=25,
         sold_count=12,
         ship_estimated=False,
+        deal_score=62,
     )
     return {"ok": True, "msg": "Test entry injected. Check /alerts/history."}
 
