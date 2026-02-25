@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-25-v11-amazon-buybox-keepa-buybox";
+const BUILD_ID = "2026-02-25-v12-bugfixes-camel-amazon-bf";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -1693,7 +1693,7 @@ function DetailDrawer({
                       display:"block",boxShadow:"0 2px 6px rgba(37,99,235,.3)"}}>
                     🐝 Keepa Detay ↗
                   </a>
-                  <a href={`https://camelcamelcamel.com/search?s=${isbn}`} target="_blank" rel="noreferrer"
+                  <a href={`https://camelcamelcamel.com/product/${isbn}`} target="_blank" rel="noreferrer"
                     style={{flex:1,fontSize:11,color:"white",textDecoration:"none",padding:"8px 12px",
                       background:"#059669",borderRadius:6,textAlign:"center",fontWeight:600,
                       display:"block",boxShadow:"0 2px 6px rgba(5,150,105,.3)"}}>

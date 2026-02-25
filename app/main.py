@@ -388,7 +388,7 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
     amazon_data: dict = {"available": False, "reason": "not_configured"}
     try:
         from app import amazon_client as _az
-        az_cfg = s.amazon_sp_refresh_token if hasattr(s, "amazon_sp_refresh_token") else None
+        az_cfg = s.lwa_refresh_token  # LWA_REFRESH_TOKEN env var
         if not az_cfg:
             amazon_data["reason"] = "not_configured"
         else:

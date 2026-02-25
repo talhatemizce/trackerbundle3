@@ -190,15 +190,26 @@ async def fetch_bookfinder(isbn: str) -> dict:
     # Human-like delay on live fetch
     await asyncio.sleep(random.uniform(0.5, 1.2))
 
+    # BookFinder URL: try /isbn/ first, fall back to search
     bf_url = f"https://www.bookfinder.com/isbn/{isbn_clean}/"
+    bf_search_url = (
+        f"https://www.bookfinder.com/search/?keywords={isbn_clean}"
+        f"&currency=USD&destination=us&mode=basic&lang=en&st=sh&ac=qr&submit=Find+Books"
+    )
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
-            r = await client.get(bf_url, headers={
-                "User-Agent":      random.choice(_USER_AGENTS),
-                "Accept":          "text/html,application/xhtml+xml",
-                "Accept-Language":  "en-US,en;q=0.9",
-                "Accept-Encoding":  "gzip, deflate, br",
-            })
+        hdrs = {
+            "User-Agent":      random.choice(_USER_AGENTS),
+            "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer":         "https://www.bookfinder.com/",
+        }
+        async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
+            r = await client.get(bf_url, headers=hdrs)
+            # If /isbn/ returns 405 or 404, try the search URL
+            if r.status_code in (404, 405, 301, 302, 400):
+                await asyncio.sleep(0.3)
+                r = await client.get(bf_search_url, headers=hdrs)
 
         if r.status_code != 200:
             return {"ok": False, "error": f"HTTP {r.status_code}", "isbn": isbn_clean}
