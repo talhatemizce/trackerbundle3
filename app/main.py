@@ -85,12 +85,15 @@ def health():
 @app.get("/status")
 def status():
     isbns = isbn_store.list_isbns()
+    from app.core.config import get_settings as _gs2
+    s = _gs2()
     return {
         "ok": True,
         "service": "trackerbundle-api",
         "time_utc": datetime.now(timezone.utc).isoformat(),
         "has_bot_token": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
         "isbn_count": len(isbns),
+        "sched_tick_seconds": int(s.sched_tick_seconds),
     }
 
 

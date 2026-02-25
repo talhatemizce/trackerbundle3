@@ -64,10 +64,10 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-25-v17-theme-fix-bb-bigger-links";
+const BUILD_ID = "2026-02-25-v18-ux-watchlist-thumb-drawer-wide";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
-const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
+const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return null; if (s >= 86400) return `${Math.round(s/86400)}G`; if (s >= 3600) return `${Math.round(s/3600)}s`; if (s >= 60) return `${Math.round(s/60)}d`; return `${s}sn`; };
 // ─── eBay search URL builder ─────────────────────────────────────────────────
 // SINGLE SOURCE OF TRUTH for all "Open on eBay" links in this panel.
 // If eBay changes URL params: update only this function, rebuild dist, deploy.
@@ -1302,7 +1302,7 @@ function DetailDrawer({
       {/* Panel */}
       <div style={{
         position:"fixed",top:0,right:0,bottom:0,zIndex:50,
-        width:440,maxWidth:"95vw",background:C.surface,
+        width:"60vw",minWidth:400,maxWidth:"95vw",background:C.surface,
         borderLeft:`1px solid ${C.border}`,display:"flex",flexDirection:"column",
         boxShadow:"-8px 0 32px rgba(0,0,0,.3)",overflow:"hidden",
       }}>
@@ -1396,17 +1396,17 @@ function DetailDrawer({
                     </div>
                   )}
                   {drawerData.amazon?.available && drawerData.amazon?.used?.buybox && (
-                    <div style={{background:"#1e3a5f22",border:"1px solid #3b82f633",borderRadius:7,padding:"8px 10px"}}>
-                      <div style={{fontSize:9,color:"#93c5fd",marginBottom:2,fontWeight:700}}>🛒 BB USED</div>
-                      <div style={{fontSize:18,fontWeight:700,color:"#60a5fa"}}>${drawerData.amazon.used.buybox.total_int ?? drawerData.amazon.used.buybox.total}</div>
-                      <div style={{fontSize:9,color:"#93c5fd",opacity:.7}}>{drawerData.amazon.used.buybox.label==="A"?"FBA":"FBM"} · Amazon</div>
+                    <div style={{background:C.surface2,border:`1px solid ${C.accent}44`,borderRadius:7,padding:"8px 10px"}}>
+                      <div style={{fontSize:9,color:C.accent,marginBottom:2,fontWeight:700}}>🛒 BB USED</div>
+                      <div style={{fontSize:18,fontWeight:700,color:C.accent}}>${drawerData.amazon.used.buybox.total_int ?? drawerData.amazon.used.buybox.total}</div>
+                      <div style={{fontSize:9,color:C.muted2}}>{drawerData.amazon.used.buybox.label==="A"?"FBA":"FBM"} · Amazon</div>
                     </div>
                   )}
                   {drawerData.amazon?.available && drawerData.amazon?.new?.buybox && (
-                    <div style={{background:"#14532d22",border:"1px solid #22c55e33",borderRadius:7,padding:"8px 10px"}}>
-                      <div style={{fontSize:9,color:"#86efac",marginBottom:2,fontWeight:700}}>🛒 BB NEW</div>
-                      <div style={{fontSize:18,fontWeight:700,color:"#22c55e"}}>${drawerData.amazon.new.buybox.total_int ?? drawerData.amazon.new.buybox.total}</div>
-                      <div style={{fontSize:9,color:"#86efac",opacity:.7}}>{drawerData.amazon.new.buybox.label==="A"?"FBA":"FBM"} · Amazon</div>
+                    <div style={{background:C.surface2,border:`1px solid ${C.green}44`,borderRadius:7,padding:"8px 10px"}}>
+                      <div style={{fontSize:9,color:C.green,marginBottom:2,fontWeight:700}}>🛒 BB NEW</div>
+                      <div style={{fontSize:18,fontWeight:700,color:C.green}}>${drawerData.amazon.new.buybox.total_int ?? drawerData.amazon.new.buybox.total}</div>
+                      <div style={{fontSize:9,color:C.muted2}}>{drawerData.amazon.new.buybox.label==="A"?"FBA":"FBM"} · Amazon</div>
                     </div>
                   )}
                 </div>
@@ -1610,11 +1610,17 @@ function DetailDrawer({
                               </div>
                             ))}
                           </div>
+                          {/* Stale warning */}
+                          {ss.data.stale && (
+                            <div style={{fontSize:9,color:C.orange,background:C.orange+"11",border:"1px solid "+C.orange+"33",borderRadius:4,padding:"4px 8px",marginBottom:6}}>
+                              ⚠ Eski veri ({ss.data.cache_date}) — eBay bot engeli nedeniyle güncel çekilemedi
+                            </div>
+                          )}
                           {/* Combined */}
                           {ss.data.combined && (
                             <div style={{fontSize:10,color:C.muted3,textAlign:"center",padding:"4px 0"}}>
                               Toplam {ss.data.combined.count} satış · ort <b style={{color:C.text}}>${ss.data.combined.avg}</b>
-                              {ss.data.cached && <span style={{marginLeft:6}}>⚡ cache</span>}
+                              {ss.data.cached && <span style={{marginLeft:6}}>⚡ {ss.data.cache_date||"cache"}</span>}
                             </div>
                           )}
                           <button onClick={()=>onSoldFetch(isbn)} style={{display:"block",width:"100%",marginTop:6,fontSize:9,background:"none",border:"none",color:C.muted3,cursor:"pointer",textAlign:"center"}}>↺ Yenile</button>
@@ -2024,6 +2030,7 @@ function AppReal() {
   const [isbns, setIsbns] = useState([]);
   const [intervals, setIntervals] = useState({});
   const [status, setStatus] = useState(null);
+  const schedTick = status?.sched_tick_seconds || 3600;
   const [alertStats, setAlertStats] = useState({});
   const [runState, setRunState] = useState({});
   const [loading, setLoading] = useState(true);
@@ -2529,8 +2536,18 @@ function AppReal() {
                     <div key={isbn} style={{...row,borderRadius:8,marginBottom:8,overflow:"hidden"}}>
                       <div className="row-item"
                         onClick={()=>{ if(!editingRule && !editing) openWlDrawer(isbn); }}
-                        style={{borderBottom:editingRule===isbn?`1px solid ${C.border}`:"none",marginBottom:0,paddingBottom:editingRule===isbn?12:undefined,cursor:(editingRule||editing)?"default":"pointer",transition:"background .12s"}}
+                        style={{borderBottom:editingRule===isbn?`1px solid ${C.border}`:"none",marginBottom:0,paddingBottom:editingRule===isbn?12:undefined,cursor:(editingRule||editing)?"default":"pointer",transition:"background .12s",gap:10}}
                       >
+                        {/* Mini kapak */}
+                        <div onClick={e=>e.stopPropagation()} style={{flexShrink:0,width:32,height:44,borderRadius:3,overflow:"hidden",background:C.surface2,cursor:"default"}}>
+                          <img
+                            src={`https://covers.openlibrary.org/b/isbn/${isbn}-S.jpg`}
+                            loading="lazy"
+                            style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}
+                            onError={e=>{e.target.style.opacity="0";}}
+                            alt=""
+                          />
+                        </div>
                         <div style={{flex:1}}>
                           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                             <span style={{fontFamily:"var(--sans)",fontSize:13,fontWeight:600}}>{isbn}</span>
@@ -2558,8 +2575,8 @@ function AppReal() {
                             <button className="icon-btn" style={{fontSize:13}} onClick={()=>setEditing(null)}>✕</button>
                           </div>
                         ) : (
-                          <button onClick={()=>{setEditing(isbn);setEditVal(fmtSecs(intervals[isbn])==="default"?"":fmtSecs(intervals[isbn]));}} style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:4,color:intervals[isbn]?C.blue:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"3px 10px",cursor:"pointer"}}>
-                            ⏱ {fmtSecs(intervals[isbn])}
+                          <button onClick={()=>{setEditing(isbn);setEditVal(fmtSecs(intervals[isbn])||"");}} style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:4,color:intervals[isbn]?C.blue:C.muted,fontFamily:"var(--mono)",fontSize:12,padding:"3px 10px",cursor:"pointer"}} title={intervals[isbn]?"Özel interval":"Global interval (ayarlardan)"}>
+                            ⏱ {fmtSecs(intervals[isbn]) || fmtSecs(schedTick) || "—"}
                           </button>
                         )}
                         <a

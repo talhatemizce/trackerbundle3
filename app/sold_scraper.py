@@ -30,8 +30,9 @@ from app.core.json_store import file_lock, _read_unsafe, _write_unsafe
 
 logger = logging.getLogger("trackerbundle.sold_scraper")
 
-_CACHE_TTL_S = 30 * 60
-_MAX_ITEMS   = 60
+_CACHE_TTL_S      = 30 * 24 * 3600  # 30 gün — stale göster, sık istek atma
+_CACHE_TTL_HARD  = 0                    # 0 = stale cache sonsuza dek tutulur (force=True ile yenilenebilir)
+_MAX_ITEMS        = 60
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -63,6 +64,16 @@ def _cache_get(isbn: str) -> Optional[dict]:
     return None
 
 
+def _cache_get_stale(isbn: str) -> Optional[dict]:
+    """TTL'i görmezden gelir — bot engelinde bile eski veriyi döndürür."""
+    try:
+        data = _read_unsafe(_cache_path(), default={"entries": {}})
+        return data.get("entries", {}).get(isbn)
+    except Exception:
+        pass
+    return None
+
+
 def _cache_set(isbn: str, result: dict) -> None:
     p = _cache_path()
     try:
@@ -71,7 +82,8 @@ def _cache_set(isbn: str, result: dict) -> None:
             now = time.time()
             data["entries"] = {
                 k: v for k, v in data.get("entries", {}).items()
-                if now - v.get("ts", 0) < _CACHE_TTL_S * 4
+                # Stale entries kept indefinitely — only evict after 2 years
+                if now - v.get("ts", 0) < 730 * 24 * 3600
             }
             data["entries"][isbn] = {**result, "ts": int(now)}
             _write_unsafe(p, data)
@@ -161,36 +173,55 @@ async def _fetch_condition(
     return [], url
 
 
-async def fetch_sold_avg(isbn: str) -> dict:
+def _fmt_cache_date(ts: float) -> str:
+    """Unix timestamp → '14 Şub' gibi okunabilir tarih."""
+    import datetime
+    MONTHS = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"]
+    d = datetime.datetime.fromtimestamp(ts)
+    return f"{d.day} {MONTHS[d.month-1]}"
+
+
+async def fetch_sold_avg(isbn: str, force: bool = False) -> dict:
     """
-    Fetch new + used sold averages in parallel. Returns cached if available.
+    Fetch new + used sold averages in parallel.
+    - 30 günlük cache: TTL geçmese de force=True ile yenilenebilir
+    - eBay bot engeli veya hata: stale cache döndürülür, hiç veri yoksa hata
+    - Stale cache sonsuza dek korunur (eBay erişimi olmasa bile)
     """
     isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
 
-    cached = _cache_get(isbn_clean)
-    if cached:
-        age = int(time.time() - cached.get("ts", time.time()))
-        return {**cached, "cached": True, "cache_age_s": age}
+    # Serve fresh cache (within 30 days) unless force=True
+    if not force:
+        cached = _cache_get(isbn_clean)
+        if cached:
+            age = int(time.time() - cached.get("ts", time.time()))
+            return {**cached, "cached": True, "cache_age_s": age,
+                    "cache_date": _fmt_cache_date(cached.get("ts", time.time()))}
 
     # Human-like delay on live fetch
     await asyncio.sleep(random.uniform(0.6, 1.4))
 
+    stale = _cache_get_stale(isbn_clean)  # always available, even if TTL expired
+
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=22) as client:
-            # Parallel: new + all-conditions simultaneously
-            # "Used" = all_conditions minus new_prices (avoids 3000=LikeNew-only bug)
             (new_prices, new_url), (all_cond_prices, all_url) = await asyncio.gather(
                 _fetch_condition(client, isbn_clean, _COND_NEW),
-                _fetch_condition(client, isbn_clean, _COND_USED),  # "" = no filter
+                _fetch_condition(client, isbn_clean, _COND_USED),
             )
 
-        # Deduplicate: "used" = everything that isn't in the new set
         new_set = set(new_prices)
         used_prices = [p for p in all_cond_prices if p not in new_set]
         all_prices = list({*new_prices, *all_cond_prices})
-
-        # If both fetches returned empty, eBay likely blocked us
         ebay_blocked = len(new_prices) == 0 and len(all_cond_prices) == 0
+
+        if ebay_blocked and stale:
+            # Return stale with warning
+            stale_age = int(time.time() - stale.get("ts", time.time()))
+            logger.warning("sold_scrape isbn=%s: eBay blocked, serving stale (age=%ds)", isbn_clean, stale_age)
+            return {**stale, "cached": True, "stale": True, "cache_age_s": stale_age,
+                    "cache_date": _fmt_cache_date(stale.get("ts", time.time())),
+                    "stale_warning": "eBay bot engeli — eski veri gösteriliyor"}
 
         result = {
             "ok":        not ebay_blocked,
@@ -203,21 +234,23 @@ async def fetch_sold_avg(isbn: str) -> dict:
             "ebay_blocked":  ebay_blocked,
             "cached":        False,
             "cache_age_s":   0,
+            "cache_date":    _fmt_cache_date(time.time()),
         }
 
         if ebay_blocked:
-            result["error"] = "eBay CAPTCHA / bot koruması — sunucudan veri alınamıyor"
-            logger.warning("sold_scrape isbn=%s: eBay blocked (both fetches empty)", isbn_clean)
-
-        _cache_set(isbn_clean, result)
-        logger.info(
-            "sold_scrape isbn=%s new=%d used=%d",
-            isbn_clean,
-            len(new_prices),
-            len(used_prices),
-        )
+            result["error"] = "eBay CAPTCHA / bot koruması"
+            logger.warning("sold_scrape isbn=%s: eBay blocked (both empty)", isbn_clean)
+        else:
+            # Only save to cache on successful fetch
+            _cache_set(isbn_clean, result)
+            logger.info("sold_scrape isbn=%s new=%d used=%d", isbn_clean, len(new_prices), len(used_prices))
         return result
 
     except Exception as exc:
         logger.warning("sold_scrape error isbn=%s: %s", isbn_clean, exc)
+        if stale:
+            stale_age = int(time.time() - stale.get("ts", time.time()))
+            return {**stale, "cached": True, "stale": True, "cache_age_s": stale_age,
+                    "cache_date": _fmt_cache_date(stale.get("ts", time.time())),
+                    "stale_warning": f"Hata oluştu — eski veri: {_fmt_cache_date(stale.get('ts',0))}"}
         return {"ok": False, "error": str(exc), "isbn": isbn_clean}
