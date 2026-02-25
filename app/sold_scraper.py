@@ -150,7 +150,12 @@ async def _fetch_condition(
     try:
         r = await client.get(url, headers=headers, timeout=18)
         if r.status_code == 200:
+            # eBay CAPTCHA / challenge detection
+            if "splashui/captcha" in r.text or "challenge" in r.url.path:
+                logger.warning("sold_scrape CAPTCHA detected isbn=%s cond=%s", isbn, cond_id)
+                return [], url  # graceful empty — will trigger "blocked" flag
             return _parse_prices(r.text), url
+        logger.debug("sold_scrape HTTP %d isbn=%s cond=%s", r.status_code, isbn, cond_id)
     except Exception as exc:
         logger.debug("sold_scrape fetch cond=%s isbn=%s: %s", cond_id, isbn, exc)
     return [], url
@@ -184,17 +189,25 @@ async def fetch_sold_avg(isbn: str) -> dict:
         used_prices = [p for p in all_cond_prices if p not in new_set]
         all_prices = list({*new_prices, *all_cond_prices})
 
+        # If both fetches returned empty, eBay likely blocked us
+        ebay_blocked = len(new_prices) == 0 and len(all_cond_prices) == 0
+
         result = {
-            "ok":        True,
+            "ok":        not ebay_blocked,
             "isbn":      isbn_clean,
             "new":       _stats(new_prices),
             "used":      _stats(used_prices),
             "combined":  _stats(all_prices) if all_prices else None,
             "ebay_url_new":  new_url,
             "ebay_url_used": all_url,
+            "ebay_blocked":  ebay_blocked,
             "cached":        False,
             "cache_age_s":   0,
         }
+
+        if ebay_blocked:
+            result["error"] = "eBay CAPTCHA / bot koruması — sunucudan veri alınamıyor"
+            logger.warning("sold_scrape isbn=%s: eBay blocked (both fetches empty)", isbn_clean)
 
         _cache_set(isbn_clean, result)
         logger.info(

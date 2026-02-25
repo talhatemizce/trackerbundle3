@@ -1540,6 +1540,26 @@ function DetailDrawer({
                           <button onClick={()=>onSoldFetch(isbn)} style={{fontSize:10,background:"none",border:"none",color:C.accent,cursor:"pointer"}}>↺</button>
                         </div>
                       )}
+                      {ss?.data && !ss.data.ok && (
+                        <div style={{background:C.surface2,borderRadius:8,padding:"12px",marginTop:4}}>
+                          <div style={{fontSize:11,color:C.orange,fontWeight:600,marginBottom:6}}>
+                            ⚠ {ss.data.ebay_blocked ? "eBay bot koruması aktif" : "Veri alınamadı"}
+                          </div>
+                          <div style={{fontSize:10,color:C.muted3,lineHeight:1.5}}>
+                            {ss.data.ebay_blocked
+                              ? "eBay sunucu isteklerini CAPTCHA ile engelliyor. Alternatif olarak BookFinder fiyat karşılaştırmasını kullanabilirsiniz."
+                              : (ss.data.error || "Bilinmeyen hata")}
+                          </div>
+                          <div style={{display:"flex",gap:8,marginTop:8}}>
+                            <button onClick={()=>onSoldFetch(isbn)} style={{fontSize:10,padding:"4px 10px",borderRadius:4,background:"none",border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer"}}>↺ Tekrar Dene</button>
+                            <a href={ss.data.ebay_url_used||`https://www.ebay.com/sch/i.html?_nkw=${isbn}&LH_Sold=1&LH_Complete=1`}
+                              target="_blank" rel="noreferrer"
+                              style={{fontSize:10,padding:"4px 10px",borderRadius:4,background:"none",border:`1px solid ${C.muted3}`,color:C.muted3,textDecoration:"none",cursor:"pointer"}}>
+                              eBay'de Aç ↗
+                            </a>
+                          </div>
+                        </div>
+                      )}
                       {ss?.data?.ok && (
                         <div>
                           {/* New + Used side by side */}
@@ -1599,6 +1619,34 @@ function DetailDrawer({
                 </AccordionSection>
               )}
 
+              {/* ── Keepa Fiyat Geçmişi Grafiği ─────────────────────── */}
+              <AccordionSection title="📈 Fiyat Geçmişi (Keepa)" C={C} defaultOpen={true}>
+                <div style={{position:"relative",background:C.surface2,borderRadius:8,overflow:"hidden",marginBottom:8}}>
+                  <a href={`https://keepa.com/#!search/1-${isbn}`} target="_blank" rel="noreferrer">
+                    <img
+                      src={`https://graph.keepa.com/pricehistory.png?asin=${isbn}&domain=com&range=180&amazon=1&new=1&used=1&salesrank=1`}
+                      alt="Keepa Price History"
+                      loading="lazy"
+                      style={{width:"100%",height:"auto",display:"block",borderRadius:8,minHeight:80,background:C.surface2}}
+                      onError={e=>{e.target.style.display="none";e.target.nextSibling&&(e.target.nextSibling.style.display="block");}}
+                    />
+                    <div style={{display:"none",padding:"16px",textAlign:"center",fontSize:11,color:C.muted3}}>
+                      Keepa grafiği yüklenemedi · <span style={{color:C.accent}}>Tıkla → Keepa'da aç</span>
+                    </div>
+                  </a>
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+                  <a href={`https://keepa.com/#!search/1-${isbn}`} target="_blank" rel="noreferrer"
+                    style={{fontSize:9,color:C.muted3,textDecoration:"none",padding:"2px 8px",border:`1px solid ${C.border}`,borderRadius:4}}>
+                    🐝 Keepa detay ↗
+                  </a>
+                  <a href={`https://camelcamelcamel.com/search?s=${isbn}`} target="_blank" rel="noreferrer"
+                    style={{fontSize:9,color:C.muted3,textDecoration:"none",padding:"2px 8px",border:`1px solid ${C.border}`,borderRadius:4}}>
+                    📈 CamelCamelCamel ↗
+                  </a>
+                </div>
+              </AccordionSection>
+
               {/* ── BookFinder Fiyat Karşılaştırma ─────────────────────── */}
               <AccordionSection title="📚 Fiyat Karşılaştır" C={C} defaultOpen={false}>
                 {(()=>{
@@ -1607,13 +1655,13 @@ function DetailDrawer({
                     <div>
                       {!bf?.data && !bf?.loading && (
                         <button
-                          onClick={()=>onBfFetch && onBfFetch(isbn)}
+                          onClick={()=>{console.log("BF fetch",isbn,onBfFetch);onBfFetch && onBfFetch(isbn);}}
                           style={{width:"100%",padding:"8px",borderRadius:6,fontSize:11,fontWeight:600,
                             background:"none",border:`1px solid ${C.purple||"#7c3aed"}`,color:C.purple||"#7c3aed",
                             cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}
                         >
                           📚 BookFinder Fiyatlarını Getir
-                          <span style={{fontSize:9,color:C.muted3,fontWeight:400}}>(AbeBooks · Alibris · Biblio · eBay)</span>
+                          <span style={{fontSize:9,color:C.muted3,fontWeight:400}}>(AbeBooks · Alibris · Biblio)</span>
                         </button>
                       )}
                       {bf?.loading && <div style={{textAlign:"center",fontSize:11,color:C.muted3,padding:"8px 0"}}>⏳ BookFinder fiyatları çekiliyor…</div>}
@@ -1694,6 +1742,12 @@ function DetailDrawer({
                           </div>
                         </div>
                       )}
+                      {bf?.data && !bf.data.ok && (
+                        <div style={{fontSize:11,color:C.orange,textAlign:"center",padding:"6px 0"}}>
+                          ⚠ {bf.data.error || "Veri alınamadı"}
+                          <button onClick={()=>onBfFetch && onBfFetch(isbn)} style={{marginLeft:8,fontSize:10,background:"none",border:"none",color:C.accent,cursor:"pointer"}}>↺</button>
+                        </div>
+                      )}
                       {bf?.data?.ok && !bf.data.new && !bf.data.used && (
                         <div style={{fontSize:11,color:C.muted3,textAlign:"center",padding:"6px 0"}}>Bu ISBN için ilan bulunamadı.</div>
                       )}
@@ -1757,21 +1811,10 @@ function DetailDrawer({
               textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
             🛍 eBay
           </a>
-          <a
-            href={`https://camelcamelcamel.com/search?s=${encodeURIComponent(drawerData?.amazon?.asin || isbn)}`}
-            target="_blank" rel="noreferrer"
-            title="CamelCamelCamel'de fiyat geçmişini gör"
+          <a href={`https://www.bookfinder.com/isbn/${isbn}/`} target="_blank" rel="noreferrer"
             style={{flex:1,padding:"9px",borderRadius:7,background:"#6366f1",color:"white",
               textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
-            📈 C3
-          </a>
-          <a
-            href={`https://keepa.com/#!search/1-${encodeURIComponent(drawerData?.amazon?.asin || isbn)}`}
-            target="_blank" rel="noreferrer"
-            title="Keepa'da fiyat geçmişini gör"
-            style={{flex:1,padding:"9px",borderRadius:7,background:"#f08200",color:"white",
-              textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
-            🐝 Keepa
+            📚 BookFinder
           </a>
           {alertEntry?.url && (
             <a href={alertEntry.url} target="_blank" rel="noreferrer"
