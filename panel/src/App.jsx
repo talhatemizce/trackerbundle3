@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-24-v9-bookfinder-c3-keepa";
+const BUILD_ID = "2026-02-25-v10-keepa-embed-bf-fix";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -1622,53 +1622,84 @@ function DetailDrawer({
               {/* ── Keepa Fiyat Geçmişi Grafiği ─────────────────────── */}
               <AccordionSection title="📈 Fiyat Geçmişi (Keepa)" C={C} defaultOpen={true}>
                 <div style={{position:"relative",background:C.surface2,borderRadius:8,overflow:"hidden",marginBottom:8}}>
-                  <a href={`https://keepa.com/#!search/1-${isbn}`} target="_blank" rel="noreferrer">
+                  {/* Loading placeholder */}
+                  <div id={`keepa-loading-${isbn}`} style={{textAlign:"center",padding:"20px 0",fontSize:11,color:C.muted3}}>
+                    ⏳ Keepa grafiği yükleniyor…
+                  </div>
+                  <a href={`https://keepa.com/#!search/1-${isbn}`} target="_blank" rel="noreferrer"
+                    style={{display:"block"}}>
                     <img
-                      src={`https://graph.keepa.com/pricehistory.png?asin=${isbn}&domain=com&range=180&amazon=1&new=1&used=1&salesrank=1`}
+                      src={`https://graph.keepa.com/pricehistory.png?asin=${isbn}&domain=com&range=180&amazon=1&new=1&used=1&salesrank=1&width=500&height=200`}
                       alt="Keepa Price History"
-                      loading="lazy"
-                      style={{width:"100%",height:"auto",display:"block",borderRadius:8,minHeight:80,background:C.surface2}}
-                      onError={e=>{e.target.style.display="none";e.target.nextSibling&&(e.target.nextSibling.style.display="block");}}
+                      style={{width:"100%",height:"auto",display:"none",borderRadius:8,minHeight:80,background:C.surface2}}
+                      onLoad={e=>{
+                        e.target.style.display="block";
+                        const loader=document.getElementById(`keepa-loading-${isbn}`);
+                        if(loader)loader.style.display="none";
+                      }}
+                      onError={e=>{
+                        e.target.style.display="none";
+                        const loader=document.getElementById(`keepa-loading-${isbn}`);
+                        if(loader)loader.innerHTML='<span style="color:#f59e0b">Keepa grafiği yüklenemedi</span> · <a href="https://keepa.com/#!search/1-'+isbn+'" target="_blank" rel="noreferrer" style="color:#3b82f6">Keepa\'da aç ↗</a>';
+                      }}
                     />
-                    <div style={{display:"none",padding:"16px",textAlign:"center",fontSize:11,color:C.muted3}}>
-                      Keepa grafiği yüklenemedi · <span style={{color:C.accent}}>Tıkla → Keepa'da aç</span>
-                    </div>
                   </a>
                 </div>
-                <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
                   <a href={`https://keepa.com/#!search/1-${isbn}`} target="_blank" rel="noreferrer"
-                    style={{fontSize:9,color:C.muted3,textDecoration:"none",padding:"2px 8px",border:`1px solid ${C.border}`,borderRadius:4}}>
-                    🐝 Keepa detay ↗
+                    style={{flex:1,fontSize:11,color:"white",textDecoration:"none",padding:"8px 12px",
+                      background:"#2563eb",borderRadius:6,textAlign:"center",fontWeight:600,
+                      display:"block",boxShadow:"0 2px 6px rgba(37,99,235,.3)"}}>
+                    🐝 Keepa Detay ↗
                   </a>
                   <a href={`https://camelcamelcamel.com/search?s=${isbn}`} target="_blank" rel="noreferrer"
-                    style={{fontSize:9,color:C.muted3,textDecoration:"none",padding:"2px 8px",border:`1px solid ${C.border}`,borderRadius:4}}>
+                    style={{flex:1,fontSize:11,color:"white",textDecoration:"none",padding:"8px 12px",
+                      background:"#059669",borderRadius:6,textAlign:"center",fontWeight:600,
+                      display:"block",boxShadow:"0 2px 6px rgba(5,150,105,.3)"}}>
                     📈 CamelCamelCamel ↗
                   </a>
                 </div>
               </AccordionSection>
 
               {/* ── BookFinder Fiyat Karşılaştırma ─────────────────────── */}
-              <AccordionSection title="📚 Fiyat Karşılaştır" C={C} defaultOpen={false}>
+              <AccordionSection title="📚 Fiyat Karşılaştır (BookFinder)" C={C} defaultOpen={true}>
                 {(()=>{
                   const bf = bfScrape;
+                  const canFetch = !bf?.loading;
+                  const showBtn = canFetch && !bf?.data;
+                  const doFetch = () => { if(onBfFetch){onBfFetch(isbn);} else {console.error("onBfFetch prop missing!");} };
                   return (
                     <div>
-                      {!bf?.data && !bf?.loading && (
+                      {showBtn && (
                         <button
-                          onClick={()=>{console.log("BF fetch",isbn,onBfFetch);onBfFetch && onBfFetch(isbn);}}
-                          style={{width:"100%",padding:"8px",borderRadius:6,fontSize:11,fontWeight:600,
-                            background:"none",border:`1px solid ${C.purple||"#7c3aed"}`,color:C.purple||"#7c3aed",
-                            cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}
+                          onClick={doFetch}
+                          style={{width:"100%",padding:"10px",borderRadius:6,fontSize:12,fontWeight:700,
+                            background:C.purple||"#7c3aed",color:"white",
+                            cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+                            border:"none",boxShadow:"0 2px 8px rgba(124,58,237,.3)"}}
                         >
                           📚 BookFinder Fiyatlarını Getir
-                          <span style={{fontSize:9,color:C.muted3,fontWeight:400}}>(AbeBooks · Alibris · Biblio)</span>
                         </button>
                       )}
-                      {bf?.loading && <div style={{textAlign:"center",fontSize:11,color:C.muted3,padding:"8px 0"}}>⏳ BookFinder fiyatları çekiliyor…</div>}
+                      {!showBtn && !bf?.data && !bf?.loading && (
+                        <div style={{fontSize:10,color:C.muted3,textAlign:"center",padding:4}}>BookFinder bağlantısı hazır değil</div>
+                      )}
+                      {bf?.loading && (
+                        <div style={{textAlign:"center",padding:"12px 0"}}>
+                          <div style={{fontSize:11,color:C.purple||"#7c3aed",fontWeight:600}}>⏳ BookFinder fiyatları çekiliyor…</div>
+                          <div style={{fontSize:9,color:C.muted3,marginTop:4}}>AbeBooks · Alibris · Biblio · BetterWorldBooks</div>
+                        </div>
+                      )}
                       {bf?.error && (
-                        <div style={{fontSize:11,color:C.orange,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                          <span>⚠ {bf.error}</span>
-                          <button onClick={()=>onBfFetch && onBfFetch(isbn)} style={{fontSize:10,background:"none",border:"none",color:C.accent,cursor:"pointer"}}>↺</button>
+                        <div style={{background:C.surface2,borderRadius:6,padding:"10px 12px",marginBottom:8}}>
+                          <div style={{fontSize:11,color:C.orange,marginBottom:6}}>⚠ {bf.error}</div>
+                          <button onClick={doFetch} style={{fontSize:10,padding:"4px 12px",borderRadius:4,background:"none",border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer"}}>↺ Tekrar Dene</button>
+                        </div>
+                      )}
+                      {bf?.data && !bf.data.ok && (
+                        <div style={{background:C.surface2,borderRadius:6,padding:"10px 12px",marginBottom:8}}>
+                          <div style={{fontSize:11,color:C.orange,marginBottom:6}}>⚠ {bf.data.error || "BookFinder verisi alınamadı"}</div>
+                          <button onClick={doFetch} style={{fontSize:10,padding:"4px 12px",borderRadius:4,background:"none",border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer"}}>↺ Tekrar Dene</button>
                         </div>
                       )}
                       {bf?.data?.ok && (
