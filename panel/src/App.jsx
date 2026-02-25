@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-25-v12-bugfixes-camel-amazon-bf";
+const BUILD_ID = "2026-02-25-v13-buybox-overlay-bf-rewrite";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -1395,6 +1395,20 @@ function DetailDrawer({
                       <div style={{fontSize:9,color:C.muted3}}>{drawerData.ebay.new.count} ilan</div>
                     </div>
                   )}
+                  {drawerData.amazon?.available && drawerData.amazon?.used?.buybox && (
+                    <div style={{background:"#1e3a5f22",border:"1px solid #3b82f633",borderRadius:7,padding:"8px 10px"}}>
+                      <div style={{fontSize:9,color:"#93c5fd",marginBottom:2,fontWeight:700}}>🛒 BB USED</div>
+                      <div style={{fontSize:18,fontWeight:700,color:"#60a5fa"}}>${drawerData.amazon.used.buybox.total_int ?? drawerData.amazon.used.buybox.total}</div>
+                      <div style={{fontSize:9,color:"#93c5fd",opacity:.7}}>{drawerData.amazon.used.buybox.label==="A"?"FBA":"FBM"} · Amazon</div>
+                    </div>
+                  )}
+                  {drawerData.amazon?.available && drawerData.amazon?.new?.buybox && (
+                    <div style={{background:"#14532d22",border:"1px solid #22c55e33",borderRadius:7,padding:"8px 10px"}}>
+                      <div style={{fontSize:9,color:"#86efac",marginBottom:2,fontWeight:700}}>🛒 BB NEW</div>
+                      <div style={{fontSize:18,fontWeight:700,color:"#22c55e"}}>${drawerData.amazon.new.buybox.total_int ?? drawerData.amazon.new.buybox.total}</div>
+                      <div style={{fontSize:9,color:"#86efac",opacity:.7}}>{drawerData.amazon.new.buybox.label==="A"?"FBA":"FBM"} · Amazon</div>
+                    </div>
+                  )}
                 </div>
               )
             )}
@@ -1662,6 +1676,33 @@ function DetailDrawer({
 
               {/* ── Keepa Fiyat Geçmişi Grafiği ─────────────────────── */}
               <AccordionSection title="📈 Fiyat Geçmişi (Keepa)" C={C} defaultOpen={true}>
+                {/* BuyBox anlık fiyat overlay — SP-API verisinden */}
+                {drawerData.amazon?.available && (() => {
+                  const az = drawerData.amazon;
+                  const bbNew  = az.new?.buybox;
+                  const bbUsed = az.used?.buybox;
+                  const fmtLabel = l => l==="A"?"FBA":l==="M"?"FBM":l||"";
+                  if (!bbNew && !bbUsed) return null;
+                  return (
+                    <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+                      {bbNew && (
+                        <div style={{flex:1,minWidth:100,background:"#14532d22",border:"1px solid #22c55e44",borderRadius:6,padding:"6px 10px",display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontSize:9,color:"#86efac",fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>BB New</span>
+                          <span style={{fontSize:16,fontWeight:800,color:"#22c55e"}}>${bbNew.total_int ?? bbNew.total}</span>
+                          <span style={{fontSize:9,color:"#86efac",opacity:.7}}>{fmtLabel(bbNew.label)}</span>
+                        </div>
+                      )}
+                      {bbUsed && (
+                        <div style={{flex:1,minWidth:100,background:"#1e3a5f22",border:"1px solid #3b82f644",borderRadius:6,padding:"6px 10px",display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontSize:9,color:"#93c5fd",fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>BB Used</span>
+                          <span style={{fontSize:16,fontWeight:800,color:"#60a5fa"}}>${bbUsed.total_int ?? bbUsed.total}</span>
+                          <span style={{fontSize:9,color:"#93c5fd",opacity:.7}}>{fmtLabel(bbUsed.label)}</span>
+                        </div>
+                      )}
+                      <div style={{width:"100%",fontSize:9,color:C.muted3,marginTop:-4}}>⚡ SP-API anlık · Keepa grafiğinde BuyBox çizgisi Pro gerektirir</div>
+                    </div>
+                  );
+                })()}
                 <div style={{position:"relative",background:C.surface2,borderRadius:8,overflow:"hidden",marginBottom:8}}>
                   {/* Loading placeholder */}
                   <div id={`keepa-loading-${isbn}`} style={{textAlign:"center",padding:"20px 0",fontSize:11,color:C.muted3}}>
@@ -1670,7 +1711,7 @@ function DetailDrawer({
                   <a href={`https://keepa.com/#!search/1-${isbn}`} target="_blank" rel="noreferrer"
                     style={{display:"block"}}>
                     <img
-                      src={`https://graph.keepa.com/pricehistory.png?asin=${isbn}&domain=com&range=180&amazon=1&new=1&used=1&buybox=1&salesrank=1&width=500&height=200`}
+                      src={`https://graph.keepa.com/pricehistory.png?asin=${isbn}&domain=com&range=180&new=1&used=1&salesrank=1&width=500&height=200`}
                       alt="Keepa Price History"
                       style={{width:"100%",height:"auto",display:"none",borderRadius:8,minHeight:80,background:C.surface2}}
                       onLoad={e=>{
