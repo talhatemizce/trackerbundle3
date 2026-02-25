@@ -384,18 +384,31 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
         pass
 
     # ── Amazon buybox (SP-API, opsiyonel) ─────────────────────────────────────
+    # ISBN-10 = ASIN for books on Amazon — use directly
     amazon_data: dict = {"available": False, "reason": "not_configured"}
     try:
         from app import amazon_client as _az
-        # amazon_client'ın price endpoint'ini çağır — ASIN yok, ISBN'den lookup yapmıyoruz
-        # Sadece "configured" olup olmadığını raporla
         az_cfg = s.amazon_sp_refresh_token if hasattr(s, "amazon_sp_refresh_token") else None
         if not az_cfg:
             amazon_data["reason"] = "not_configured"
         else:
-            amazon_data["available"] = False
-            amazon_data["reason"] = "isbn_to_asin_required"
-            amazon_data["note"] = "ASIN gerekli — ISBN→ASIN lookup henüz otomatik değil"
+            # ISBN-10 is 10 chars; ISBN-13 needs conversion. Try ISBN-10 directly as ASIN.
+            asin_candidate = isbn_clean
+            if len(isbn_clean) == 13 and isbn_clean.startswith("978"):
+                core = isbn_clean[3:12]
+                total = sum((10 - i) * int(c) for i, c in enumerate(core))
+                check = (11 - (total % 11)) % 11
+                asin_candidate = core + ("X" if check == 10 else str(check))
+            try:
+                az_result = await _az.get_top2_prices(asin_candidate)
+                amazon_data = {
+                    "available": True,
+                    "asin": asin_candidate,
+                    "new": az_result.get("new"),
+                    "used": az_result.get("used"),
+                }
+            except Exception as az_exc:
+                amazon_data = {"available": False, "reason": "api_error", "note": str(az_exc), "asin": asin_candidate}
     except Exception:
         amazon_data["reason"] = "module_error"
 

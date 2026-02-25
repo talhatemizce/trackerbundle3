@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-25-v10-keepa-embed-bf-fix";
+const BUILD_ID = "2026-02-25-v11-amazon-buybox-keepa-buybox";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -1609,13 +1609,54 @@ function DetailDrawer({
                 })()}
               </AccordionSection>
 
-              {/* ── Amazon ───────────────────────────────────────────────── */}
-              {(drawerData.amazon?.available || drawerData.amazon?.reason!=="not_configured") && (
-                <AccordionSection title="🛒 Amazon" C={C} defaultOpen={false}>
-                  {drawerData.amazon?.available
-                    ? <div style={{fontSize:11,color:C.text}}>Amazon verisi mevcut</div>
-                    : <div style={{fontSize:11,color:C.muted3}}>{drawerData.amazon?.note||"ASIN gerekli"}</div>
-                  }
+              {/* ── Amazon BuyBox ────────────────────────────────────── */}
+              {drawerData.amazon && (
+                <AccordionSection title="🛒 Amazon BuyBox" C={C} defaultOpen={true}>
+                  {drawerData.amazon.available ? (() => {
+                    const az = drawerData.amazon;
+                    const bbNew  = az.new?.buybox;
+                    const bbUsed = az.used?.buybox;
+                    const top2New  = az.new?.top2  || [];
+                    const top2Used = az.used?.top2 || [];
+                    const fmtLabel = l => l==="A" ? "FBA" : l==="M" ? "FBM" : l;
+                    const PriceRow = ({label, bb, top2, color}) => (
+                      <div style={{marginBottom:10}}>
+                        <div style={{fontSize:10,fontWeight:700,color:C.muted3,textTransform:"uppercase",letterSpacing:1,marginBottom:4}}>{label}</div>
+                        {bb ? (
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                            <span style={{fontSize:18,fontWeight:800,color}}>${bb.total_int ?? bb.total}</span>
+                            <span style={{fontSize:10,background:color+"22",color,padding:"2px 6px",borderRadius:4,fontWeight:700}}>
+                              BuyBox · {fmtLabel(bb.label)}
+                            </span>
+                          </div>
+                        ) : (
+                          <div style={{fontSize:11,color:C.muted3,marginBottom:4}}>BuyBox yok</div>
+                        )}
+                        {top2.length > 0 && (
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                            {top2.map((o,i)=>(
+                              <span key={i} style={{fontSize:10,background:C.surface2,padding:"2px 8px",borderRadius:4,color:C.muted}}>
+                                #{i+1} ${o.total_int ?? o.total} {fmtLabel(o.label)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                    return (
+                      <div>
+                        <PriceRow label="New" bb={bbNew}  top2={top2New}  color={C.green||"#22c55e"} />
+                        <PriceRow label="Used" bb={bbUsed} top2={top2Used} color={C.accent||"#3b82f6"} />
+                        <div style={{fontSize:9,color:C.muted3,marginTop:4}}>ASIN: {az.asin} · SP-API anlık</div>
+                      </div>
+                    );
+                  })() : (
+                    <div style={{fontSize:11,color:C.muted3}}>
+                      {drawerData.amazon.reason === "not_configured"
+                        ? "Amazon SP-API yapılandırılmamış"
+                        : drawerData.amazon.note || drawerData.amazon.reason || "Veri yok"}
+                    </div>
+                  )}
                 </AccordionSection>
               )}
 
@@ -1629,7 +1670,7 @@ function DetailDrawer({
                   <a href={`https://keepa.com/#!search/1-${isbn}`} target="_blank" rel="noreferrer"
                     style={{display:"block"}}>
                     <img
-                      src={`https://graph.keepa.com/pricehistory.png?asin=${isbn}&domain=com&range=180&amazon=1&new=1&used=1&salesrank=1&width=500&height=200`}
+                      src={`https://graph.keepa.com/pricehistory.png?asin=${isbn}&domain=com&range=180&amazon=1&new=1&used=1&buybox=1&salesrank=1&width=500&height=200`}
                       alt="Keepa Price History"
                       style={{width:"100%",height:"auto",display:"none",borderRadius:8,minHeight:80,background:C.surface2}}
                       onLoad={e=>{
