@@ -562,6 +562,55 @@ async def ebay_sold_avg(isbn: str):
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/bookfinder/debug/{isbn}")
+async def bookfinder_debug(isbn: str):
+    """Raw HTML debug — sunucudan BookFinder response'unu göster."""
+    import random
+    isbn_clean = isbn.replace("-","").replace(" ","").strip()
+    urls = [
+        f"https://www.bookfinder.com/isbn/{isbn_clean}/",
+        f"https://www.bookfinder.com/search/?keywords={isbn_clean}&currency=USD&destination=us&mode=basic&lang=en&st=sh&ac=qr",
+        f"https://www.bookfinder.com/search/?isbn={isbn_clean}&new_used=*&destination=us&currency=USD&mode=basic&st=sh&ac=qr",
+    ]
+    ua_list = [
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    ]
+    results = []
+    import httpx as _hx
+    async with _hx.AsyncClient(follow_redirects=False, timeout=15) as c:
+        for url in urls:
+            for ua in ua_list[:1]:
+                hdrs = {
+                    "User-Agent": ua,
+                    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept-Encoding": "gzip, deflate, br",
+                    "Connection": "keep-alive",
+                    "Upgrade-Insecure-Requests": "1",
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "none",
+                    "Cache-Control": "max-age=0",
+                }
+                try:
+                    r = await c.get(url, headers=hdrs)
+                    results.append({
+                        "url": url, "status": r.status_code,
+                        "content_type": r.headers.get("content-type",""),
+                        "location": r.headers.get("location",""),
+                        "server": r.headers.get("server",""),
+                        "cf_ray": r.headers.get("cf-ray",""),
+                        "html_len": len(r.text),
+                        "has_rsc": "__next_f" in r.text,
+                        "has_offers": "newOffers" in r.text or "usedOffers" in r.text,
+                        "html_preview": r.text[:800],
+                    })
+                except Exception as e:
+                    results.append({"url": url, "error": str(e)})
+    return {"isbn": isbn_clean, "results": results}
+
+
 @app.get("/bookfinder/{isbn}")
 async def bookfinder_prices(isbn: str):
     """
