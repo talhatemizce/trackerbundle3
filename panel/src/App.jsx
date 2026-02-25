@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-25-v15-bf-multisource-ebay-cache";
+const BUILD_ID = "2026-02-25-v16-bf-8sources-new-used-btns";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -828,14 +828,14 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
     }
   };
 
-  const [bfData, setBfData] = useState({});  // { [isbn]: {loading, data, error} }
-  const fetchBookfinder = async (isbn) => {
-    setBfData(s => ({...s, [isbn]: {loading:true, data:null, error:null}}));
+  const [bfData, setBfData] = useState({});  // { [isbn]: {loading, data, error, condition} }
+  const fetchBookfinder = async (isbn, condition = "all") => {
+    setBfData(s => ({...s, [isbn]: {loading:true, data:null, error:null, condition}}));
     try {
-      const d = await req(`/bookfinder/${isbn}`, {}, 25000);
-      setBfData(s => ({...s, [isbn]: {loading:false, data:d, error:null}}));
+      const d = await req(`/bookfinder/${isbn}?condition=${condition}`, {}, 35000);
+      setBfData(s => ({...s, [isbn]: {loading:false, data:d, error:null, condition}}));
     } catch(e) {
-      setBfData(s => ({...s, [isbn]: {loading:false, data:null, error:e.message}}));
+      setBfData(s => ({...s, [isbn]: {loading:false, data:null, error:e.message, condition}}));
     }
   };
 
@@ -1220,7 +1220,7 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
           onClose={()=>{setSelectedAlert(null);setDrawerData(null);}}
           onRetry={()=>openDrawer(selectedAlert)}
           onSoldFetch={(isbn)=>fetchSoldScrape(isbn)}
-          onBfFetch={(isbn)=>fetchBookfinder(isbn)}
+          onBfFetch={(isbn,cond)=>fetchBookfinder(isbn,cond||"all")}
           onLightbox={(src)=>setLightboxSrc(src)}
         />
       )}
@@ -1748,136 +1748,145 @@ function DetailDrawer({
                 </div>
               </AccordionSection>
 
-              {/* ── BookFinder Fiyat Karşılaştırma ─────────────────────── */}
-              <AccordionSection title="📚 Fiyat Karşılaştır (BookFinder)" C={C} defaultOpen={true}>
+              {/* ── En Ucuz Fiyat Bul — 8 Kaynak ──────────────────────── */}
+              <AccordionSection title="📚 En Ucuz Fiyat Bul" C={C} defaultOpen={true}>
                 {(()=>{
                   const bf = bfScrape;
-                  const canFetch = !bf?.loading;
-                  const showBtn = canFetch && !bf?.data;
-                  const doFetch = () => { if(onBfFetch){onBfFetch(isbn);} else {console.error("onBfFetch prop missing!");} };
+                  const isLoading = bf?.loading;
+                  const activeCond = bf?.condition || "all";
+                  const doFetch = (cond) => { if(onBfFetch) onBfFetch(isbn, cond); };
+                  const SRC = {bookfinder:"📚 BookFinder",abebooks:"📖 AbeBooks",thriftbooks:"♻️ ThriftBooks",
+                               bwb:"🌍 BetterWorldBooks",biblio:"📗 Biblio",alibris:"📕 Alibris",
+                               goodwill:"💛 GoodwillBooks",hpb:"🔴 HPB"};
                   return (
                     <div>
-                      {showBtn && (
-                        <button
-                          onClick={doFetch}
-                          style={{width:"100%",padding:"10px",borderRadius:6,fontSize:12,fontWeight:700,
-                            background:C.purple||"#7c3aed",color:"white",
-                            cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,
-                            border:"none",boxShadow:"0 2px 8px rgba(124,58,237,.3)"}}
-                        >
-                          📚 BookFinder Fiyatlarını Getir
-                        </button>
-                      )}
-                      {!showBtn && !bf?.data && !bf?.loading && (
-                        <div style={{fontSize:10,color:C.muted3,textAlign:"center",padding:4}}>BookFinder bağlantısı hazır değil</div>
-                      )}
-                      {bf?.loading && (
-                        <div style={{textAlign:"center",padding:"12px 0"}}>
-                          <div style={{fontSize:11,color:C.purple||"#7c3aed",fontWeight:600}}>⏳ BookFinder fiyatları çekiliyor…</div>
-                          <div style={{fontSize:9,color:C.muted3,marginTop:4}}>AbeBooks · ThriftBooks · BetterWorldBooks · Biblio · Alibris · BookFinder</div>
+                      {/* Butonlar */}
+                      {!isLoading && (
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
+                          <button onClick={()=>doFetch("used")} style={{padding:"9px 4px",borderRadius:6,fontSize:11,fontWeight:700,
+                            background:activeCond==="used"&&bf?.data?.ok?C.accent||"#3b82f6":C.surface2,
+                            color:activeCond==="used"&&bf?.data?.ok?"white":C.accent||"#3b82f6",
+                            border:`1.5px solid ${C.accent||"#3b82f6"}`,cursor:"pointer"}}>
+                            🧺 En Ucuz Used
+                          </button>
+                          <button onClick={()=>doFetch("new")} style={{padding:"9px 4px",borderRadius:6,fontSize:11,fontWeight:700,
+                            background:activeCond==="new"&&bf?.data?.ok?C.green||"#22c55e":C.surface2,
+                            color:activeCond==="new"&&bf?.data?.ok?"white":C.green||"#22c55e",
+                            border:`1.5px solid ${C.green||"#22c55e"}`,cursor:"pointer"}}>
+                            🆕 En Ucuz New
+                          </button>
+                          <button onClick={()=>doFetch("all")} style={{gridColumn:"1/-1",padding:"6px",borderRadius:5,fontSize:10,fontWeight:600,
+                            background:C.surface2,color:C.muted,border:`1px solid ${C.border}`,cursor:"pointer"}}>
+                            📊 Tümünü Getir (New + Used)
+                          </button>
                         </div>
                       )}
-                      {bf?.error && (
-                        <div style={{background:C.surface2,borderRadius:6,padding:"10px 12px",marginBottom:8}}>
-                          <div style={{fontSize:11,color:C.orange,marginBottom:6}}>⚠ {bf.error}</div>
-                          <button onClick={doFetch} style={{fontSize:10,padding:"4px 12px",borderRadius:4,background:"none",border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer"}}>↺ Tekrar Dene</button>
-                        </div>
-                      )}
-                      {bf?.data && !bf.data.ok && (
-                        <div style={{background:C.surface2,borderRadius:6,padding:"10px 12px",marginBottom:8}}>
-                          <div style={{fontSize:11,color:C.orange,marginBottom:6}}>⚠ {bf.data.error || "BookFinder verisi alınamadı"}</div>
-                          <button onClick={doFetch} style={{fontSize:10,padding:"4px 12px",borderRadius:4,background:"none",border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer"}}>↺ Tekrar Dene</button>
-                        </div>
-                      )}
-                      {bf?.data?.ok && (
-                        <div>
-                          {/* Summary: New + Used side by side */}
-                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                            {[["🆕 New",bf.data.new,C.green],["🧺 Used",bf.data.used,C.accent]].map(([label,st,col])=>(
-                              <div key={label} style={{background:C.surface2,borderRadius:6,padding:"8px 10px"}}>
-                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                                  <span style={{fontSize:10,color:col,fontWeight:700}}>{label}</span>
-                                  {st
-                                    ? <span style={{fontSize:9,color:C.muted3}}>{st.count} ilan</span>
-                                    : <span style={{fontSize:9,color:C.muted3}}>yok</span>}
-                                </div>
-                                {st ? (
-                                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:3}}>
-                                    {[["Min",st.min],["Avg",st.avg],["#",st.count]].map(([k,v])=>(
-                                      <div key={k} style={{textAlign:"center"}}>
-                                        <div style={{fontSize:7,color:C.muted3}}>{k}</div>
-                                        <div style={{fontSize:12,fontWeight:700,color:k==="Min"?col:C.text,fontFamily:"var(--mono)"}}>{k==="#"?v:`$${v}`}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div style={{fontSize:10,color:C.muted3,textAlign:"center"}}>—</div>
-                                )}
-                              </div>
-                            ))}
+                      {/* Loading */}
+                      {isLoading && (
+                        <div style={{textAlign:"center",padding:"16px 0"}}>
+                          <div style={{fontSize:12,fontWeight:700,color:C.purple||"#7c3aed",marginBottom:6}}>
+                            ⏳ Fiyatlar çekiliyor…
                           </div>
-                          {/* Average across all offers */}
-                          {bf.data.all_avg != null && (
-                            <div style={{fontSize:10,color:C.muted3,textAlign:"center",padding:"4px 0",marginBottom:4}}>
-                              Toplam {bf.data.total_offers} ilan · genel ort <b style={{color:C.text}}>${bf.data.all_avg}</b>
-                              {bf.data.cached && <span style={{marginLeft:6}}>⚡ cache</span>}
+                          <div style={{fontSize:9,color:C.muted3,lineHeight:1.6}}>AbeBooks · ThriftBooks · BetterWorldBooks<br/>Biblio · Alibris · GoodwillBooks · HPB · BookFinder</div>
+                          <div style={{fontSize:9,color:C.muted3,marginTop:4}}>8 kaynak paralel · 10-20 saniye</div>
+                        </div>
+                      )}
+                      {/* Hata */}
+                      {!isLoading && bf?.data && !bf.data.ok && (
+                        <div style={{background:C.surface2,borderRadius:6,padding:"10px 12px"}}>
+                          <div style={{fontSize:11,color:C.orange,marginBottom:6}}>⚠ {bf.data.error}</div>
+                          <button onClick={()=>doFetch(activeCond)} style={{fontSize:10,padding:"4px 12px",borderRadius:4,background:"none",border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer"}}>↺ Tekrar Dene</button>
+                        </div>
+                      )}
+                      {/* Sonuçlar */}
+                      {!isLoading && bf?.data?.ok && (()=>{
+                        const d = bf.data;
+                        const allOffers = [
+                          ...(d.used?.offers||[]).map(o=>({...o,_new:false})),
+                          ...(d.new?.offers||[]).map(o=>({...o,_new:true})),
+                        ].sort((a,b)=>a.total-b.total);
+                        const cheapest = allOffers[0];
+                        return (
+                          <div>
+                            {/* En ucuz highlight */}
+                            {cheapest && (
+                              <div style={{background:cheapest._new?"#14532d33":"#1e3a5f33",
+                                border:`1.5px solid ${cheapest._new?"#22c55e88":"#3b82f688"}`,
+                                borderRadius:8,padding:"10px 14px",marginBottom:10,
+                                display:"flex",alignItems:"center",gap:10}}>
+                                <div>
+                                  <div style={{fontSize:9,color:cheapest._new?"#86efac":"#93c5fd",fontWeight:700,letterSpacing:.5}}>
+                                    🏆 EN UCUZ {cheapest._new?"NEW":"USED"}
+                                  </div>
+                                  <div style={{fontSize:24,fontWeight:900,color:cheapest._new?"#22c55e":"#60a5fa",lineHeight:1.1}}>
+                                    ${cheapest.total}
+                                  </div>
+                                  {cheapest.shipping>0&&<div style={{fontSize:9,color:"#6b7280"}}>${cheapest.price} + ${cheapest.shipping} kargo</div>}
+                                </div>
+                                <div style={{marginLeft:"auto",textAlign:"right"}}>
+                                  <div style={{fontSize:12,fontWeight:700,color:"#f9fafb"}}>{cheapest.seller}</div>
+                                  <div style={{fontSize:9,color:"#9ca3af"}}>{cheapest._new?"New":"Used"}</div>
+                                </div>
+                              </div>
+                            )}
+                            {/* Özet kartlar */}
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
+                              {[[d.used,"🧺 Used",C.accent||"#3b82f6"],[d.new,"🆕 New",C.green||"#22c55e"]].map(([st,lbl,col])=>st?(
+                                <div key={lbl} style={{background:C.surface2,borderRadius:6,padding:"8px 10px"}}>
+                                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                                    <span style={{fontSize:10,color:col,fontWeight:700}}>{lbl}</span>
+                                    <span style={{fontSize:9,color:"#6b7280"}}>{st.count} ilan</span>
+                                  </div>
+                                  <div style={{fontSize:17,fontWeight:800,color:col}}>${st.min}</div>
+                                  <div style={{fontSize:9,color:"#6b7280"}}>ort ${st.avg}</div>
+                                </div>
+                              ):null)}
                             </div>
-                          )}
-                          {bf.data.sources?.length > 0 && (
-                            <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"center",marginBottom:8}}>
-                              {bf.data.sources.map(s=>(
-                                <span key={s} style={{fontSize:8,background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"1px 6px",color:C.muted}}>
-                                  {{"bookfinder":"📚 BookFinder","abebooks":"📖 AbeBooks","thriftbooks":"♻ ThriftBooks","bwb":"🌍 BetterWorldBooks","biblio":"📗 Biblio","alibris":"📕 Alibris"}[s]||s}
+                            {/* Tam ilan tablosu */}
+                            <div style={{fontSize:9,color:"#6b7280",fontWeight:700,marginBottom:4,letterSpacing:.5,textTransform:"uppercase"}}>
+                              Tüm İlanlar ({allOffers.length})
+                            </div>
+                            <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
+                              <thead>
+                                <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                                  {["Satıcı","Tür","Fiyat","Kargo","Toplam"].map(h=>(
+                                    <th key={h} style={{textAlign:h==="Satıcı"||h==="Tür"?"left":"right",padding:"3px 4px",fontSize:8,color:"#6b7280",fontWeight:600}}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {allOffers.slice(0,20).map((o,i)=>(
+                                  <tr key={i} style={{borderBottom:`1px solid ${C.border}18`,background:i===0?"rgba(99,102,241,.07)":""}}>
+                                    <td style={{padding:"4px",color:"#f9fafb",maxWidth:85,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:i===0?700:400}}>
+                                      {i===0&&"🏆 "}{o.seller}
+                                    </td>
+                                    <td style={{padding:"4px",fontSize:9,color:o._new?"#22c55e":"#60a5fa"}}>{o._new?"New":"Used"}</td>
+                                    <td style={{padding:"4px",textAlign:"right",color:"#9ca3af",fontFamily:"var(--mono)"}}>${o.price}</td>
+                                    <td style={{padding:"4px",textAlign:"right",color:"#6b7280",fontFamily:"var(--mono)"}}>{o.shipping>0?`$${o.shipping}`:"free"}</td>
+                                    <td style={{padding:"4px",textAlign:"right",fontWeight:700,fontFamily:"var(--mono)",
+                                      color:i===0?(o._new?"#22c55e":"#60a5fa"):"#f9fafb"}}>${o.total}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {/* Kaynaklar + meta */}
+                            <div style={{marginTop:8,display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
+                              {(d.sources||[]).map(s=>(
+                                <span key={s} style={{fontSize:8,background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"1px 5px",color:"#9ca3af"}}>
+                                  {SRC[s]||s}
                                 </span>
                               ))}
+                              <span style={{marginLeft:"auto",fontSize:8,color:"#6b7280"}}>
+                                {d.cached&&"⚡ cache · "}{d.total_offers} ilan
+                              </span>
                             </div>
-                          )}
-                          {/* Per-seller breakdown table */}
-                          {(bf.data.used?.offers || bf.data.new?.offers) && (
-                            <div style={{marginTop:4}}>
-                              <div style={{fontSize:9,color:C.muted,fontWeight:600,marginBottom:4,letterSpacing:"0.04em"}}>EN UCUZ İLANLAR</div>
-                              <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
-                                <thead>
-                                  <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                                    {["Satıcı","Durum","Fiyat","Kargo","Toplam"].map(h=>(
-                                      <th key={h} style={{textAlign:h==="Satıcı"||h==="Durum"?"left":"right",padding:"3px 4px",fontSize:8,color:C.muted,fontWeight:500}}>{h}</th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {[...(bf.data.used?.offers||[]).slice(0,6),...(bf.data.new?.offers||[]).slice(0,4)]
-                                    .sort((a,b)=>a.total-b.total)
-                                    .slice(0,10)
-                                    .map((o,i)=>(
-                                      <tr key={i} style={{borderBottom:`1px solid ${C.border}10`}}>
-                                        <td style={{padding:"4px",color:C.text,fontWeight:500,maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.seller}</td>
-                                        <td style={{padding:"4px",color:o.condition==="NEW"?C.green:C.accent,fontSize:9}}>{o.condition==="NEW"?"New":"Used"}</td>
-                                        <td style={{padding:"4px",textAlign:"right",color:C.muted,fontFamily:"var(--mono)"}}>${o.price}</td>
-                                        <td style={{padding:"4px",textAlign:"right",color:C.muted3,fontFamily:"var(--mono)"}}>{o.shipping>0?`$${o.shipping}`:"free"}</td>
-                                        <td style={{padding:"4px",textAlign:"right",color:C.text,fontWeight:700,fontFamily:"var(--mono)"}}>${o.total}</td>
-                                      </tr>
-                                    ))}
-                                </tbody>
-                              </table>
+                            <div style={{display:"flex",justifyContent:"space-between",marginTop:5}}>
+                              <a href={d.bookfinder_url} target="_blank" rel="noreferrer" style={{fontSize:9,color:"#6b7280",textDecoration:"none"}}>BookFinder ↗</a>
+                              <button onClick={()=>doFetch(activeCond)} style={{fontSize:9,background:"none",border:"none",color:"#6b7280",cursor:"pointer"}}>↺ Yenile</button>
                             </div>
-                          )}
-                          {/* BookFinder link + refresh */}
-                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
-                            <a href={bf.data.bookfinder_url} target="_blank" rel="noreferrer"
-                              style={{fontSize:9,color:C.muted3,textDecoration:"none"}}>BookFinder ↗</a>
-                            <button onClick={()=>onBfFetch && onBfFetch(isbn)} style={{fontSize:9,background:"none",border:"none",color:C.muted3,cursor:"pointer"}}>↺ Yenile</button>
                           </div>
-                        </div>
-                      )}
-                      {bf?.data && !bf.data.ok && (
-                        <div style={{fontSize:11,color:C.orange,textAlign:"center",padding:"6px 0"}}>
-                          ⚠ {bf.data.error || "Veri alınamadı"}
-                          <button onClick={()=>onBfFetch && onBfFetch(isbn)} style={{marginLeft:8,fontSize:10,background:"none",border:"none",color:C.accent,cursor:"pointer"}}>↺</button>
-                        </div>
-                      )}
-                      {bf?.data?.ok && !bf.data.new && !bf.data.used && (
-                        <div style={{fontSize:11,color:C.muted3,textAlign:"center",padding:"6px 0"}}>Bu ISBN için ilan bulunamadı.</div>
-                      )}
+                        );
+                      })()}
                     </div>
                   );
                 })()}
@@ -2021,10 +2030,10 @@ function AppReal() {
   };
 
   const [wlBfData, setWlBfData] = useState({});
-  const fetchWlBookfinder = async (isbn) => {
-    setWlBfData(s=>({...s,[isbn]:{loading:true,data:null,error:null}}));
+  const fetchWlBookfinder = async (isbn, condition = "all") => {
+    setWlBfData(s=>({...s,[isbn]:{loading:true,data:null,error:null,condition}}));
     try {
-      const d = await req(`/bookfinder/${isbn}`, {}, 25000);
+      const d = await req(`/bookfinder/${isbn}?condition=${condition}`, {}, 35000);
       setWlBfData(s=>({...s,[isbn]:{loading:false,data:d,error:null}}));
     } catch(e) {
       setWlBfData(s=>({...s,[isbn]:{loading:false,data:null,error:e.message}}));

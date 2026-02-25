@@ -624,16 +624,18 @@ async def bookfinder_debug(isbn: str):
 
 
 @app.get("/bookfinder/{isbn}")
-async def bookfinder_prices(isbn: str):
+async def bookfinder_prices(isbn: str, condition: str = "all", force: bool = False):
     """
-    On-demand BookFinder.com price comparison.
-    User-triggered only (button click). 30min cache per ISBN.
-    Returns new/used offers from AbeBooks, Alibris, Biblio, BetterWorldBooks, etc.
+    Multi-source book price comparison (8 sources, parallel).
+    condition: all | new | used
+    force: bypass cache
+    Sources: BookFinder, AbeBooks, ThriftBooks, BetterWorldBooks,
+             Biblio, Alibris, GoodwillBooks, HPB
     """
     import traceback as _tb
     try:
         from app.bookfinder_client import fetch_bookfinder
-        return await fetch_bookfinder(isbn)
+        return await fetch_bookfinder(isbn, condition=condition, force=force)
     except Exception as e:
         _tb.print_exc()
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
