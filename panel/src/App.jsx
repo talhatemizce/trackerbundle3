@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-25-v16-bf-8sources-new-used-btns";
+const BUILD_ID = "2026-02-25-v17-theme-fix-bb-bigger-links";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -1639,12 +1639,12 @@ function DetailDrawer({
                     const top2Used = az.used?.top2 || [];
                     const fmtLabel = l => l==="A" ? "FBA" : l==="M" ? "FBM" : l;
                     const PriceRow = ({label, bb, top2, color}) => (
-                      <div style={{marginBottom:10}}>
-                        <div style={{fontSize:10,fontWeight:700,color:C.muted3,textTransform:"uppercase",letterSpacing:1,marginBottom:4}}>{label}</div>
+                      <div style={{marginBottom:12,background:C.surface2,borderRadius:8,padding:"10px 12px",border:`1px solid ${color}33`}}>
+                        <div style={{fontSize:9,fontWeight:700,color:color,textTransform:"uppercase",letterSpacing:1,marginBottom:6,opacity:.8}}>{label}</div>
                         {bb ? (
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-                            <span style={{fontSize:18,fontWeight:800,color}}>${bb.total_int ?? bb.total}</span>
-                            <span style={{fontSize:10,background:color+"22",color,padding:"2px 6px",borderRadius:4,fontWeight:700}}>
+                          <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:6}}>
+                            <span style={{fontSize:28,fontWeight:900,color,lineHeight:1}}>${bb.total_int ?? bb.total}</span>
+                            <span style={{fontSize:10,background:color+"22",color,padding:"3px 8px",borderRadius:4,fontWeight:700}}>
                               BuyBox · {fmtLabel(bb.label)}
                             </span>
                           </div>
@@ -1652,10 +1652,10 @@ function DetailDrawer({
                           <div style={{fontSize:11,color:C.muted3,marginBottom:4}}>BuyBox yok</div>
                         )}
                         {top2.length > 0 && (
-                          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                             {top2.map((o,i)=>(
-                              <span key={i} style={{fontSize:10,background:C.surface2,padding:"2px 8px",borderRadius:4,color:C.muted}}>
-                                #{i+1} ${o.total_int ?? o.total} {fmtLabel(o.label)}
+                              <span key={i} style={{fontSize:10,background:C.bg||C.surface,padding:"2px 8px",borderRadius:4,color:C.muted,border:`1px solid ${C.border}`}}>
+                                #{i+1} <b style={{color:C.text}}>${o.total_int ?? o.total}</b> <span style={{opacity:.6}}>{fmtLabel(o.label)}</span>
                               </span>
                             ))}
                           </div>
@@ -1681,7 +1681,7 @@ function DetailDrawer({
 
               {/* ── Keepa Fiyat Geçmişi Grafiği ─────────────────────── */}
               <AccordionSection title="📈 Fiyat Geçmişi (Keepa)" C={C} defaultOpen={true}>
-                {/* BuyBox anlık fiyat overlay — SP-API verisinden */}
+                {/* BuyBox anlık fiyat — SP-API verisinden, grafik üstüne çizgi + badge */}
                 {drawerData.amazon?.available && (() => {
                   const az = drawerData.amazon;
                   const bbNew  = az.new?.buybox;
@@ -1689,22 +1689,41 @@ function DetailDrawer({
                   const fmtLabel = l => l==="A"?"FBA":l==="M"?"FBM":l||"";
                   if (!bbNew && !bbUsed) return null;
                   return (
-                    <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
-                      {bbNew && (
-                        <div style={{flex:1,minWidth:100,background:"#14532d22",border:"1px solid #22c55e44",borderRadius:6,padding:"6px 10px",display:"flex",alignItems:"center",gap:6}}>
-                          <span style={{fontSize:9,color:"#86efac",fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>BB New</span>
-                          <span style={{fontSize:16,fontWeight:800,color:"#22c55e"}}>${bbNew.total_int ?? bbNew.total}</span>
-                          <span style={{fontSize:9,color:"#86efac",opacity:.7}}>{fmtLabel(bbNew.label)}</span>
-                        </div>
-                      )}
-                      {bbUsed && (
-                        <div style={{flex:1,minWidth:100,background:"#1e3a5f22",border:"1px solid #3b82f644",borderRadius:6,padding:"6px 10px",display:"flex",alignItems:"center",gap:6}}>
-                          <span style={{fontSize:9,color:"#93c5fd",fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>BB Used</span>
-                          <span style={{fontSize:16,fontWeight:800,color:"#60a5fa"}}>${bbUsed.total_int ?? bbUsed.total}</span>
-                          <span style={{fontSize:9,color:"#93c5fd",opacity:.7}}>{fmtLabel(bbUsed.label)}</span>
-                        </div>
-                      )}
-                      <div style={{width:"100%",fontSize:9,color:C.muted3,marginTop:-4}}>⚡ SP-API anlık · Keepa grafiğinde BuyBox çizgisi Pro gerektirir</div>
+                    <div style={{marginBottom:8}}>
+                      {/* Badge satırı */}
+                      <div style={{display:"flex",gap:6,marginBottom:6,flexWrap:"wrap"}}>
+                        {bbNew && (
+                          <div style={{flex:1,minWidth:110,background:C.surface2,border:`1px solid ${C.green||"#22c55e"}55`,borderRadius:6,padding:"7px 10px",display:"flex",alignItems:"baseline",gap:7}}>
+                            <span style={{fontSize:9,color:C.green||"#22c55e",fontWeight:700,textTransform:"uppercase",letterSpacing:.5,whiteSpace:"nowrap"}}>BB New</span>
+                            <span style={{fontSize:20,fontWeight:900,color:C.green||"#22c55e",lineHeight:1}}>${bbNew.total_int ?? bbNew.total}</span>
+                            <span style={{fontSize:9,color:C.muted2,marginLeft:"auto"}}>{fmtLabel(bbNew.label)}</span>
+                          </div>
+                        )}
+                        {bbUsed && (
+                          <div style={{flex:1,minWidth:110,background:C.surface2,border:`1px solid ${C.accent||"#f0a500"}55`,borderRadius:6,padding:"7px 10px",display:"flex",alignItems:"baseline",gap:7}}>
+                            <span style={{fontSize:9,color:C.accent||"#f0a500",fontWeight:700,textTransform:"uppercase",letterSpacing:.5,whiteSpace:"nowrap"}}>BB Used</span>
+                            <span style={{fontSize:20,fontWeight:900,color:C.accent||"#f0a500",lineHeight:1}}>${bbUsed.total_int ?? bbUsed.total}</span>
+                            <span style={{fontSize:9,color:C.muted2,marginLeft:"auto"}}>{fmtLabel(bbUsed.label)}</span>
+                          </div>
+                        )}
+                      </div>
+                      {/* Grafik üstüne fiyat çizgisi görseli */}
+                      <div style={{position:"relative",marginBottom:2}}>
+                        {/* Pseudo çizgiler — grafik yüklendikten sonra overlay olarak */}
+                        {bbNew && (
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                            <div style={{flex:1,height:2,background:`linear-gradient(90deg, ${C.green||"#22c55e"}cc, transparent)`,borderRadius:2}}/>
+                            <span style={{fontSize:8,color:C.green||"#22c55e",fontWeight:700,whiteSpace:"nowrap"}}>▶ BB New ${bbNew.total_int ?? bbNew.total}</span>
+                          </div>
+                        )}
+                        {bbUsed && (
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <div style={{flex:1,height:2,background:`linear-gradient(90deg, ${C.accent||"#f0a500"}cc, transparent)`,borderRadius:2}}/>
+                            <span style={{fontSize:8,color:C.accent||"#f0a500",fontWeight:700,whiteSpace:"nowrap"}}>▶ BB Used ${bbUsed.total_int ?? bbUsed.total}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{fontSize:8,color:C.muted3}}>⚡ SP-API anlık · Keepa Pro olmadan grafik çizgisi gösterilemiyor</div>
                     </div>
                   );
                 })()}
@@ -1809,80 +1828,96 @@ function DetailDrawer({
                         return (
                           <div>
                             {/* En ucuz highlight */}
-                            {cheapest && (
-                              <div style={{background:cheapest._new?"#14532d33":"#1e3a5f33",
-                                border:`1.5px solid ${cheapest._new?"#22c55e88":"#3b82f688"}`,
-                                borderRadius:8,padding:"10px 14px",marginBottom:10,
-                                display:"flex",alignItems:"center",gap:10}}>
-                                <div>
-                                  <div style={{fontSize:9,color:cheapest._new?"#86efac":"#93c5fd",fontWeight:700,letterSpacing:.5}}>
-                                    🏆 EN UCUZ {cheapest._new?"NEW":"USED"}
+                            {cheapest && (()=>{
+                              const chCol = cheapest._new?(C.green||"#22c55e"):(C.accent||"#3b82f6");
+                              const chSrcKey = Object.entries(d.source_labels||{}).find(([k,v])=>v.includes(cheapest.seller)||cheapest.seller.includes(v?.replace(/^[^\s]+\s/,"")))?.[0];
+                              const chUrl = chSrcKey ? (d.source_urls||{})[chSrcKey] : null;
+                              return (
+                                <div style={{background:C.surface2,border:`1.5px solid ${chCol}66`,
+                                  borderRadius:8,padding:"10px 14px",marginBottom:10,
+                                  display:"flex",alignItems:"center",gap:10}}>
+                                  <div>
+                                    <div style={{fontSize:9,color:chCol,fontWeight:700,letterSpacing:.5,opacity:.8}}>
+                                      🏆 EN UCUZ {cheapest._new?"NEW":"USED"}
+                                    </div>
+                                    <div style={{fontSize:24,fontWeight:900,color:chCol,lineHeight:1.1}}>
+                                      ${cheapest.total}
+                                    </div>
+                                    {cheapest.shipping>0&&<div style={{fontSize:9,color:C.muted2}}>${cheapest.price} + ${cheapest.shipping} kargo</div>}
                                   </div>
-                                  <div style={{fontSize:24,fontWeight:900,color:cheapest._new?"#22c55e":"#60a5fa",lineHeight:1.1}}>
-                                    ${cheapest.total}
+                                  <div style={{marginLeft:"auto",textAlign:"right"}}>
+                                    <div style={{fontSize:12,fontWeight:700,color:C.text}}>
+                                      {chUrl
+                                        ? <a href={chUrl} target="_blank" rel="noreferrer" style={{color:C.text,textDecoration:"none"}}>{cheapest.seller} ↗</a>
+                                        : cheapest.seller}
+                                    </div>
+                                    <div style={{fontSize:9,color:C.muted2}}>{cheapest._new?"New":"Used"}</div>
                                   </div>
-                                  {cheapest.shipping>0&&<div style={{fontSize:9,color:"#6b7280"}}>${cheapest.price} + ${cheapest.shipping} kargo</div>}
                                 </div>
-                                <div style={{marginLeft:"auto",textAlign:"right"}}>
-                                  <div style={{fontSize:12,fontWeight:700,color:"#f9fafb"}}>{cheapest.seller}</div>
-                                  <div style={{fontSize:9,color:"#9ca3af"}}>{cheapest._new?"New":"Used"}</div>
-                                </div>
-                              </div>
-                            )}
+                              );
+                            })()}
                             {/* Özet kartlar */}
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
                               {[[d.used,"🧺 Used",C.accent||"#3b82f6"],[d.new,"🆕 New",C.green||"#22c55e"]].map(([st,lbl,col])=>st?(
                                 <div key={lbl} style={{background:C.surface2,borderRadius:6,padding:"8px 10px"}}>
                                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
                                     <span style={{fontSize:10,color:col,fontWeight:700}}>{lbl}</span>
-                                    <span style={{fontSize:9,color:"#6b7280"}}>{st.count} ilan</span>
+                                    <span style={{fontSize:9,color:C.muted2}}>{st.count} ilan</span>
                                   </div>
                                   <div style={{fontSize:17,fontWeight:800,color:col}}>${st.min}</div>
-                                  <div style={{fontSize:9,color:"#6b7280"}}>ort ${st.avg}</div>
+                                  <div style={{fontSize:9,color:C.muted2}}>ort ${st.avg}</div>
                                 </div>
                               ):null)}
                             </div>
                             {/* Tam ilan tablosu */}
-                            <div style={{fontSize:9,color:"#6b7280",fontWeight:700,marginBottom:4,letterSpacing:.5,textTransform:"uppercase"}}>
+                            <div style={{fontSize:9,color:C.muted,fontWeight:700,marginBottom:4,letterSpacing:.5,textTransform:"uppercase"}}>
                               Tüm İlanlar ({allOffers.length})
                             </div>
                             <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
                               <thead>
                                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
                                   {["Satıcı","Tür","Fiyat","Kargo","Toplam"].map(h=>(
-                                    <th key={h} style={{textAlign:h==="Satıcı"||h==="Tür"?"left":"right",padding:"3px 4px",fontSize:8,color:"#6b7280",fontWeight:600}}>{h}</th>
+                                    <th key={h} style={{textAlign:h==="Satıcı"||h==="Tür"?"left":"right",padding:"3px 4px",fontSize:8,color:C.muted,fontWeight:600}}>{h}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
-                                {allOffers.slice(0,20).map((o,i)=>(
-                                  <tr key={i} style={{borderBottom:`1px solid ${C.border}18`,background:i===0?"rgba(99,102,241,.07)":""}}>
-                                    <td style={{padding:"4px",color:"#f9fafb",maxWidth:85,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:i===0?700:400}}>
-                                      {i===0&&"🏆 "}{o.seller}
-                                    </td>
-                                    <td style={{padding:"4px",fontSize:9,color:o._new?"#22c55e":"#60a5fa"}}>{o._new?"New":"Used"}</td>
-                                    <td style={{padding:"4px",textAlign:"right",color:"#9ca3af",fontFamily:"var(--mono)"}}>${o.price}</td>
-                                    <td style={{padding:"4px",textAlign:"right",color:"#6b7280",fontFamily:"var(--mono)"}}>{o.shipping>0?`$${o.shipping}`:"free"}</td>
-                                    <td style={{padding:"4px",textAlign:"right",fontWeight:700,fontFamily:"var(--mono)",
-                                      color:i===0?(o._new?"#22c55e":"#60a5fa"):"#f9fafb"}}>${o.total}</td>
-                                  </tr>
-                                ))}
+                                {allOffers.slice(0,20).map((o,i)=>{
+                                  const srcKey = Object.entries(d.source_labels||{}).find(([k,v])=>v.includes(o.seller)||o.seller.includes(v?.replace(/^[^\s]+\s/,"")))?.[0];
+                                  const srcUrl = srcKey ? (d.source_urls||{})[srcKey] : null;
+                                  return (
+                                    <tr key={i} style={{borderBottom:`1px solid ${C.border}`,background:i===0?C.surface2:""}}>
+                                      <td style={{padding:"4px",color:C.text,maxWidth:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:i===0?700:400}}>
+                                        {i===0&&"🏆 "}
+                                        {srcUrl
+                                          ? <a href={srcUrl} target="_blank" rel="noreferrer" style={{color:C.text,textDecoration:"none",borderBottom:`1px dotted ${C.muted3}`}}>{o.seller}</a>
+                                          : o.seller}
+                                      </td>
+                                      <td style={{padding:"4px",fontSize:9,color:o._new?(C.green||"#22c55e"):(C.accent||"#3b82f6")}}>{o._new?"New":"Used"}</td>
+                                      <td style={{padding:"4px",textAlign:"right",color:C.muted,fontFamily:"var(--mono)"}}>${o.price}</td>
+                                      <td style={{padding:"4px",textAlign:"right",color:C.muted2,fontFamily:"var(--mono)"}}>{o.shipping>0?`$${o.shipping}`:"free"}</td>
+                                      <td style={{padding:"4px",textAlign:"right",fontWeight:700,fontFamily:"var(--mono)",
+                                        color:i===0?(o._new?(C.green||"#22c55e"):(C.accent||"#3b82f6")):C.text}}>${o.total}</td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                             {/* Kaynaklar + meta */}
                             <div style={{marginTop:8,display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
                               {(d.sources||[]).map(s=>(
-                                <span key={s} style={{fontSize:8,background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"1px 5px",color:"#9ca3af"}}>
+                                <a key={s} href={(d.source_urls||{})[s]||"#"} target="_blank" rel="noreferrer"
+                                  style={{fontSize:8,background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"1px 5px",color:C.muted,textDecoration:"none"}}>
                                   {SRC[s]||s}
-                                </span>
+                                </a>
                               ))}
-                              <span style={{marginLeft:"auto",fontSize:8,color:"#6b7280"}}>
+                              <span style={{marginLeft:"auto",fontSize:8,color:C.muted2}}>
                                 {d.cached&&"⚡ cache · "}{d.total_offers} ilan
                               </span>
                             </div>
                             <div style={{display:"flex",justifyContent:"space-between",marginTop:5}}>
-                              <a href={d.bookfinder_url} target="_blank" rel="noreferrer" style={{fontSize:9,color:"#6b7280",textDecoration:"none"}}>BookFinder ↗</a>
-                              <button onClick={()=>doFetch(activeCond)} style={{fontSize:9,background:"none",border:"none",color:"#6b7280",cursor:"pointer"}}>↺ Yenile</button>
+                              <a href={d.bookfinder_url} target="_blank" rel="noreferrer" style={{fontSize:9,color:C.muted2,textDecoration:"none"}}>BookFinder ↗</a>
+                              <button onClick={()=>doFetch(activeCond)} style={{fontSize:9,background:"none",border:"none",color:C.muted2,cursor:"pointer"}}>↺ Yenile</button>
                             </div>
                           </div>
                         );

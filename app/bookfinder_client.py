@@ -38,6 +38,19 @@ SOURCE_LABELS = {
     "hpb":         "🔴 HPB",
 }
 
+def _source_urls(isbn: str) -> dict:
+    """Search URLs per source for a given ISBN."""
+    return {
+        "bookfinder":  f"https://www.bookfinder.com/isbn/{isbn}/",
+        "abebooks":    f"https://www.abebooks.com/servlet/SearchResults?isbn={isbn}&n=100121503",
+        "thriftbooks": f"https://www.thriftbooks.com/browse/?b.search={isbn}",
+        "bwb":         f"https://www.betterworldbooks.com/search/results?q={isbn}",
+        "biblio":      f"https://www.biblio.com/search/?q={isbn}&type=isbn",
+        "alibris":     f"https://www.alibris.com/search/books/isbn/{isbn}",
+        "goodwill":    f"https://www.goodwillbooks.com/search?query={isbn}",
+        "hpb":         f"https://www.hpb.com/search?q={isbn}&type=product",
+    }
+
 def _cache_path() -> Path:
     return get_settings().resolved_data_dir() / "bookfinder_cache.json"
 
@@ -108,7 +121,7 @@ def _jsonld_offers(html: str, seller: str, sid: str, default_ship: float = 0.0) 
             continue
     return offers
 
-def _price_regex(html: str, seller: str, sid: str, ship: float = 3.99, cond: str = "USED", limit: int = 8) -> list:
+def _price_regex(html: str, seller: str, sid: str, ship: float = 0.0, cond: str = "USED", limit: int = 8) -> list:
     offers = []
     seen = set()
     for m in re.finditer(r'(?:data-price|"price"|itemprop=["\']price["\'])["\s:=]+["\']?([\d]+\.[\d]{2})["\']?', html):
@@ -198,7 +211,7 @@ async def _src_abebooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
         if not all_o:
             all_o = _jsonld_offers(r.text, "AbeBooks", "ABEBOOKS")
         if not all_o:
-            all_o = _price_regex(r.text, "AbeBooks", "ABEBOOKS", 3.99)
+            all_o = _price_regex(r.text, "AbeBooks", "ABEBOOKS", 0.0)
         if not all_o: return None
         return {"source":"abebooks","new":_stats([o for o in all_o if o["condition"]=="NEW"]),
                 "used":_stats([o for o in all_o if o["condition"]!="NEW"]),"url":url}
@@ -240,7 +253,7 @@ async def _src_biblio(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
         r = await c.get(url, headers=_hdrs("https://www.biblio.com/"), timeout=18)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "Biblio", "BIBLIO")
-        if not all_o: all_o = _price_regex(r.text, "Biblio", "BIBLIO", 3.99)
+        if not all_o: all_o = _price_regex(r.text, "Biblio", "BIBLIO", 0.0)
         if not all_o: return None
         return {"source":"biblio","new":_stats([o for o in all_o if o["condition"]=="NEW"]),
                 "used":_stats([o for o in all_o if o["condition"]!="NEW"]),"url":url}
@@ -273,9 +286,9 @@ async def _src_goodwill(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
             for m in re.finditer(r'"price":\s*"?(\d+)"?', r.text):
                 p = float(m.group(1)) / 100  # Shopify prices in cents
                 if 0.5 < p < 500:
-                    all_o.append(_o(p, 3.99, "GoodwillBooks", "GOODWILL", "USED"))
+                    all_o.append(_o(p, 0.0, "GoodwillBooks", "GOODWILL", "USED"))
                     if len(all_o) >= 6: break
-        if not all_o: all_o = _price_regex(r.text, "GoodwillBooks", "GOODWILL", 3.99)
+        if not all_o: all_o = _price_regex(r.text, "GoodwillBooks", "GOODWILL", 0.0)
         if not all_o: return None
         return {"source":"goodwill","new":_stats([o for o in all_o if o["condition"]=="NEW"]),
                 "used":_stats([o for o in all_o if o["condition"]!="NEW"]),"url":url}
@@ -294,9 +307,9 @@ async def _src_hpb(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
             for m in re.finditer(r'"price":\s*(\d+)', r.text):
                 p = float(m.group(1)) / 100
                 if 0.5 < p < 500:
-                    all_o.append(_o(p, 3.99, "Half Price Books", "HPB", "USED"))
+                    all_o.append(_o(p, 0.0, "Half Price Books", "HPB", "USED"))
                     if len(all_o) >= 6: break
-        if not all_o: all_o = _price_regex(r.text, "Half Price Books", "HPB", 3.99)
+        if not all_o: all_o = _price_regex(r.text, "Half Price Books", "HPB", 0.0)
         if not all_o: return None
         return {"source":"hpb","new":_stats([o for o in all_o if o["condition"]=="NEW"]),
                 "used":_stats([o for o in all_o if o["condition"]!="NEW"]),"url":url}
@@ -363,6 +376,7 @@ async def fetch_bookfinder(isbn: str, condition: str = "all", force: bool = Fals
     all_t = [o["total"] for o in new_o + used_o]
     cheapest = min(all_t) if all_t else None
 
+    urls = _source_urls(isbn_clean)
     out = {
         "ok":           True,
         "isbn":         isbn_clean,
@@ -375,6 +389,7 @@ async def fetch_bookfinder(isbn: str, condition: str = "all", force: bool = Fals
         "bookfinder_url": f"https://www.bookfinder.com/isbn/{isbn_clean}/",
         "sources":      sources_ok,
         "source_labels": {s: SOURCE_LABELS.get(s, s) for s in sources_ok},
+        "source_urls":  {s: urls.get(s, "") for s in sources_ok},
         "cached":       False,
         "cache_age_s":  0,
     }
