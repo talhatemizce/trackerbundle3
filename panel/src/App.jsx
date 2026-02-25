@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-25-v14-bf-dual-source";
+const BUILD_ID = "2026-02-25-v15-bf-multisource-ebay-cache";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return "default"; if (s >= 86400) return `${Math.round(s/86400)}d`; if (s >= 3600) return `${Math.round(s/3600)}h`; if (s >= 60) return `${Math.round(s/60)}m`; return `${s}s`; };
@@ -1439,6 +1439,11 @@ function DetailDrawer({
               <AccordionSection title="📊 eBay Aktif Listeler" C={C} defaultOpen={true}>
                 {drawerData.ebay?.ok ? (
                   <>
+                    {drawerData.ebay.stale && (
+                      <div style={{fontSize:9,color:C.orange,background:C.orange+"11",border:"1px solid #f59e0b44",borderRadius:4,padding:"4px 8px",marginBottom:6}}>
+                        ⚠ Cache verisi ({drawerData.ebay.stale_age_h}s önce) — eBay bot koruması aktifti
+                      </div>
+                    )}
                     <div style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:11,marginBottom:10,padding:"8px 10px",background:C.surface2,borderRadius:6}}>
                       {drawerData.ebay.used && <>
                         <span>🧺 <b style={{color:C.accent}}>{drawerData.ebay.used.count}</b> used</span>
@@ -1769,7 +1774,7 @@ function DetailDrawer({
                       {bf?.loading && (
                         <div style={{textAlign:"center",padding:"12px 0"}}>
                           <div style={{fontSize:11,color:C.purple||"#7c3aed",fontWeight:600}}>⏳ BookFinder fiyatları çekiliyor…</div>
-                          <div style={{fontSize:9,color:C.muted3,marginTop:4}}>AbeBooks · Alibris · Biblio · BetterWorldBooks</div>
+                          <div style={{fontSize:9,color:C.muted3,marginTop:4}}>AbeBooks · ThriftBooks · BetterWorldBooks · Biblio · Alibris · BookFinder</div>
                         </div>
                       )}
                       {bf?.error && (
@@ -1798,7 +1803,7 @@ function DetailDrawer({
                                 </div>
                                 {st ? (
                                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:3}}>
-                                    {[["Min",st.min],["Avg",st.avg],["Max",st.max],["#",st.count]].map(([k,v])=>(
+                                    {[["Min",st.min],["Avg",st.avg],["#",st.count]].map(([k,v])=>(
                                       <div key={k} style={{textAlign:"center"}}>
                                         <div style={{fontSize:7,color:C.muted3}}>{k}</div>
                                         <div style={{fontSize:12,fontWeight:700,color:k==="Min"?col:C.text,fontFamily:"var(--mono)"}}>{k==="#"?v:`$${v}`}</div>
@@ -1813,9 +1818,18 @@ function DetailDrawer({
                           </div>
                           {/* Average across all offers */}
                           {bf.data.all_avg != null && (
-                            <div style={{fontSize:10,color:C.muted3,textAlign:"center",padding:"4px 0",marginBottom:8}}>
+                            <div style={{fontSize:10,color:C.muted3,textAlign:"center",padding:"4px 0",marginBottom:4}}>
                               Toplam {bf.data.total_offers} ilan · genel ort <b style={{color:C.text}}>${bf.data.all_avg}</b>
                               {bf.data.cached && <span style={{marginLeft:6}}>⚡ cache</span>}
+                            </div>
+                          )}
+                          {bf.data.sources?.length > 0 && (
+                            <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"center",marginBottom:8}}>
+                              {bf.data.sources.map(s=>(
+                                <span key={s} style={{fontSize:8,background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"1px 6px",color:C.muted}}>
+                                  {{"bookfinder":"📚 BookFinder","abebooks":"📖 AbeBooks","thriftbooks":"♻ ThriftBooks","bwb":"🌍 BetterWorldBooks","biblio":"📗 Biblio","alibris":"📕 Alibris"}[s]||s}
+                                </span>
+                              ))}
                             </div>
                           )}
                           {/* Per-seller breakdown table */}

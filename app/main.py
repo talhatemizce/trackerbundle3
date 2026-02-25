@@ -296,10 +296,12 @@ def clear_alerts(isbn: str):
     _alert_history.clear_isbn(isbn)
     return {"ok": True, "isbn": isbn}
 
-# ── Alert details — drawer için, 15dk cache ──────────────────────────────────
+# ── Alert details — drawer için, disk-backed 30 günlük cache ─────────────────
 import time as _time
 _details_cache: dict = {}  # key: isbn → {ts, data}
-_DETAILS_TTL = 900  # 15 dakika
+_DETAILS_TTL     = 30 * 24 * 3600   # 30 gün — eBay bot'a takılmamak için
+_DETAILS_TTL_OK  = 30 * 24 * 3600   # başarılı veri → 30 gün
+_DETAILS_TTL_ERR = 30 * 24 * 3600   # hata durumu → yine 30 gün (stale göster)
 
 @app.get("/alerts/details")
 async def alert_details(isbn: str, ebay_item_id: str = ""):
@@ -326,6 +328,8 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
     cached = _details_cache.get(isbn_clean)
     if cached and now - cached["ts"] < _DETAILS_TTL:
         return {**cached["data"], "cached": True, "cache_age": int(now - cached["ts"])}
+    # Stale cache var ama TTL geçmiş — eBay hata verirse stale döndür
+    _stale = _details_cache.get(isbn_clean)
 
     s = _gs()
     calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else None
@@ -363,6 +367,10 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
         }
     except Exception as exc:
         ebay_data["error"] = str(exc)
+        # eBay hata verdi → stale cache'den eBay verisini al
+        if _stale and _stale["data"].get("ebay", {}).get("ok"):
+            _stale_ebay = _stale["data"]["ebay"]
+            ebay_data = {**_stale_ebay, "stale": True, "stale_age_h": round((now - _stale["ts"])/3600, 1)}
 
     # ── Sold proxy / Finding status ───────────────────────────────────────────
     backoff = finding_cache.rate_limit_status()
@@ -445,7 +453,11 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
         "cached": False,
         "cache_age": 0,
     }
-    _details_cache[isbn_clean] = {"ts": now, "data": result}
+    # Başarılı sonuç: cache'e kaydet (30 gün)
+    # eBay stale ise cache timestamp'i güncelleme — sadece fresh eBay verisi timestamp yeniler
+    _ebay_fresh = ebay_data.get("ok") and not ebay_data.get("stale")
+    _cache_ts = now if _ebay_fresh else (_stale["ts"] if _stale else now)
+    _details_cache[isbn_clean] = {"ts": _cache_ts, "data": result}
     return result
 
 
