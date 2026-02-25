@@ -41,8 +41,11 @@ _USER_AGENTS = [
 ]
 
 # eBay condition filter IDs
-_COND_NEW  = "1000"   # New
-_COND_USED = "3000"   # Used (covers Used/Good/Very Good/Acceptable)
+_COND_NEW  = "1000"   # Brand New
+# Used: no single ID covers all used conditions.
+# 3000=Like New, 4000=Very Good, 5000=Good, 6000=Acceptable
+# Best approach: omit condition filter entirely → gets ALL used sold.
+_COND_USED = ""       # empty = no filter (we subtract New results to get "used")
 
 
 def _cache_path() -> Path:
@@ -124,12 +127,16 @@ async def _fetch_condition(
     isbn: str,
     cond_id: str,
 ) -> tuple[list[float], str]:
-    """Fetch sold prices for one condition. Returns (prices, url)."""
+    """Fetch sold prices for one condition. Returns (prices, url).
+
+    If cond_id is empty, no condition filter is applied (returns all conditions).
+    """
+    cond_param = f"&LH_ItemCondition={cond_id}" if cond_id else ""
     url = (
         f"https://www.ebay.com/sch/i.html"
         f"?_nkw={isbn}&_sacat=267"
         f"&LH_Sold=1&LH_Complete=1"
-        f"&LH_ItemCondition={cond_id}"
+        f"{cond_param}"
         f"&_sop=13"
     )
     headers = {
@@ -165,13 +172,17 @@ async def fetch_sold_avg(isbn: str) -> dict:
 
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=22) as client:
-            # Parallel: new + used simultaneously
-            (new_prices, new_url), (used_prices, used_url) = await asyncio.gather(
+            # Parallel: new + all-conditions simultaneously
+            # "Used" = all_conditions minus new_prices (avoids 3000=LikeNew-only bug)
+            (new_prices, new_url), (all_cond_prices, all_url) = await asyncio.gather(
                 _fetch_condition(client, isbn_clean, _COND_NEW),
-                _fetch_condition(client, isbn_clean, _COND_USED),
+                _fetch_condition(client, isbn_clean, _COND_USED),  # "" = no filter
             )
 
-        all_prices = list({*new_prices, *used_prices})  # deduplicate across conditions
+        # Deduplicate: "used" = everything that isn't in the new set
+        new_set = set(new_prices)
+        used_prices = [p for p in all_cond_prices if p not in new_set]
+        all_prices = list({*new_prices, *all_cond_prices})
 
         result = {
             "ok":        True,
@@ -180,7 +191,7 @@ async def fetch_sold_avg(isbn: str) -> dict:
             "used":      _stats(used_prices),
             "combined":  _stats(all_prices) if all_prices else None,
             "ebay_url_new":  new_url,
-            "ebay_url_used": used_url,
+            "ebay_url_used": all_url,
             "cached":        False,
             "cache_age_s":   0,
         }

@@ -532,11 +532,13 @@ async def report_broken_link(request: Request):
 
 
 @app.get("/ebay/sold-avg/{isbn}")
+@app.get("/ebay/sold/{isbn}")
 async def ebay_sold_avg(isbn: str):
     """
     On-demand eBay sold price scraper.
     User-triggered only (button click). 30min cache per ISBN.
     Returns count/min/max/avg/median from completed sold listings.
+    Alias: /ebay/sold/{isbn} for backward compatibility.
     """
     import traceback as _tb
     try:
