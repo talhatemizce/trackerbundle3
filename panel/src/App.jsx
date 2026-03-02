@@ -64,9 +64,18 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-02-25-v18-ux-watchlist-thumb-drawer-wide";
+const BUILD_ID = "2026-03-02-v19-keepa-new-used-blue-emojis";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
+const isbn13to10 = (isbn) => {
+  const s = String(isbn).replace(/[^0-9X]/gi,'');
+  if (s.length === 10) return s; // already ISBN-10
+  if (s.length !== 13 || (!s.startsWith('978') && !s.startsWith('979'))) return s;
+  const core = s.slice(3, 12);
+  const total = core.split('').reduce((sum, d, i) => sum + (10-i)*parseInt(d), 0);
+  const check = (11 - (total % 11)) % 11;
+  return core + (check === 10 ? 'X' : String(check));
+};
 const fmtSecs = (s) => { if (!s || isNaN(s) || !isFinite(s)) return null; if (s >= 86400) return `${Math.round(s/86400)}G`; if (s >= 3600) return `${Math.round(s/3600)}s`; if (s >= 60) return `${Math.round(s/60)}d`; return `${s}sn`; };
 // ─── eBay search URL builder ─────────────────────────────────────────────────
 // SINGLE SOURCE OF TRUTH for all "Open on eBay" links in this panel.
@@ -878,7 +887,7 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
     if (!dedupIsbn) { push("ISBN seç", "error"); return; }
     try {
       await req(`/alerts/dedup/${dedupIsbn}`, {method:"DELETE"});
-      push(`${dedupIsbn} tekrar gönderilmek üzere işaretlendi — scheduler bir sonraki taramada alert atar`, "success");
+      push(`${dedupIsbn} tekrar gönderilmek üzere işaretlendi — scheduler bir ⏭ sonraki taramada alert atar`, "success");
     } catch(e) { push("Hata: "+e.message, "error"); }
   };
 
@@ -966,16 +975,16 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
 
         {/* Dedup clear — proper React state */}
         <select className="inp" value={dedupIsbn} onChange={e=>setDedupIsbn(e.target.value)} style={{flex:"1 1 180px",minWidth:150,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text,fontSize:12}}>
-          <option value="">Dedup temizle…</option>
+          <option value="">Tekrar bildirimi sıfırla…</option>
           {isbns.map(i=><option key={i} value={i}>{i}</option>)}
         </select>
         <button
           onClick={clearDedup}
           disabled={!dedupIsbn}
-          title="Seçili ISBN'in tekrar kaydını sil — scheduler bir sonraki taramada yeniden alert gönderir"
+          title="Seçili ISBN'in tekrar kaydını sil — scheduler bir ⏭ sonraki taramada yeniden alert gönderir"
           style={{background:"none",border:`1px solid ${dedupIsbn?C.orange:C.border}`,borderRadius:5,color:dedupIsbn?C.orange:C.muted3,fontFamily:"var(--mono)",fontSize:11,padding:"6px 12px",cursor:dedupIsbn?"pointer":"default",whiteSpace:"nowrap",transition:"all .15s"}}
         >
-          🗑 Tekrarları temizle
+          🔕 Sıfırla
         </button>
 
         <div style={{width:1,height:24,background:C.border,flexShrink:0}}/>
@@ -1020,7 +1029,7 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
             Scheduler bir deal bulup Telegram'a gönderdikten sonra burada görünür.
           </span><br/>
           <span style={{fontSize:10}}>
-            Test için: <b style={{color:C.accent}}>💉</b> butonu · Dedup dolu olabilir: dropdown'dan ISBN seç → <b style={{color:C.orange}}>🗑 Tekrarları temizle</b>
+            Test için: <b style={{color:C.accent}}>💉</b> butonu · Dedup dolu olabilir: dropdown'dan ISBN seç → <b style={{color:C.orange}}>🔕 Sıfırla</b>
           </span>
         </div>
       )}
@@ -1738,10 +1747,10 @@ function DetailDrawer({
                   <div id={`keepa-loading-${isbn}`} style={{textAlign:"center",padding:"20px 0",fontSize:11,color:C.muted3}}>
                     ⏳ Keepa grafiği yükleniyor…
                   </div>
-                  <a href={`https://keepa.com/#!search/1-${isbn}`} target="_blank" rel="noreferrer"
+                  <a href={`https://keepa.com/#!search/1-${isbn13to10(isbn)}`} target="_blank" rel="noreferrer"
                     style={{display:"block"}}>
                     <img
-                      src={`https://graph.keepa.com/pricehistory.png?asin=${isbn}&domain=com&range=180&new=1&used=1&salesrank=1&width=500&height=200`}
+                      src={`https://graph.keepa.com/pricehistory.png?asin=${isbn13to10(isbn)}&domain=com&range=180&new=1&used=1&salesrank=1&width=500&height=200`}
                       alt="Keepa Price History"
                       style={{width:"100%",height:"auto",display:"none",borderRadius:8,minHeight:80,background:C.surface2}}
                       onLoad={e=>{
@@ -1752,13 +1761,13 @@ function DetailDrawer({
                       onError={e=>{
                         e.target.style.display="none";
                         const loader=document.getElementById(`keepa-loading-${isbn}`);
-                        if(loader)loader.innerHTML='<span style="color:#f59e0b">Keepa grafiği yüklenemedi</span> · <a href="https://keepa.com/#!search/1-'+isbn+'" target="_blank" rel="noreferrer" style="color:#3b82f6">Keepa\'da aç ↗</a>';
+                        if(loader)loader.innerHTML='<span style="color:#f59e0b">Keepa grafiği yüklenemedi</span> · <a href="https://keepa.com/#!search/1-'+(isbn13to10(isbn))+'" target="_blank" rel="noreferrer" style="color:#3b82f6">Keepa\'da aç ↗</a>';
                       }}
                     />
                   </a>
                 </div>
                 <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
-                  <a href={`https://keepa.com/#!search/1-${isbn}`} target="_blank" rel="noreferrer"
+                  <a href={`https://keepa.com/#!search/1-${isbn13to10(isbn)}`} target="_blank" rel="noreferrer"
                     style={{flex:1,fontSize:11,color:"white",textDecoration:"none",padding:"8px 12px",
                       background:"#2563eb",borderRadius:6,textAlign:"center",fontWeight:600,
                       display:"block",boxShadow:"0 2px 6px rgba(37,99,235,.3)"}}>
@@ -1933,9 +1942,9 @@ function DetailDrawer({
                 })()}
               </AccordionSection>
 
-              {/* ── Score Analizi — only for alert entries ────────────────── */}
+              {/* ── 📊 Score Analizi — only for alert entries ────────────────── */}
               {alertEntry?.deal_score != null && (
-                <AccordionSection title={`🧮 Score Analizi · ${alertEntry.deal_score}/100`} C={C} defaultOpen={false}>
+                <AccordionSection title={`🧮 📊 Score Analizi · ${alertEntry.deal_score}/100`} C={C} defaultOpen={false}>
                   {(()=>{
                     const s = alertEntry;
                     const condLabel2 = { brand_new:"New", like_new:"Like New", very_good:"Very Good", good:"Good", acceptable:"Acceptable", used_all:"Used" };
@@ -1982,28 +1991,39 @@ function DetailDrawer({
         </div>
 
         {/* ── Footer ───────────────────────────────────────────────────────── */}
-        <div style={{padding:"12px 18px",borderTop:`1px solid ${C.border}`,display:"flex",gap:10,flexShrink:0}}>
+        <div style={{padding:"10px 14px",borderTop:`1px solid ${C.border}`,display:"flex",gap:6,flexShrink:0,flexWrap:"wrap"}}>
+          {/* eBay — arama */}
           <a href={buildEbaySearchUrl({isbn})} target="_blank" rel="noreferrer"
-            style={{flex:1,padding:"9px",borderRadius:7,background:"#e53238",color:"white",
-              textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
-            🛍 eBay
+            style={{flex:1,minWidth:70,padding:"8px 6px",borderRadius:7,background:"#e53238",color:"white",
+              textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:11,fontFamily:"var(--mono)"}}>
+            🔍 eBay
           </a>
+          {/* Amazon — ürün sayfası veya arama */}
+          <a href={alertEntry?.asin ? `https://www.amazon.com/dp/${alertEntry.asin}` : `https://www.amazon.com/s?k=${isbn}&i=stripbooks`}
+            target="_blank" rel="noreferrer"
+            style={{flex:1,minWidth:70,padding:"8px 6px",borderRadius:7,background:"#FF9900",color:"white",
+              textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:11,fontFamily:"var(--mono)"}}>
+            🛒 Amazon
+          </a>
+          {/* BookFinder */}
           <a href={`https://www.bookfinder.com/isbn/${isbn}/`} target="_blank" rel="noreferrer"
-            style={{flex:1,padding:"9px",borderRadius:7,background:"#6366f1",color:"white",
-              textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
+            style={{flex:1,minWidth:70,padding:"8px 6px",borderRadius:7,background:"#6366f1",color:"white",
+              textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:11,fontFamily:"var(--mono)"}}>
             📚 BookFinder
           </a>
+          {/* İlan — direkt eBay ilanına git */}
           {alertEntry?.url && (
             <a href={alertEntry.url} target="_blank" rel="noreferrer"
-              style={{flex:1,padding:"9px",borderRadius:7,background:"#FF9900",color:"white",
-                textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:12,fontFamily:"var(--mono)"}}>
-              🛒 İlan ↗
+              style={{flex:1,minWidth:70,padding:"8px 6px",borderRadius:7,background:C.surface2,color:C.accent,
+                textDecoration:"none",textAlign:"center",fontWeight:700,fontSize:11,fontFamily:"var(--mono)",
+                border:`1px solid ${C.accent}`}}>
+              🏷 İlan ↗
             </a>
           )}
           <button onClick={onClose}
-            style={{flex:alertEntry?.url?0:1,padding:"9px 16px",borderRadius:7,background:"none",
-              border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",fontFamily:"var(--mono)",fontSize:12}}>
-            Kapat
+            style={{padding:"8px 14px",borderRadius:7,background:"none",
+              border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",fontFamily:"var(--mono)",fontSize:11}}>
+            ✕
           </button>
         </div>
       </div>
@@ -2021,9 +2041,14 @@ function AppReal() {
     try { return localStorage.getItem("tb_theme") !== "light"; } catch { return true; }
   });
   const C = isDark ? DARK : LIGHT;
+  const [blueFilter, setBlueFilter] = useState(() => { try { return localStorage.getItem("tb_blue")=="1"; } catch { return false; } });
   useEffect(() => {
     try { localStorage.setItem("tb_theme", isDark ? "dark" : "light"); } catch {}
   }, [isDark]);
+  useEffect(() => {
+    try { localStorage.setItem("tb_blue", blueFilter?"1":"0"); } catch {}
+    document.documentElement.style.filter = blueFilter ? "sepia(0.15) saturate(0.85) hue-rotate(-5deg)" : "none";
+  }, [blueFilter]);
   const [tab, setTab] = useState("dashboard");
   const { toasts, push } = useToast();
 
@@ -2251,11 +2276,16 @@ function AppReal() {
             <button onClick={()=>setIsDark(d=>!d)} style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer",padding:"5px 10px",fontSize:15,color:C.text,transition:"all .2s"}} title={isDark?"Açık tema":"Koyu tema"}>
               {isDark?"☀️":"🌙"}
             </button>
+            <button onClick={()=>setBlueFilter(f=>!f)}
+              style={{background:blueFilter?"rgba(251,191,36,.15)":C.surface2,border:`1px solid ${blueFilter?"#fbbf24":C.border}`,borderRadius:6,cursor:"pointer",padding:"5px 10px",fontSize:15,color:blueFilter?"#fbbf24":C.muted2,transition:"all .2s"}}
+              title={blueFilter?"🟡 Mavi ışık filtresi AÇIK — kapatmak için tıkla":"💡 Mavi ışık filtresi — göz yorgunluğunu azaltır"}>
+              {blueFilter?"🟡":"💡"}
+            </button>
           </div>
         </div>
         <div style={{display:"flex"}}>
           {TABS.map(t=>{
-            const label = {dashboard:"Dashboard",watchlist:"Watchlist",pricing:"Pricing",alerts:"Alerts"}[t]||t;
+            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts"}[t]||t;
             return <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:12,color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400,letterSpacing:"0.01em"}}>{label}</button>;
           })}
         </div>
@@ -2285,7 +2315,7 @@ function AppReal() {
                       <div key={isbn} className="row-item" style={{...row}}>
                         <span style={{flex:1,fontSize:13}}>{isbn}</span>
                         <span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green}}>🎯 {count}</span>
-                        <button className="icon-btn" style={{color:C.red,fontSize:12}} onClick={()=>clearAlerts(isbn)}>Temizle</button>
+                        <button className="icon-btn" style={{color:C.red,fontSize:16}} onClick={()=>clearAlerts(isbn)} title="Alertleri temizle">🗑️</button>
                       </div>
                     ))}
                   </div>
@@ -2557,7 +2587,7 @@ function AppReal() {
                             {alertStats[isbn]>0&&<span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green}}>🎯 {alertStats[isbn]}</span>}
                           </div>
                           <div style={{fontSize:10,color:C.muted2,marginTop:3,display:"flex",gap:12}}>
-                            <span>{runState[isbn]?`son tarama: ${fmtTime(runState[isbn])}`:"henüz taranmadı"}</span>
+                            <span>{runState[isbn]?`📡 ${fmtTime(runState[isbn])}`:"🕐 henüz taranmadı"}</span>
                             {rules[isbn]?.new_max!=null&&<span style={{color:C.green}}>New: ${rules[isbn].new_max}</span>}
                             {rules[isbn]?.used_all_max!=null&&<span style={{color:C.accent}}>Used: ${rules[isbn].used_all_max}</span>}
                           </div>

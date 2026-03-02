@@ -100,7 +100,17 @@ def _o(price: float, ship: float, seller: str, sid: str, cond: str, url: str = "
             "condition": cond, "url": url, "desc": desc[:100]}
 
 def _is_new(cond_str: str) -> bool:
-    return "new" in cond_str.lower()
+    s = cond_str.lower()
+    # schema.org URIs: NewCondition, UsedCondition, etc.
+    if "usedcondition" in s or "goodcondition" in s or "acceptablecondition" in s or "likenewcondition" in s:
+        return False
+    if "newcondition" in s or "/new" in s:
+        return True
+    # Plain text
+    used_words = ["used","good","acceptable","very good","like new","fair","poor"]
+    if any(w in s for w in used_words):
+        return False
+    return "new" in s
 
 def _jsonld_offers(html: str, seller: str, sid: str, default_ship: float = 0.0) -> list:
     offers = []
@@ -205,8 +215,9 @@ async def _src_abebooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
                 for i, ps in enumerate(d.get("product_price", [])):
                     p  = float(str(ps).replace(",","").replace("$",""))
                     s  = float(str((d.get("product_shipping") or [])[i:i+1][0] if d.get("product_shipping") else 0).replace(",","").replace("$",""))
-                    cd = str((d.get("product_condition") or [])[i:i+1][0] if d.get("product_condition") else "used").lower()
-                    if p > 0: all_o.append(_o(p, s, "AbeBooks", "ABEBOOKS", "NEW" if "new" in cd else "USED"))
+                    raw_cd = str((d.get("product_condition") or [])[i:i+1][0] if d.get("product_condition") else "used")
+                    cd = raw_cd.lower()
+                    if p > 0: all_o.append(_o(p, s, "AbeBooks", "ABEBOOKS", "NEW" if _is_new(cd) else "USED"))
             except Exception: pass
         if not all_o:
             all_o = _jsonld_offers(r.text, "AbeBooks", "ABEBOOKS")
@@ -220,7 +231,7 @@ async def _src_abebooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
 
 # ── Source 3: ThriftBooks ────────────────────────────────────────────────────
 async def _src_thriftbooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
-    url = f"https://www.thriftbooks.com/browse/?b.search={isbn}"
+    url = f"https://www.thriftbooks.com/isbn/{isbn}/"
     try:
         r = await c.get(url, headers=_hdrs("https://www.thriftbooks.com/"), timeout=18)
         if r.status_code != 200: return None
@@ -340,7 +351,21 @@ async def fetch_bookfinder(isbn: str, condition: str = "all", force: bool = Fals
         cached = _cache_get(isbn_clean)
         if cached:
             age = int(time.time() - cached.get("ts", time.time()))
-            return {**cached, "cached": True, "cache_age_s": age}
+            result = {**cached, "cached": True, "cache_age_s": age}
+            # Apply condition filter on cached result too
+            if condition == "new":
+                result = {**result, "used": None}
+            elif condition == "used":
+                result = {**result, "new": None}
+            # Update cheapest after filter
+            all_offers = []
+            if result.get("new"): all_offers += result["new"].get("offers", [])
+            if result.get("used"): all_offers += result["used"].get("offers", [])
+            if all_offers:
+                all_offers.sort(key=lambda x: x["total"])
+                result["cheapest"] = all_offers[0]["total"]
+                result["total_offers"] = len(all_offers)
+            return result
 
     await asyncio.sleep(random.uniform(0.2, 0.5))
 
