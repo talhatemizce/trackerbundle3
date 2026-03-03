@@ -25,6 +25,7 @@ app = FastAPI(title="TrackerBundle API", version="0.2.0")
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import time as _time
+import time
 logger = logging.getLogger("trackerbundle.main")
 app.add_middleware(
     CORSMiddleware,
