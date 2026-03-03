@@ -63,8 +63,17 @@ const LIGHT = {
   cardBg: "#ffffff", cardBorder: "#e0ddd3",
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
+// Soft gündüz teması — düşük kontrast, göz dostu, slate-mavi tonlar
+const SOFT = {
+  bg: "#e8edf2", surface: "#f0f4f8", surface2: "#dde4ec", border: "#c4cdd8", border2: "#d0d9e4",
+  text: "#1e2a38", muted: "#5a6a7a", muted2: "#7a8a9a", muted3: "#9aaabb",
+  accent: "#3d7ab5", accentHover: "#2e6aa5", accentText: "#ffffff",
+  inputBg: "#f0f4f8", inputBorder: "#b8c4d0", rowBg: "#f0f4f8", rowBorder: "#d0d9e4",
+  cardBg: "#f0f4f8", cardBorder: "#c4cdd8",
+  green: "#2d8a5e", blue: "#2e6da4", purple: "#6b4fa8", orange: "#c2620a", red: "#b83232",
+};
 
-const BUILD_ID = "2026-03-02-v19-keepa-new-used-blue-emojis";
+const BUILD_ID = "2026-03-02-v20-soft-theme";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const isbn13to10 = (isbn) => {
@@ -1064,7 +1073,7 @@ function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
                 display:"grid",
                 gridTemplateColumns:"72px 1fr 160px",
                 gap:0,
-                background: isSelected ? (C===DARK?"#13131c":C.surface) : C.rowBg,
+                background: isSelected ? (theme==="dark"?"#13131c":C.surface) : C.rowBg,
                 border:`1px solid ${isSelected ? cc : C.rowBorder}`,
                 borderLeft:`3px solid ${cc}`,
                 borderRadius:10,
@@ -2037,14 +2046,15 @@ export default function App() {
   return <ErrorBoundary><AppReal /></ErrorBoundary>;
 }
 function AppReal() {
-  const [isDark, setIsDark] = useState(() => {
-    try { return localStorage.getItem("tb_theme") !== "light"; } catch { return true; }
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem("tb_theme") || "dark"; } catch { return "dark"; }
   });
-  const C = isDark ? DARK : LIGHT;
+  const isDark = theme === "dark";
+  const C = theme==="dark" ? DARK : theme==="soft" ? SOFT : LIGHT;
   const [blueFilter, setBlueFilter] = useState(() => { try { return localStorage.getItem("tb_blue")=="1"; } catch { return false; } });
   useEffect(() => {
-    try { localStorage.setItem("tb_theme", isDark ? "dark" : "light"); } catch {}
-  }, [isDark]);
+    try { localStorage.setItem("tb_theme", theme); } catch {}
+  }, [theme]);
   useEffect(() => {
     try { localStorage.setItem("tb_blue", blueFilter?"1":"0"); } catch {}
     document.documentElement.style.filter = blueFilter ? "sepia(0.15) saturate(0.85) hue-rotate(-5deg)" : "none";
@@ -2273,8 +2283,11 @@ function AppReal() {
               : <><span style={{width:7,height:7,borderRadius:"50%",background:C.red,display:"inline-block"}}/><span style={{fontSize:11,color:C.red}}>OFFLINE</span></>}
             {status&&<span style={{fontSize:11,color:C.muted3}}>{new Date(status.time_utc).toLocaleTimeString("tr-TR")}</span>}
             <button className="icon-btn" onClick={load} title="Yenile">↻</button>
-            <button onClick={()=>setIsDark(d=>!d)} style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer",padding:"5px 10px",fontSize:15,color:C.text,transition:"all .2s"}} title={isDark?"Açık tema":"Koyu tema"}>
-              {isDark?"☀️":"🌙"}
+            <button
+              onClick={()=>setTheme(t=>t==="dark"?"light":t==="light"?"soft":"dark")}
+              style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer",padding:"5px 10px",fontSize:15,color:C.text,transition:"all .2s"}}
+              title={theme==="dark"?"Açık temaya geç":theme==="light"?"Soft temaya geç":"Koyu temaya geç"}>
+              {theme==="dark"?"☀️":theme==="light"?"🌤":"🌙"}
             </button>
             <button onClick={()=>setBlueFilter(f=>!f)}
               style={{background:blueFilter?"rgba(251,191,36,.15)":C.surface2,border:`1px solid ${blueFilter?"#fbbf24":C.border}`,borderRadius:6,cursor:"pointer",padding:"5px 10px",fontSize:15,color:blueFilter?"#fbbf24":C.muted2,transition:"all .2s"}}
@@ -2314,7 +2327,7 @@ function AppReal() {
                     {Object.entries(alertStats).map(([isbn,count])=>(
                       <div key={isbn} className="row-item" style={{...row}}>
                         <span style={{flex:1,fontSize:13}}>{isbn}</span>
-                        <span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green}}>🎯 {count}</span>
+                        <span className="badge" style={{background:theme==="dark"?"#1a2a1a":theme==="soft"?"#d4ede1":"#f0fdf4",color:C.green}}>🎯 {count}</span>
                         <button className="icon-btn" style={{color:C.red,fontSize:16}} onClick={()=>clearAlerts(isbn)} title="Alertleri temizle">🗑️</button>
                       </div>
                     ))}
@@ -2329,7 +2342,7 @@ function AppReal() {
                     </div>
                     <span style={{fontSize:10,color:C.muted}}>interval: {fmtSecs(intervals[isbn])}</span>
                     {runState[isbn]&&<span style={{fontSize:10,color:C.muted2}}>son: {fmtTime(runState[isbn])}</span>}
-                    {alertStats[isbn]>0&&<span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green,fontSize:10}}>🎯 {alertStats[isbn]}</span>}
+                    {alertStats[isbn]>0&&<span className="badge" style={{background:theme==="dark"?"#1a2a1a":theme==="soft"?"#d4ede1":"#f0fdf4",color:C.green,fontSize:10}}>🎯 {alertStats[isbn]}</span>}
                     <span style={{width:8,height:8,borderRadius:"50%",background:C.green,display:"inline-block"}}/>
                   </div>
                 ))}
@@ -2584,7 +2597,7 @@ function AppReal() {
                             {titles[isbn]&&<span style={{fontSize:12,color:C.muted,fontFamily:"var(--sans)"}}>— {titles[isbn]}</span>}
                             {titles[isbn]===null&&<span style={{fontSize:10,color:C.muted3}}>…</span>}
                             {bookMeta[isbn]?.author&&<span style={{fontSize:10,color:C.muted3,fontFamily:"var(--sans)"}}>{bookMeta[isbn].author}{bookMeta[isbn].year?` · ${bookMeta[isbn].year}`:""}</span>}
-                            {alertStats[isbn]>0&&<span className="badge" style={{background:isDark?"#1a2a1a":"#f0fdf4",color:C.green}}>🎯 {alertStats[isbn]}</span>}
+                            {alertStats[isbn]>0&&<span className="badge" style={{background:theme==="dark"?"#1a2a1a":theme==="soft"?"#d4ede1":"#f0fdf4",color:C.green}}>🎯 {alertStats[isbn]}</span>}
                           </div>
                           <div style={{fontSize:10,color:C.muted2,marginTop:3,display:"flex",gap:12}}>
                             <span>{runState[isbn]?`📡 ${fmtTime(runState[isbn])}`:"🕐 henüz taranmadı"}</span>
