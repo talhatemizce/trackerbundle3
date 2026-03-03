@@ -302,6 +302,124 @@ def clear_alerts(isbn: str):
     _alert_history.clear_isbn(isbn)
     return {"ok": True, "isbn": isbn}
 
+
+@app.get("/alerts/profit-summary")
+def alerts_profit_summary():
+    """
+    Alert history'den aggregate P&L hesaplama:
+    - Toplam fırsat, tahmini kâr, condition bazlı ROI
+    - Günlük trend, en çok fırsat bulunan ISBN'ler
+    """
+    import time as _t
+    from collections import defaultdict
+
+    data = _alert_history.get_history(limit=500)
+    now = _t.time()
+    day_ago = now - 86400
+    week_ago = now - 7 * 86400
+    month_ago = now - 30 * 86400
+
+    # -- Aggregate metrics --
+    total_opportunities = len(data)
+    total_cost = 0.0       # toplam eBay alım
+    total_limit = 0.0      # toplam limit
+    buy_count = 0
+    offer_count = 0
+    condition_stats = defaultdict(lambda: {"count": 0, "total_cost": 0.0, "total_limit": 0.0})
+    daily_counts = defaultdict(int)    # date_str -> count
+    isbn_counts = defaultdict(int)
+    score_sum = 0
+    score_n = 0
+    today_count = 0
+    week_count = 0
+    month_count = 0
+
+    for e in data:
+        cost = e.get("total", 0)
+        limit = e.get("limit", 0)
+        condition = e.get("condition", "unknown")
+        decision = e.get("decision", "")
+        ts = e.get("ts", 0)
+        isbn = e.get("isbn", "")
+        deal_score = e.get("deal_score")
+
+        total_cost += cost
+        total_limit += limit
+
+        if decision == "BUY":
+            buy_count += 1
+        elif decision == "OFFER":
+            offer_count += 1
+
+        # Condition breakdown
+        cs = condition_stats[condition]
+        cs["count"] += 1
+        cs["total_cost"] += cost
+        cs["total_limit"] += limit
+
+        # Time buckets
+        if ts >= day_ago:
+            today_count += 1
+        if ts >= week_ago:
+            week_count += 1
+        if ts >= month_ago:
+            month_count += 1
+
+        # Daily trend
+        if ts:
+            day_str = _t.strftime("%Y-%m-%d", _t.gmtime(ts))
+            daily_counts[day_str] += 1
+
+        isbn_counts[isbn] += 1
+
+        if deal_score is not None:
+            score_sum += deal_score
+            score_n += 1
+
+    # Estimated profit = limit - cost (crude, but useful)
+    estimated_profit = total_limit - total_cost
+    avg_margin_pct = ((estimated_profit / total_cost) * 100) if total_cost > 0 else 0
+    avg_score = round(score_sum / score_n, 1) if score_n > 0 else 0
+
+    # Top 5 ISBNs by opportunity count
+    top_isbns = sorted(isbn_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    # Condition breakdown
+    condition_breakdown = {}
+    for cond, cs in condition_stats.items():
+        margin = cs["total_limit"] - cs["total_cost"]
+        roi = ((margin / cs["total_cost"]) * 100) if cs["total_cost"] > 0 else 0
+        condition_breakdown[cond] = {
+            "count": cs["count"],
+            "avg_cost": round(cs["total_cost"] / cs["count"], 2) if cs["count"] else 0,
+            "estimated_margin": round(margin, 2),
+            "roi_pct": round(roi, 1),
+        }
+
+    # Daily trend (last 7 days)
+    daily_trend = []
+    for i in range(6, -1, -1):
+        d = _t.strftime("%Y-%m-%d", _t.gmtime(now - i * 86400))
+        daily_trend.append({"date": d, "count": daily_counts.get(d, 0)})
+
+    return {
+        "ok": True,
+        "total_opportunities": total_opportunities,
+        "buy_count": buy_count,
+        "offer_count": offer_count,
+        "total_cost": round(total_cost, 2),
+        "total_limit": round(total_limit, 2),
+        "estimated_profit": round(estimated_profit, 2),
+        "avg_margin_pct": round(avg_margin_pct, 1),
+        "avg_score": avg_score,
+        "today": today_count,
+        "this_week": week_count,
+        "this_month": month_count,
+        "condition_breakdown": condition_breakdown,
+        "top_isbns": [{"isbn": isbn, "count": c} for isbn, c in top_isbns],
+        "daily_trend": daily_trend,
+    }
+
 # ── Alert details — drawer için, disk-backed 30 günlük cache ─────────────────
 import time as _time
 _details_cache: dict = {}  # key: isbn → {ts, data}
@@ -946,13 +1064,15 @@ async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
 # ── Suggest Limit (Dynamic ROI-based limit) ──────────────────────────────────
 
 @app.get("/suggest-limit/{isbn_or_asin}")
-async def suggest_limit_endpoint(isbn_or_asin: str, target_roi: float = 30.0):
+async def suggest_limit_endpoint(isbn_or_asin: str, target_roi: float = 30.0, request: Request = None):
     """
     Amazon fiyatından geriye hesapla: "Bu ROI için max kaça al?"
     Hem ISBN hem ASIN kabul eder.
     """
     from app.profit_calc import suggest_limit as _suggest
     from app.amazon_client import get_top2_prices
+    from app.rate_limiter import check_suggest_rate
+    if request: check_suggest_rate(request)
 
     try:
         amazon_data = await get_top2_prices(isbn_or_asin.strip())
@@ -997,12 +1117,15 @@ class BulkDiscoverPayload(BaseModel):
 
 
 @app.post("/discover/bulk")
-async def discover_bulk_endpoint(payload: BulkDiscoverPayload):
+async def discover_bulk_endpoint(payload: BulkDiscoverPayload, request: Request = None):
     """
     Toplu ISBN keşif: max 200 ISBN'i paralel tara.
     eBay fiyat + Amazon fiyat + profit + skor.
     """
     from app.bulk_discover import bulk_discover
+    from app.rate_limiter import check_discover_rate
+    cost = max(1, len(payload.isbns) // 10)  # 10 ISBN = 1 token
+    if request: check_discover_rate(request, cost=cost)
 
     if not payload.isbns:
         raise HTTPException(status_code=422, detail="ISBN listesi boş")
@@ -1019,12 +1142,15 @@ class ReverseLookupPayload(BaseModel):
 
 
 @app.post("/discover/reverse")
-async def discover_reverse_endpoint(payload: ReverseLookupPayload):
+async def discover_reverse_endpoint(payload: ReverseLookupPayload, request: Request = None):
     """
     Verilen ISBN'leri eBay'de ara, Amazon fiyatla karşılaştır.
     Arbitraj fırsatlarını skora göre sırala.
     """
     from app.reverse_lookup import reverse_lookup
+    from app.rate_limiter import check_discover_rate
+    cost = max(1, len(payload.isbns) // 10)
+    if request: check_discover_rate(request, cost=cost)
 
     if not payload.isbns:
         raise HTTPException(status_code=422, detail="ISBN listesi boş")

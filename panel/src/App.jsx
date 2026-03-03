@@ -2071,6 +2071,107 @@ function DetailDrawer({
 }
 
 
+// ── Profit Center Dashboard Card ──────────────────────────────────────────────
+function ProfitCenter({ C, isDark }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    req("/alerts/profit-summary").then(d => { if (d?.ok) setData(d); }).catch(() => { }).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div style={{ fontSize: 11, color: C.muted, padding: 16 }}>⏳ Profit verileri yükleniyor...</div>;
+  if (!data || data.total_opportunities === 0) return null; // No data, hide card
+
+  const maxTrend = Math.max(...data.daily_trend.map(t => t.count), 1);
+
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>💰 Profit Center</div>
+        <div style={{ display: "flex", gap: 8, fontSize: 10, color: C.muted }}>
+          <span>Bugün: <b style={{ color: C.accent }}>{data.today}</b></span>
+          <span>Bu Hafta: <b style={{ color: C.blue }}>{data.this_week}</b></span>
+          <span>Bu Ay: <b style={{ color: C.green }}>{data.this_month}</b></span>
+        </div>
+      </div>
+
+      {/* Key metrics */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 16 }}>
+        <div style={{ background: isDark ? "#1a1f2e" : "#f8fafc", borderRadius: 8, padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: C.muted }}>Toplam Fırsat</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: C.accent }}>{data.total_opportunities}</div>
+          <div style={{ fontSize: 9, color: C.muted2 }}>{data.buy_count} BUY · {data.offer_count} OFFER</div>
+        </div>
+        <div style={{ background: isDark ? "#1a2a1a" : "#f0fdf4", borderRadius: 8, padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: C.muted }}>Tahmini Kâr</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: data.estimated_profit > 0 ? "#22c55e" : "#ef4444" }}>${data.estimated_profit}</div>
+          <div style={{ fontSize: 9, color: C.muted2 }}>limit − alım</div>
+        </div>
+        <div style={{ background: isDark ? "#1e1a2e" : "#faf5ff", borderRadius: 8, padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: C.muted }}>Ort. Marj</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: data.avg_margin_pct >= 30 ? "#22c55e" : data.avg_margin_pct >= 15 ? "#f59e0b" : "#ef4444" }}>{data.avg_margin_pct}%</div>
+          <div style={{ fontSize: 9, color: C.muted2 }}>ROI ortalaması</div>
+        </div>
+        <div style={{ background: isDark ? "#2a1f1a" : "#fff7ed", borderRadius: 8, padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: C.muted }}>Ort. Skor</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: data.avg_score >= 80 ? "#ef4444" : data.avg_score >= 60 ? "#22c55e" : "#f59e0b" }}>{data.avg_score}</div>
+          <div style={{ fontSize: 9, color: C.muted2 }}>deal score</div>
+        </div>
+      </div>
+
+      {/* 7 day trend mini chart */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 500, color: C.muted, marginBottom: 8 }}>📈 Son 7 Gün</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 48 }}>
+          {data.daily_trend.map((d, i) => (
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+              <div style={{ fontSize: 8, color: C.muted2, fontWeight: 600 }}>{d.count || ""}</div>
+              <div style={{ width: "100%", background: d.count > 0 ? (i === 6 ? C.accent : C.green + "66") : C.surface2, borderRadius: 3, height: Math.max(4, (d.count / maxTrend) * 40), transition: "height .3s" }} />
+              <div style={{ fontSize: 7, color: C.muted2 }}>{d.date.slice(5)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Condition breakdown */}
+      {Object.keys(data.condition_breakdown).length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 500, color: C.muted, marginBottom: 8 }}>📊 Condition Bazlı ROI</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 1, fontSize: 10, fontFamily: "var(--mono)" }}>
+            <div style={{ padding: 6, color: C.muted, fontWeight: 600 }}>Condition</div>
+            <div style={{ padding: 6, color: C.muted, fontWeight: 600, textAlign: "right" }}>Adet</div>
+            <div style={{ padding: 6, color: C.muted, fontWeight: 600, textAlign: "right" }}>Ort. Fiyat</div>
+            <div style={{ padding: 6, color: C.muted, fontWeight: 600, textAlign: "right" }}>ROI%</div>
+            {Object.entries(data.condition_breakdown).map(([cond, stats]) => (
+              <React.Fragment key={cond}>
+                <div style={{ padding: 6, color: C.text }}>{cond}</div>
+                <div style={{ padding: 6, color: C.text, textAlign: "right" }}>{stats.count}</div>
+                <div style={{ padding: 6, color: C.text, textAlign: "right" }}>${stats.avg_cost}</div>
+                <div style={{ padding: 6, color: stats.roi_pct >= 30 ? "#22c55e" : stats.roi_pct >= 15 ? "#f59e0b" : "#ef4444", textAlign: "right", fontWeight: 600 }}>{stats.roi_pct}%</div>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Top ISBNs */}
+      {data.top_isbns.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 500, color: C.muted, marginBottom: 8 }}>🏆 En Çok Fırsat Bulunan ISBN'ler</div>
+          {data.top_isbns.map((item, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: i < data.top_isbns.length - 1 ? `1px solid ${C.border}` : "none" }}>
+              <span style={{ fontSize: 11, color: C.text, fontFamily: "var(--mono)" }}>{item.isbn}</span>
+              <span className="badge" style={{ background: isDark ? "#1a2a1a" : "#f0fdf4", color: C.green }}>{item.count} fırsat</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ── Discover Tab ──────────────────────────────────────────────────────────────
 function DiscoverTab({ C, push }) {
   const [mode, setMode] = useState("quick");  // quick | bulk | reverse
@@ -2650,7 +2751,8 @@ function AppReal() {
                   <StatCard C={C} icon="🔔" label="Bot Token" value={status?.has_bot_token ? "✓" : "✗"} sub={status?.has_bot_token ? "Telegram aktif" : "Token yok"} accent={status?.has_bot_token ? C.green : C.red} />
                 </div>
 
-                {/* Finding API Backoff — removed (Finding API deprecated) */}
+                {/* 💰 Profit Center */}
+                <ProfitCenter C={C} isDark={isDark} />
                 {Object.keys(alertStats).length > 0 && (
                   <div style={{ marginBottom: 24 }}>
                     <ST C={C}>Bildirim Gönderilen ISBNler</ST>
