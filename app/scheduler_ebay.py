@@ -17,42 +17,35 @@ from app.alert_store import check_and_mark
 from app.smart_dedup import should_send as smart_should_send
 from app import alert_history_store
 from app import sold_stats_store
+from app.deal_scorer import score_deal as _ai_score_deal
 
 logger = logging.getLogger("trackerbundle.scheduler_ebay")
 
 
-# ── Deal Score ────────────────────────────────────────────────────────────────
-# 0-100 arası tek sayı. Yüksek = daha iyi fırsat.
-# Formül:
-#   Baz puan:   (1 - total/base_limit) * 70   → limit'e ne kadar yakın (0-70)
-#   Make Offer: +10 (pazarlık var)
-#   Condition:  brand_new/like_new +8, very_good +5, good 0, acceptable -5
-#   Ship est.:  -8 (gerçek maliyet belirsiz)
-#   Sold below: avg_for_msg < total → -5 (aktif fiyat piyasanın üstünde)
-# Sonuç [0, 100] arasına kısılır.
-
-_COND_BONUS = {
-    "brand_new": 8, "like_new": 8, "very_good": 5,
-    "good": 0, "acceptable": -5, "used_all": 0,
-}
-
 def deal_score(
     total: float,
-    base_limit: float,        # make_offer multiplier UYGULANMAMIŞ limit
+    base_limit: float,
     bucket: str,
     make_offer: bool = False,
     ship_estimated: bool = False,
     sold_avg: float | None = None,
 ) -> int:
+    """AI Deal Scorer — 5-faktör 0-100 skor. deal_scorer.py'den beslenir."""
     if base_limit <= 0:
         return 0
-    ratio_score = max(0.0, (1.0 - total / base_limit)) * 70.0
-    bonus = 0
-    bonus += 10 if make_offer else 0
-    bonus += _COND_BONUS.get(bucket, 0)
-    bonus += -2 if ship_estimated else 0  # est.ship penalty: minor uncertainty signal
-    bonus += -5 if (sold_avg is not None and sold_avg < total) else 0  # None = no data = no penalty
-    return max(0, min(100, int(round(ratio_score + bonus))))
+    bd = _ai_score_deal(
+        roi_pct        = None,           # scheduler'da Amazon verisi yok
+        condition      = bucket,
+        ebay_total     = total,
+        max_limit      = base_limit,
+        ebay_count     = None,
+        amazon_data    = None,
+        sell_source    = None,
+        viable         = False,
+        ship_estimated = ship_estimated,
+        make_offer     = make_offer,
+    )
+    return bd.total
 
 
 async def _send_telegram(message: str) -> bool:

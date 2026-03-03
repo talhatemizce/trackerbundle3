@@ -2399,17 +2399,20 @@ function _renderBulkResults(data, C) {
             <tbody>
               {results.map((r, i) => {
                 const sc = r.score || 0;
+                const tier = r.score_tier || (sc >= 85 ? "🔥 FIRE" : sc >= 70 ? "✨ EXCELLENT" : sc >= 55 ? "👍 GOOD" : sc >= 40 ? "🤔 FAIR" : "❌ SKIP");
                 const ebayMin = r.ebay?.min_price;
                 const amzSell = r.suggestion?.sell_price || r.amazon?.used_buybox || r.amazon?.new_buybox;
                 const maxBuy = r.suggestion?.max_buy;
                 const roi = r.best_deal?.roi_pct;
                 const profit = r.best_deal?.profit;
-                const tier = r.best_deal?.roi_tier;
-                const scCol = sc >= 80 ? "#ef4444" : sc >= 60 ? "#22c55e" : sc >= 40 ? "#f59e0b" : C.muted;
-                const tierCol = ({ fire: "#ef4444", good: "#22c55e", low: "#f59e0b", loss: "#6b7280" })[tier] || C.muted;
+                const roiTier = r.best_deal?.roi_tier;
+                const scCol = sc >= 85 ? "#ef4444" : sc >= 70 ? "#22c55e" : sc >= 55 ? "#f59e0b" : sc >= 40 ? "#60a5fa" : C.muted;
+                const tierCol = ({ fire: "#ef4444", good: "#22c55e", low: "#f59e0b", loss: "#6b7280" })[roiTier] || C.muted;
+                const bd = r.score_breakdown;
+                const bdTitle = bd ? `ROI:${bd.roi_pts} Cond:${bd.condition_pts} Margin:${bd.margin_pts} Supply:${bd.supply_pts} Data:${bd.data_pts} Ceza:${bd.penalty_pts}` : `Score ${sc}/100`;
                 return (
                   <tr key={i} style={{ borderBottom: `1px solid ${C.border}`, animation: "slideIn .3s ease" }}>
-                    <td style={{ padding: "8px", fontWeight: 700, color: scCol }}>{sc >= 80 ? "🔥" : sc >= 60 ? "✨" : sc >= 40 ? "⚠️" : "—"} {sc}</td>
+                    <td style={{ padding: "8px", fontWeight: 700, color: scCol }} title={bdTitle}>{tier} {sc}</td>
                     <td style={{ padding: "8px", color: C.text, fontWeight: 500 }}>{r.isbn}</td>
                     <td style={{ padding: "8px", textAlign: "right", color: C.text }}>{ebayMin != null ? `$${ebayMin}` : "—"}</td>
                     <td style={{ padding: "8px", textAlign: "right", color: C.text }}>{amzSell != null ? `$${amzSell}` : "—"}</td>
@@ -2440,8 +2443,12 @@ function _renderReverseResults(data, C) {
             const profit = r.profit;
             const sug = r.suggestion;
             const roi = profit?.roi_pct;
-            const tier = profit?.roi_tier;
-            const tierCol = ({ fire: "#ef4444", good: "#22c55e", low: "#f59e0b", loss: "#6b7280" })[tier] || C.muted;
+            const roiTier = profit?.roi_tier;
+            const tierCol = ({ fire: "#ef4444", good: "#22c55e", low: "#f59e0b", loss: "#6b7280" })[roiTier] || C.muted;
+            const sc = r.score || 0;
+            const scoreTier = r.score_tier || (sc >= 85 ? "🔥 FIRE" : sc >= 70 ? "✨ EXCELLENT" : sc >= 55 ? "👍 GOOD" : sc >= 40 ? "🤔 FAIR" : "❌ SKIP");
+            const scCol = sc >= 85 ? "#ef4444" : sc >= 70 ? "#22c55e" : sc >= 55 ? "#f59e0b" : sc >= 40 ? "#60a5fa" : C.muted;
+            const bd = r.score_breakdown;
             return (
               <div key={i} className="row-item" style={{ background: C.rowBg, border: `1px solid ${C.rowBorder}`, flexDirection: "column", alignItems: "stretch", animation: "slideIn .3s ease" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2450,7 +2457,7 @@ function _renderReverseResults(data, C) {
                     {r.ebay_title && <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{r.ebay_title}</div>}
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: ({ 95: "#ef444422", 80: "#22c55e22", 60: "#f59e0b22", 50: "#60a5fa22" })[r.score] || C.surface2, color: ({ 95: "#ef4444", 80: "#22c55e", 60: "#f59e0b", 50: "#60a5fa" })[r.score] || C.muted, fontWeight: 600 }}>Score {r.score}</span>
+                    <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: `${scCol}22`, color: scCol, fontWeight: 700 }}>{scoreTier} · {sc}</span>
                     {r.ebay_url && <a href={r.ebay_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: C.accent }}>eBay ↗</a>}
                   </div>
                 </div>
@@ -2463,6 +2470,17 @@ function _renderReverseResults(data, C) {
                 </div>
                 {sug && (
                   <div style={{ marginTop: 6, fontSize: 10, color: C.accent }}>🎯 Max alım (hedef {sug.target_roi_pct}% ROI): <strong>${sug.max_buy}</strong></div>
+                )}
+                {bd && (
+                  <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {[["ROI", bd.roi_pts, 40], ["Durum", bd.condition_pts, 20], ["Marj", bd.margin_pts, 20], ["Arz", bd.supply_pts, 10], ["Veri", bd.data_pts, 10]].map(([label, pts, max]) => (
+                      <div key={label} style={{ fontSize: 9, color: C.muted2, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                        <span style={{ fontWeight: 700, color: pts >= max * 0.7 ? "#22c55e" : pts >= max * 0.4 ? "#f59e0b" : C.muted }}>{pts}/{max}</span>
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                    {bd.penalty_pts < 0 && <div style={{ fontSize: 9, color: "#ef4444" }}>⚠️ {bd.penalty_pts}</div>}
+                  </div>
                 )}
               </div>
             );

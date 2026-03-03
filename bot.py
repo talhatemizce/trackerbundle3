@@ -678,6 +678,8 @@ async def cmd_discover(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for r in results[:10]:
         isbn = r.get("isbn", "?")
         score = r.get("score", 0)
+        score_tier = r.get("score_tier", "")
+        bd = r.get("score_breakdown") or {}
         ebay = r.get("ebay") or {}
         deal = r.get("best_deal")
         sug = r.get("suggestion")
@@ -685,16 +687,27 @@ async def cmd_discover(update: Update, context: ContextTypes.DEFAULT_TYPE):
         min_price = ebay.get("min_price")
         ebay_str = f"${min_price}" if min_price else "—"
 
+        # Score badge
+        sc_emoji = "🔥" if score >= 85 else "✨" if score >= 70 else "👍" if score >= 55 else "🤔" if score >= 40 else "❌"
+        score_line = f"{sc_emoji} <b>{score}/100</b> {score_tier}"
+
+        # Breakdown mini (inline)
+        bd_parts = []
+        if bd.get("roi_pts") is not None:    bd_parts.append(f"ROI:{bd['roi_pts']}/40")
+        if bd.get("condition_pts") is not None: bd_parts.append(f"Cond:{bd['condition_pts']}/20")
+        if bd.get("margin_pts") is not None:  bd_parts.append(f"Marj:{bd['margin_pts']}/20")
+        if bd.get("penalty_pts") and bd["penalty_pts"] < 0: bd_parts.append(f"⚠️{bd['penalty_pts']}")
+        bd_str = " · ".join(bd_parts)
+
         if deal and deal.get("viable"):
             roi = deal.get("roi_pct", 0)
             profit = deal.get("profit", 0)
-            emoji = "🔥" if roi >= 30 else "✨" if roi >= 15 else "⚠️"
-            lines.append(f"{emoji} <code>{isbn}</code> · eBay:{ebay_str} · ROI:{roi}% · Kâr:${profit} · [📊{score}]")
+            lines.append(f"{score_line}\n  <code>{isbn}</code> · eBay:{ebay_str} · ROI:{roi}% · Kâr:${profit}\n  <i>{bd_str}</i>")
         elif sug:
             max_buy = sug.get("max_buy", 0)
-            lines.append(f"🎯 <code>{isbn}</code> · eBay:{ebay_str} · Max:${max_buy} · [📊{score}]")
+            lines.append(f"{score_line}\n  <code>{isbn}</code> · eBay:{ebay_str} · Max:${max_buy}\n  <i>{bd_str}</i>")
         else:
-            lines.append(f"📦 <code>{isbn}</code> · eBay:{ebay_str} · [📊{score}]")
+            lines.append(f"{score_line}\n  <code>{isbn}</code> · eBay:{ebay_str}\n  <i>{bd_str}</i>")
 
     if not results:
         lines.append("Sonuç bulunamadı")

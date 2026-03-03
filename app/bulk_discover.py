@@ -19,6 +19,7 @@ from app.ebay_client import browse_search_isbn, item_total_price, normalize_cond
 from app.amazon_client import get_top2_prices
 from app.profit_calc import suggest_limit, calculate as profit_calc
 from app.rules_store import effective_limit
+from app.deal_scorer import score_deal, score_to_tier
 
 logger = logging.getLogger("trackerbundle.bulk_discover")
 
@@ -89,9 +90,11 @@ async def _scan_single_isbn(
             "new_buybox": _extract_price(amazon_data, "new"),
             "used_buybox": _extract_price(amazon_data, "used"),
         }
+        result["_amazon_raw"] = amazon_data  # scorer için ham veri
     except Exception:
         # Amazon verisi opsiyonel — yoksa sadece eBay verisi göster
         result["amazon"] = None
+        result["_amazon_raw"] = None
 
     # ── Dinamik limit önerisi ────────────────────────────────────────────────
     if amazon_data:
@@ -108,8 +111,29 @@ async def _scan_single_isbn(
         if pc:
             result["best_deal"] = pc.to_dict()
 
-    # ── Skor hesapla ─────────────────────────────────────────────────────────
-    result["score"] = _compute_discover_score(result)
+    # ── AI Deal Score ─────────────────────────────────────────────────────────
+    ebay_listing = result.get("ebay") or {}
+    cheapest_list = ebay_listing.get("cheapest") or []
+    best_item = cheapest_list[0] if cheapest_list else {}
+    deal = result.get("best_deal") or {}
+    sug  = result.get("suggestion") or {}
+
+    bd = score_deal(
+        roi_pct        = deal.get("roi_pct"),
+        condition      = best_item.get("condition"),
+        ebay_total     = deal.get("ebay_cost") or best_item.get("total"),
+        max_limit      = sug.get("max_buy"),
+        ebay_count     = ebay_listing.get("total_found"),
+        amazon_data    = result.get("_amazon_raw"),
+        sell_source    = deal.get("sell_source"),
+        viable         = deal.get("viable", False),
+        ship_estimated = best_item.get("ship_estimated", False),
+        make_offer     = best_item.get("make_offer", False),
+    )
+    result["score"]           = bd.total
+    result["score_tier"]      = score_to_tier(bd.total)
+    result["score_breakdown"] = bd.to_dict()
+    result.pop("_amazon_raw", None)  # ham veri response'a çıkmasın
     result["ok"] = True
     return result
 
@@ -125,44 +149,6 @@ def _extract_price(amazon_data: Dict, section: str) -> Optional[float]:
         return round(float(top2[0]["total"]), 2)
     return None
 
-
-def _compute_discover_score(result: Dict) -> int:
-    """0-100 keşif skoru. Yüksek = daha iyi fırsat."""
-    score = 0
-
-    # eBay'de ürün var mı?
-    ebay = result.get("ebay") or {}
-    cheapest = ebay.get("cheapest") or []
-    if not cheapest:
-        return 0
-    score += 20  # eBay'de ürün bulundu
-
-    # Amazon verisi var mı?
-    if result.get("amazon"):
-        score += 15
-
-    # Profit hesaplanabildi mi?
-    deal = result.get("best_deal")
-    if deal:
-        roi = deal.get("roi_pct", 0)
-        if roi >= 50:
-            score += 40
-        elif roi >= 30:
-            score += 30
-        elif roi >= 15:
-            score += 20
-        elif roi > 0:
-            score += 10
-
-        # Viable bonus
-        if deal.get("viable"):
-            score += 15
-
-    # Suggestion bonus
-    if result.get("suggestion"):
-        score += 10
-
-    return min(100, score)
 
 
 async def bulk_discover(isbns: List[str]) -> Dict[str, Any]:

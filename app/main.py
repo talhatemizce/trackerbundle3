@@ -273,6 +273,7 @@ def set_isbn_override_endpoint(isbn: str, payload: OverridePayload):
 # ---- Alert stats & clear (panel dashboard) ----
 from app import alert_store as _alert_store
 from app import alert_history_store as _alert_history
+from app.deal_scorer import score_deal as _score_deal, score_to_tier as _score_tier
 
 @app.get("/alerts/stats")
 def alerts_stats():
@@ -419,6 +420,41 @@ def alerts_profit_summary():
         "top_isbns": [{"isbn": isbn, "count": c} for isbn, c in top_isbns],
         "daily_trend": daily_trend,
     }
+
+# ── AI Deal Score — ham parametrelerle anlık skor hesapla ────────────────────
+
+@app.get("/score")
+def deal_score_endpoint(
+    roi_pct:        Optional[float] = None,
+    condition:      Optional[str]   = None,
+    ebay_total:     Optional[float] = None,
+    max_limit:      Optional[float] = None,
+    ebay_count:     Optional[int]   = None,
+    sell_source:    Optional[str]   = None,
+    viable:         bool            = False,
+    ship_estimated: bool            = False,
+    make_offer:     bool            = False,
+):
+    """
+    Anlık deal score hesapla.
+    Tüm parametreler opsiyonel — eksik veri nötr puan alır.
+
+    Örnek: GET /score?roi_pct=35&condition=good&ebay_total=8&max_limit=14
+    """
+    bd = _score_deal(
+        roi_pct        = roi_pct,
+        condition      = condition,
+        ebay_total     = ebay_total,
+        max_limit      = max_limit,
+        ebay_count     = ebay_count,
+        amazon_data    = None,
+        sell_source    = sell_source,
+        viable         = viable,
+        ship_estimated = ship_estimated,
+        make_offer     = make_offer,
+    )
+    return {"ok": True, **bd.to_dict()}
+
 
 # ── Alert details — drawer için, disk-backed 30 günlük cache ─────────────────
 import time as _time

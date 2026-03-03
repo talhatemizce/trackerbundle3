@@ -20,6 +20,7 @@ from app.core.config import get_settings
 from app.ebay_client import browse_search_isbn, item_total_price, normalize_condition, isbn_variants
 from app.amazon_client import get_top2_prices
 from app.profit_calc import suggest_limit, calculate as profit_calc
+from app.deal_scorer import score_deal, score_to_tier
 
 logger = logging.getLogger("trackerbundle.reverse_lookup")
 
@@ -138,23 +139,22 @@ async def reverse_lookup(
                     "score": 0,
                 }
 
-                # Skor hesapla
-                if profit_data:
-                    roi = profit_data.get("roi_pct", 0)
-                    if roi >= 50:
-                        entry["score"] = 95
-                    elif roi >= 30:
-                        entry["score"] = 80
-                    elif roi >= 15:
-                        entry["score"] = 60
-                    elif roi > 0:
-                        entry["score"] = 40
-                    else:
-                        entry["score"] = 20
-                elif amazon_price and ebay_result["ebay_total"] < amazon_price * 0.7:
-                    entry["score"] = 50  # Amazon verisi eksik ama fiyat farkı var
-                else:
-                    entry["score"] = 15
+                # ── AI Deal Score ────────────────────────────────────────────
+                bd = score_deal(
+                    roi_pct        = (profit_data or {}).get("roi_pct"),
+                    condition      = ebay_result.get("ebay_condition"),
+                    ebay_total     = ebay_result.get("ebay_total"),
+                    max_limit      = (suggestion_data or {}).get("max_buy"),
+                    ebay_count     = None,
+                    amazon_data    = amazon_data,
+                    sell_source    = (profit_data or {}).get("sell_source"),
+                    viable         = (profit_data or {}).get("viable", False),
+                    ship_estimated = False,
+                    make_offer     = ebay_result.get("make_offer", False),
+                )
+                entry["score"]           = bd.total
+                entry["score_tier"]      = score_to_tier(bd.total)
+                entry["score_breakdown"] = bd.to_dict()
 
                 results.append(entry)
             except Exception as e:
