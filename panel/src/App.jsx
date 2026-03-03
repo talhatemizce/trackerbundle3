@@ -2375,6 +2375,13 @@ function DiscoverTab({ C, push }) {
   );
 }
 
+const _SRC_COLORS = {
+  "eBay Used":      "#60a5fa", "eBay New":      "#34d399",
+  "ThriftBooks":    "#a78bfa", "ThriftBooks New": "#6ee7b7",
+  "AbeBooks":       "#f97316", "AbeBooks New":   "#fcd34d",
+};
+const _srcCol = (src) => _SRC_COLORS[src] || "#9ca3af";
+
 function _renderBulkResults(data, C) {
   const results = data.results || [];
   return (
@@ -2383,47 +2390,55 @@ function _renderBulkResults(data, C) {
         ✅ {data.scanned}/{data.total} tarandı · {data.duration_s}s
       </div>
       {results.length === 0 ? <div style={{ color: "#6b7280", fontSize: 12 }}>Sonuç yok</div> : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "var(--mono)" }}>
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                <th style={{ textAlign: "left", padding: "6px 8px", color: C.muted, fontSize: 10, fontWeight: 500 }}>Score</th>
-                <th style={{ textAlign: "left", padding: "6px 8px", color: C.muted, fontSize: 10, fontWeight: 500 }}>ISBN</th>
-                <th style={{ textAlign: "right", padding: "6px 8px", color: C.muted, fontSize: 10, fontWeight: 500 }}>eBay Min</th>
-                <th style={{ textAlign: "right", padding: "6px 8px", color: C.muted, fontSize: 10, fontWeight: 500 }}>Amazon</th>
-                <th style={{ textAlign: "right", padding: "6px 8px", color: C.muted, fontSize: 10, fontWeight: 500 }}>Max Buy</th>
-                <th style={{ textAlign: "right", padding: "6px 8px", color: C.muted, fontSize: 10, fontWeight: 500 }}>ROI%</th>
-                <th style={{ textAlign: "right", padding: "6px 8px", color: C.muted, fontSize: 10, fontWeight: 500 }}>Profit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((r, i) => {
-                const sc = r.score || 0;
-                const tier = r.score_tier || (sc >= 85 ? "🔥 FIRE" : sc >= 70 ? "✨ EXCELLENT" : sc >= 55 ? "👍 GOOD" : sc >= 40 ? "🤔 FAIR" : "❌ SKIP");
-                const ebayMin = r.ebay?.min_price;
-                const amzSell = r.suggestion?.sell_price || r.amazon?.used_buybox || r.amazon?.new_buybox;
-                const maxBuy = r.suggestion?.max_buy;
-                const roi = r.best_deal?.roi_pct;
-                const profit = r.best_deal?.profit;
-                const roiTier = r.best_deal?.roi_tier;
-                const scCol = sc >= 85 ? "#ef4444" : sc >= 70 ? "#22c55e" : sc >= 55 ? "#f59e0b" : sc >= 40 ? "#60a5fa" : C.muted;
-                const tierCol = ({ fire: "#ef4444", good: "#22c55e", low: "#f59e0b", loss: "#6b7280" })[roiTier] || C.muted;
-                const bd = r.score_breakdown;
-                const bdTitle = bd ? `ROI:${bd.roi_pts} Cond:${bd.condition_pts} Margin:${bd.margin_pts} Supply:${bd.supply_pts} Data:${bd.data_pts} Ceza:${bd.penalty_pts}` : `Score ${sc}/100`;
-                return (
-                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}`, animation: "slideIn .3s ease" }}>
-                    <td style={{ padding: "8px", fontWeight: 700, color: scCol }} title={bdTitle}>{tier} {sc}</td>
-                    <td style={{ padding: "8px", color: C.text, fontWeight: 500 }}>{r.isbn}</td>
-                    <td style={{ padding: "8px", textAlign: "right", color: C.text }}>{ebayMin != null ? `$${ebayMin}` : "—"}</td>
-                    <td style={{ padding: "8px", textAlign: "right", color: C.text }}>{amzSell != null ? `$${amzSell}` : "—"}</td>
-                    <td style={{ padding: "8px", textAlign: "right", color: C.accent, fontWeight: 600 }}>{maxBuy != null ? `$${maxBuy}` : "—"}</td>
-                    <td style={{ padding: "8px", textAlign: "right", color: tierCol, fontWeight: 600 }}>{roi != null ? `${roi}%` : "—"}</td>
-                    <td style={{ padding: "8px", textAlign: "right", color: profit > 0 ? "#22c55e" : profit < 0 ? "#ef4444" : C.muted, fontWeight: 600 }}>{profit != null ? `$${profit}` : "—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {results.map((r, i) => {
+            const sc = r.score || 0;
+            const scoreTier = r.score_tier || (sc >= 85 ? "🔥 FIRE" : sc >= 70 ? "✨ EXCELLENT" : sc >= 55 ? "👍 GOOD" : sc >= 40 ? "🤔 FAIR" : "❌ SKIP");
+            const scCol = sc >= 85 ? "#ef4444" : sc >= 70 ? "#22c55e" : sc >= 55 ? "#f59e0b" : sc >= 40 ? "#60a5fa" : C.muted;
+            const deals = r.deals || [];
+            const best = deals[0] || r.best_deal || {};
+            const amzUsed = r.amazon?.used_buybox;
+            const amzNew  = r.amazon?.new_buybox;
+            const maxBuy  = r.suggestion?.max_buy;
+            return (
+              <div key={i} style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", animation: "slideIn .3s ease" }}>
+                {/* Ana satır */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: scCol, minWidth: 90 }}>{scoreTier} {sc}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: "var(--mono)" }}>{r.isbn}</span>
+                  <span style={{ fontSize: 10, color: C.muted }}>
+                    Amz Used:{amzUsed ? `$${amzUsed}` : "—"} · New:{amzNew ? `$${amzNew}` : "—"} · Max:${maxBuy || "—"}
+                  </span>
+                  {best.source && (
+                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: `${_srcCol(best.source)}22`, color: _srcCol(best.source), fontWeight: 700 }}>
+                      ★ {best.source}
+                    </span>
+                  )}
+                </div>
+                {/* Kaynak karşılaştırma tablosu */}
+                {deals.length > 0 && (
+                  <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: `repeat(${Math.min(deals.length, 4)}, 1fr)`, gap: 6 }}>
+                    {deals.map((d, di) => {
+                      const col = _srcCol(d.source);
+                      const roiCol = d.roi_pct >= 30 ? "#22c55e" : d.roi_pct >= 15 ? "#f59e0b" : d.roi_pct > 0 ? "#60a5fa" : "#ef4444";
+                      return (
+                        <div key={di} style={{ background: C.bg, border: `1px solid ${col}44`, borderRadius: 6, padding: "6px 8px" }}>
+                          <div style={{ fontSize: 9, fontWeight: 700, color: col, marginBottom: 3 }}>{d.source}</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Al: <span style={{ color: col }}>${d.buy_price}</span></div>
+                          <div style={{ fontSize: 11, color: roiCol, fontWeight: 700 }}>ROI: {d.roi_pct != null ? `${d.roi_pct}%` : "—"}</div>
+                          <div style={{ fontSize: 10, color: d.profit > 0 ? "#22c55e" : "#ef4444" }}>Kâr: {d.profit != null ? `$${d.profit}` : "—"}</div>
+                          {d.url && <a href={d.url} target="_blank" rel="noreferrer" style={{ fontSize: 9, color: C.muted2 }}>↗ Gör</a>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {deals.length === 0 && (
+                  <div style={{ marginTop: 6, fontSize: 10, color: C.muted }}>eBay: ${r.ebay?.min_price || "—"} · Profit hesaplanamadı</div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -2440,17 +2455,15 @@ function _renderReverseResults(data, C) {
       {results.length === 0 ? <div style={{ color: "#6b7280", fontSize: 12 }}>Sonuç yok</div> : (
         <div>
           {results.map((r, i) => {
-            const profit = r.profit;
-            const sug = r.suggestion;
-            const roi = profit?.roi_pct;
-            const roiTier = profit?.roi_tier;
-            const tierCol = ({ fire: "#ef4444", good: "#22c55e", low: "#f59e0b", loss: "#6b7280" })[roiTier] || C.muted;
             const sc = r.score || 0;
             const scoreTier = r.score_tier || (sc >= 85 ? "🔥 FIRE" : sc >= 70 ? "✨ EXCELLENT" : sc >= 55 ? "👍 GOOD" : sc >= 40 ? "🤔 FAIR" : "❌ SKIP");
             const scCol = sc >= 85 ? "#ef4444" : sc >= 70 ? "#22c55e" : sc >= 55 ? "#f59e0b" : sc >= 40 ? "#60a5fa" : C.muted;
-            const bd = r.score_breakdown;
+            const deals = r.deals || [];
+            const best = deals[0] || {};
+            const sug = r.suggestion;
             return (
               <div key={i} className="row-item" style={{ background: C.rowBg, border: `1px solid ${C.rowBorder}`, flexDirection: "column", alignItems: "stretch", animation: "slideIn .3s ease" }}>
+                {/* Header */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{r.isbn}</span>
@@ -2458,29 +2471,35 @@ function _renderReverseResults(data, C) {
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: `${scCol}22`, color: scCol, fontWeight: 700 }}>{scoreTier} · {sc}</span>
-                    {r.ebay_url && <a href={r.ebay_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: C.accent }}>eBay ↗</a>}
+                    {best.source && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: `${_srcCol(best.source)}22`, color: _srcCol(best.source), fontWeight: 700 }}>★ {best.source}</span>}
                   </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginTop: 10, fontSize: 11 }}>
-                  <div><span style={{ color: C.muted }}>eBay: </span><span style={{ fontWeight: 600, color: C.text }}>${r.ebay_total}</span></div>
-                  <div><span style={{ color: C.muted }}>Amz Used: </span><span style={{ fontWeight: 600, color: C.text }}>{r.amazon_used != null ? `$${r.amazon_used}` : "—"}</span></div>
-                  <div><span style={{ color: C.muted }}>Amz New: </span><span style={{ fontWeight: 600, color: C.text }}>{r.amazon_new != null ? `$${r.amazon_new}` : "—"}</span></div>
-                  <div><span style={{ color: C.muted }}>ROI: </span><span style={{ fontWeight: 700, color: tierCol }}>{roi != null ? `${roi}%` : "—"}</span></div>
-                  <div><span style={{ color: C.muted }}>Kâr: </span><span style={{ fontWeight: 700, color: profit?.profit > 0 ? "#22c55e" : "#ef4444" }}>{profit?.profit != null ? `$${profit.profit}` : "—"}</span></div>
+                {/* Amazon fiyat özeti */}
+                <div style={{ display: "flex", gap: 16, marginTop: 6, fontSize: 10, color: C.muted }}>
+                  <span>Amz Used: <b style={{ color: C.text }}>{r.amazon_used ? `$${r.amazon_used}` : "—"}</b></span>
+                  <span>Amz New: <b style={{ color: C.text }}>{r.amazon_new ? `$${r.amazon_new}` : "—"}</b></span>
+                  {sug && <span style={{ color: C.accent }}>🎯 Max: <b>${sug.max_buy}</b> @ {sug.target_roi_pct}% ROI</span>}
                 </div>
-                {sug && (
-                  <div style={{ marginTop: 6, fontSize: 10, color: C.accent }}>🎯 Max alım (hedef {sug.target_roi_pct}% ROI): <strong>${sug.max_buy}</strong></div>
+                {/* Kaynak karşılaştırma */}
+                {deals.length > 0 && (
+                  <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: `repeat(${Math.min(deals.length, 4)}, 1fr)`, gap: 6 }}>
+                    {deals.map((d, di) => {
+                      const col = _srcCol(d.source);
+                      const roiCol = d.roi_pct >= 30 ? "#22c55e" : d.roi_pct >= 15 ? "#f59e0b" : d.roi_pct > 0 ? "#60a5fa" : "#ef4444";
+                      return (
+                        <div key={di} style={{ background: C.bg, border: `1px solid ${col}44`, borderRadius: 6, padding: "6px 8px" }}>
+                          <div style={{ fontSize: 9, fontWeight: 700, color: col, marginBottom: 3 }}>{d.source}</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Al: <span style={{ color: col }}>${d.buy_price}</span></div>
+                          <div style={{ fontSize: 11, color: roiCol, fontWeight: 700 }}>ROI: {d.roi_pct != null ? `${d.roi_pct}%` : "—"}</div>
+                          <div style={{ fontSize: 10, color: d.profit > 0 ? "#22c55e" : "#ef4444" }}>Kâr: {d.profit != null ? `$${d.profit}` : "—"}</div>
+                          {d.url && <a href={d.url} target="_blank" rel="noreferrer" style={{ fontSize: 9, color: C.muted2 }}>↗ Gör</a>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
-                {bd && (
-                  <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {[["ROI", bd.roi_pts, 40], ["Durum", bd.condition_pts, 20], ["Marj", bd.margin_pts, 20], ["Arz", bd.supply_pts, 10], ["Veri", bd.data_pts, 10]].map(([label, pts, max]) => (
-                      <div key={label} style={{ fontSize: 9, color: C.muted2, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                        <span style={{ fontWeight: 700, color: pts >= max * 0.7 ? "#22c55e" : pts >= max * 0.4 ? "#f59e0b" : C.muted }}>{pts}/{max}</span>
-                        <span>{label}</span>
-                      </div>
-                    ))}
-                    {bd.penalty_pts < 0 && <div style={{ fontSize: 9, color: "#ef4444" }}>⚠️ {bd.penalty_pts}</div>}
-                  </div>
+                {deals.length === 0 && (
+                  <div style={{ marginTop: 6, fontSize: 10, color: C.muted }}>eBay: ${r.ebay_total || "—"} · Profit hesaplanamadı</div>
                 )}
               </div>
             );
