@@ -173,10 +173,13 @@ def _bf_rsc(html: str) -> Optional[dict]:
     return None
 
 async def _src_bookfinder(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
+    # NOT: Accept header gönderilmemeli — Next.js RSC mode'u tetikleyip 405 döndürüyor
+    _bf_hdrs = {"User-Agent": _ua(), "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br", "Connection": "keep-alive"}
     for url in [f"https://www.bookfinder.com/isbn/{isbn}/",
-                f"https://www.bookfinder.com/search/?keywords={isbn}&currency=USD&destination=us&mode=basic&lang=en&st=sh&ac=qr"]:
+                f"https://www.bookfinder.com/search/?isbn={isbn}&currency=USD&destination=us&binding=*&lang=en&new_used=*&order=p&mode=basic&st=sh&ac=qr"]:
         try:
-            r = await c.get(url, headers=_hdrs(), timeout=18)
+            r = await c.get(url, headers=_bf_hdrs, timeout=18)
             if r.status_code != 200: continue
             sr = _bf_rsc(r.text)
             if sr:
@@ -231,7 +234,7 @@ async def _src_abebooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
 
 # ── Source 3: ThriftBooks ────────────────────────────────────────────────────
 async def _src_thriftbooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
-    url = f"https://www.thriftbooks.com/isbn/{isbn}/"
+    url = f"https://www.thriftbooks.com/browse/?b.search={isbn}"
     try:
         r = await c.get(url, headers=_hdrs("https://www.thriftbooks.com/"), timeout=18)
         if r.status_code != 200: return None
