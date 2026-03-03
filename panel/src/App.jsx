@@ -2376,7 +2376,7 @@ function DiscoverTab({ C, push }) {
 
           {error && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>⚠️ {error}</div>}
 
-          {bulkResults && _renderBulkResults(bulkResults, C)}
+          {bulkResults && _renderBulkResults(bulkResults, C, targetRoi)}
         </div>
       )}
 
@@ -2398,7 +2398,7 @@ function DiscoverTab({ C, push }) {
 
           {error && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>⚠️ {error}</div>}
 
-          {bulkResults && _renderReverseResults(bulkResults, C)}
+          {bulkResults && _renderReverseResults(bulkResults, C, targetRoi)}
         </div>
       )}
 
@@ -2472,7 +2472,7 @@ function DiscoverTab({ C, push }) {
                     <div style={{ padding: "8px 6px", fontSize: 10, color: C.muted, fontFamily: "var(--mono)" }}>
                       ISBN'ler: {(entry.isbns || []).join(", ")}
                     </div>
-                    {_renderBulkResults({ results: entry.results || [], scanned: entry.scanned, total: entry.total, duration_s: entry.duration_s }, C)}
+                    {_renderBulkResults({ results: entry.results || [], scanned: entry.scanned, total: entry.total, duration_s: entry.duration_s }, C, targetRoi)}
                   </div>
                 )}
               </div>
@@ -2491,7 +2491,7 @@ const _SRC_COLORS = {
 };
 const _srcCol = (src) => _SRC_COLORS[src] || "#9ca3af";
 
-function _renderBulkResults(data, C) {
+function _renderBulkResults(data, C, minRoi = 0) {
   const results = data.results || [];
   return (
     <div style={{ marginTop: 16 }}>
@@ -2504,7 +2504,7 @@ function _renderBulkResults(data, C) {
             const sc = r.score || 0;
             const scoreTier = r.score_tier || (sc >= 85 ? "🔥 FIRE" : sc >= 70 ? "✨ EXCELLENT" : sc >= 55 ? "👍 GOOD" : sc >= 40 ? "🤔 FAIR" : "❌ SKIP");
             const scCol = sc >= 85 ? "#ef4444" : sc >= 70 ? "#22c55e" : sc >= 55 ? "#f59e0b" : sc >= 40 ? "#60a5fa" : C.muted;
-            const deals = (r.deals || []).filter(d => (d.roi_pct ?? -1) >= 0);
+            const deals = (r.deals || []).filter(d => (d.roi_pct ?? -1) >= minRoi);
             const best = deals[0] || r.best_deal || {};
             const amzUsed = r.amazon?.used_buybox;
             const amzNew  = r.amazon?.new_buybox;
@@ -2554,7 +2554,7 @@ function _renderBulkResults(data, C) {
   );
 }
 
-function _renderReverseResults(data, C) {
+function _renderReverseResults(data, C, minRoi = 0) {
   const results = data.results || [];
   return (
     <div style={{ marginTop: 16 }}>
@@ -2567,7 +2567,7 @@ function _renderReverseResults(data, C) {
             const sc = r.score || 0;
             const scoreTier = r.score_tier || (sc >= 85 ? "🔥 FIRE" : sc >= 70 ? "✨ EXCELLENT" : sc >= 55 ? "👍 GOOD" : sc >= 40 ? "🤔 FAIR" : "❌ SKIP");
             const scCol = sc >= 85 ? "#ef4444" : sc >= 70 ? "#22c55e" : sc >= 55 ? "#f59e0b" : sc >= 40 ? "#60a5fa" : C.muted;
-            const deals = (r.deals || []).filter(d => (d.roi_pct ?? -1) >= 0);
+            const deals = (r.deals || []).filter(d => (d.roi_pct ?? -1) >= minRoi);
             const best = deals[0] || {};
             const sug = r.suggestion;
             return (
