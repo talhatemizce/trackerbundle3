@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, Component } from "react";
+import { useState, useEffect, useCallback, useRef, Component, Fragment } from "react";
 
 const BASE = import.meta.env.PROD ? "" : "/api";
 const req = async (path, opts = {}, timeoutMs = 15000) => {
@@ -2144,12 +2144,12 @@ function ProfitCenter({ C, isDark }) {
             <div style={{ padding: 6, color: C.muted, fontWeight: 600, textAlign: "right" }}>Ort. Fiyat</div>
             <div style={{ padding: 6, color: C.muted, fontWeight: 600, textAlign: "right" }}>ROI%</div>
             {Object.entries(data.condition_breakdown).map(([cond, stats]) => (
-              <React.Fragment key={cond}>
+              <Fragment key={cond}>
                 <div style={{ padding: 6, color: C.text }}>{cond}</div>
                 <div style={{ padding: 6, color: C.text, textAlign: "right" }}>{stats.count}</div>
                 <div style={{ padding: 6, color: C.text, textAlign: "right" }}>${stats.avg_cost}</div>
                 <div style={{ padding: 6, color: stats.roi_pct >= 30 ? "#22c55e" : stats.roi_pct >= 15 ? "#f59e0b" : "#ef4444", textAlign: "right", fontWeight: 600 }}>{stats.roi_pct}%</div>
-              </React.Fragment>
+              </Fragment>
             ))}
           </div>
         </div>
