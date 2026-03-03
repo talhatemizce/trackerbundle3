@@ -76,7 +76,7 @@ def should_send(
             
             if siblings:
                 # Find the min price seen recently
-                min_price = min(v.get("total", 9999) for v in siblings.values() if now - v.get("ts",0) < _DEDUP_TTL_S)
+                min_price = min((v.get("total", 9999) for v in siblings.values() if now - v.get("ts",0) < _DEDUP_TTL_S), default=9999)
                 if min_price < 9999 and total <= min_price * (1 - _PRICE_OVERRIDE):
                     # Significantly cheaper than anything seen — fire
                     _mark(entries, key, total, score, item_id, now)

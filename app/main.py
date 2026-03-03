@@ -301,10 +301,20 @@ def clear_alerts(isbn: str):
 
 # ── Alert details — drawer için, disk-backed 30 günlük cache ─────────────────
 import time as _time
-_details_cache: dict = {}  # key: isbn → {ts, data}
-_DETAILS_TTL     = 30 * 24 * 3600   # 30 gün — eBay bot'a takılmamak için
-_DETAILS_TTL_OK  = 30 * 24 * 3600   # başarılı veri → 30 gün
-_DETAILS_TTL_ERR = 30 * 24 * 3600   # hata durumu → yine 30 gün (stale göster)
+_details_cache: dict = {}  # key: isbn → {ts, data} — in-memory, capped at 200 entries
+_DETAILS_TTL     = 30 * 24 * 3600
+_DETAILS_TTL_OK  = 30 * 24 * 3600
+_DETAILS_TTL_ERR = 30 * 24 * 3600
+_DETAILS_MAX     = 200  # max entries — LRU evict oldest when exceeded
+
+def _details_cache_set(isbn: str, data: dict) -> None:
+    global _details_cache
+    _details_cache[isbn] = {"ts": time.time(), "data": data}
+    # Evict oldest entries if over cap
+    if len(_details_cache) > _DETAILS_MAX:
+        oldest = sorted(_details_cache.items(), key=lambda x: x[1]["ts"])
+        for k, _ in oldest[:len(_details_cache) - _DETAILS_MAX]:
+            del _details_cache[k]
 
 @app.get("/alerts/details")
 async def alert_details(isbn: str, ebay_item_id: str = ""):
@@ -460,7 +470,7 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
     # eBay stale ise cache timestamp'i güncelleme — sadece fresh eBay verisi timestamp yeniler
     _ebay_fresh = ebay_data.get("ok") and not ebay_data.get("stale")
     _cache_ts = now if _ebay_fresh else (_stale["ts"] if _stale else now)
-    _details_cache[isbn_clean] = {"ts": _cache_ts, "data": result}
+    _details_cache_set(isbn_clean, result)
     return result
 
 
@@ -504,23 +514,35 @@ app.include_router(suggested_router)
 # ---- Amazon SP-API: top2 new + used with A/M label ----
 from app import amazon_client as _amz
 
+_amz_price_cache: dict = {}  # asin → {ts, data}
+_AMZ_PRICE_TTL = 20 * 60  # 20 dakika
+
 @app.get("/amazon/prices/{asin}")
 async def amazon_prices(asin: str):
-    """Top 2 New + Used fiyatlar, A (FBA) / M (FBM) label ile."""
+    """Top 2 New + Used fiyatlar — 20 dakika cache."""
+    cached = _amz_price_cache.get(asin)
+    if cached and time.time() - cached["ts"] < _AMZ_PRICE_TTL:
+        return {"ok": True, **cached["data"], "cached": True}
     try:
         data = await _amz.get_top2_prices(asin)
+        _amz_price_cache[asin] = {"ts": time.time(), "data": data}
         return {"ok": True, **data}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
 @app.get("/amazon/prices/{asin}/telegram")
 async def amazon_prices_telegram(asin: str):
-    """Telegram-ready formatted string."""
-    try:
-        data = await _amz.get_top2_prices(asin)
-        return {"ok": True, "text": _amz.format_telegram(data)}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    """Telegram-ready formatted string — 20 dakika cache."""
+    cached = _amz_price_cache.get(asin)
+    if cached and time.time() - cached["ts"] < _AMZ_PRICE_TTL:
+        data = cached["data"]
+    else:
+        try:
+            data = await _amz.get_top2_prices(asin)
+            _amz_price_cache[asin] = {"ts": time.time(), "data": data}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "text": _amz.format_telegram(data)}
 
 
 # ---- Link telemetry (broken eBay links) ----
@@ -935,6 +957,7 @@ async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
 from pathlib import Path as _Path
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+logger = logging.getLogger("trackerbundle.main")
 
 _panel_dist = _Path(__file__).resolve().parent.parent / "panel" / "dist"
 if _panel_dist.exists():

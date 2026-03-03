@@ -147,7 +147,7 @@ function buildEbaySearchUrl({ isbn, condition = null, sort = "cheapest" } = {}) 
 // Telemetry: report broken eBay link (fire-and-forget)
 async function reportBrokenLink({ isbn, url, context }) {
   try {
-    await fetch("/telemetry/link-broken", {
+    await fetch(BASE + "/telemetry/link-broken", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isbn, url, context, build_id: BUILD_ID, userAgent: navigator.userAgent }),
