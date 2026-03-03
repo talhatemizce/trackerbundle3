@@ -183,8 +183,11 @@ async def get_top2_prices(
     async with httpx.AsyncClient(timeout=35) as client:
         access_token = await _get_lwa_token(client)
 
-        new_data = await _fetch_offers(client, asin, "New", mkt, access_token)
-        used_data = await _fetch_offers(client, asin, "Used", mkt, access_token)
+        import asyncio as _asyncio
+        new_data, used_data = await _asyncio.gather(
+            _fetch_offers(client, asin, "New", mkt, access_token),
+            _fetch_offers(client, asin, "Used", mkt, access_token),
+        )
 
     return {
         "asin": asin,

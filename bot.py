@@ -282,6 +282,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Awaiting timeout kontrolü ────────────────────────────────────────────
     if _awaiting_expired(context):
         await _reply(update, "⏰ İşlem zaman aşımına uğradı, sıfırlandı. Tekrar seç.")
+        return
 
     # ── Yeni akış başlatma ───────────────────────────────────────────────────
     if txt == "➕ Add ISBN":

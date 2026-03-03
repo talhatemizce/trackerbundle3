@@ -476,6 +476,8 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
 
 @app.post("/debug/inject-history")
 def inject_test_history():
+    if not os.getenv("DEBUG"):
+        raise HTTPException(status_code=404, detail="Not found")
     """Test amaçlı — alert history'ye sahte entry ekler. UI'ı test etmek için kullan."""
     import time
     _alert_history.add_entry(

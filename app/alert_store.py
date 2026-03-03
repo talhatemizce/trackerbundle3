@@ -28,6 +28,9 @@ def check_and_mark(isbn: str, item_id: str) -> bool:
         if item_id in s:
             return True
         s.add(item_id)
+        # ISBN başına max 200 item_id tut — sonsuz büyümeyi engelle
+        if len(s) > 200:
+            s = set(list(s)[-200:])
         by_isbn[isbn] = sorted(s)
         _write_unsafe(p, data)
         return False

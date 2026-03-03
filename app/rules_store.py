@@ -26,6 +26,8 @@ JSON structure (app/data/rules.json):
 }
 """
 import os
+import time
+import threading
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 from pathlib import Path
@@ -36,6 +38,12 @@ USED_CONDITIONS = ["acceptable", "good", "very_good", "like_new"]
 
 # Global fallback interval (overridden by env var or rules.json defaults)
 _DEFAULT_INTERVAL = int(os.getenv("SCHED_TICK_SECONDS", "300"))
+
+# ── In-memory cache (30s TTL) — prevents 500 disk reads/tick ──────────────────
+_rules_cache: Dict = {}
+_rules_cache_ts: float = 0.0
+_rules_cache_ttl: float = 30.0
+_rules_lock = threading.Lock()
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
@@ -81,12 +89,25 @@ def _normalize_condition(condition: str) -> Optional[str]:
 
 def save_rules(rules: Dict[str, Any]) -> None:
     import json
+    global _rules_cache, _rules_cache_ts
     RULES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    RULES_FILE.write_text(json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Atomic write — temp file then replace
+    tmp = RULES_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(RULES_FILE)
+    # Invalidate cache
+    with _rules_lock:
+        _rules_cache = dict(rules)
+        _rules_cache_ts = time.monotonic()
 
 
 def load_rules() -> Dict[str, Any]:
     import json
+    global _rules_cache, _rules_cache_ts
+    with _rules_lock:
+        if _rules_cache and (time.monotonic() - _rules_cache_ts) < _rules_cache_ttl:
+            return dict(_rules_cache)
+    # Cache miss — read from disk
     if not RULES_FILE.exists():
         default_rules = {
             "defaults": {
@@ -104,9 +125,12 @@ def load_rules() -> Dict[str, Any]:
         }
         save_rules(default_rules)
         return default_rules
-
     raw = RULES_FILE.read_text(encoding="utf-8").strip()
-    return json.loads(raw or "{}")
+    rules = json.loads(raw or "{}")
+    with _rules_lock:
+        _rules_cache = dict(rules)
+        _rules_cache_ts = time.monotonic()
+    return rules
 
 
 # ── Price limit resolution (used by scheduler) ─────────────────────────────────

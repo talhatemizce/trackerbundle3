@@ -82,9 +82,8 @@ async def get_app_token(client: httpx.AsyncClient) -> str:
             "expires_at": time.time() + int(j.get("expires_in", 7200)),
         }
         _token_cache = new_tok
-
-    _save_token_to_disk(new_tok)
-    logger.info("Yeni eBay token alındı")
+        _save_token_to_disk(new_tok)
+        logger.info("Yeni eBay token alındı")
     return new_tok["access_token"]
 
 
