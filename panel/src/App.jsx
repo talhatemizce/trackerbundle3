@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-03-03-v21-discover-suggest-limit";
+const BUILD_ID = "2026-03-03-v22-ai-deal-scorer";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const isbn13to10 = (isbn) => {
