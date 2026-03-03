@@ -1167,7 +1167,53 @@ async def discover_bulk_endpoint(payload: BulkDiscoverPayload, request: Request 
         raise HTTPException(status_code=422, detail="ISBN listesi boş")
 
     result = await bulk_discover(payload.isbns)
+
+    # Taramayı geçmişe kaydet (arka planda, hata olursa sessizce geç)
+    try:
+        from app.discover_history_store import save_scan as _dh_save
+        _dh_save("bulk", payload.isbns, result)
+    except Exception as _e:
+        logger.warning("discover_history save failed: %s", _e)
+
     return {"ok": True, **result}
+
+
+# ── Discover History (tarama geçmişi) ────────────────────────────────────────
+
+@app.get("/discover/history")
+def discover_history(limit: int = 50):
+    """Kayıtlı tarama geçmişini döndür (en yeni önce)."""
+    from app.discover_history_store import get_history
+    entries = get_history(limit=limit)
+    return {"ok": True, "entries": entries, "total": len(entries)}
+
+
+@app.get("/discover/history/{scan_id}")
+def discover_history_get(scan_id: str):
+    """Belirli bir taramanın tam sonucunu getir."""
+    from app.discover_history_store import get_scan
+    entry = get_scan(scan_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Tarama bulunamadı")
+    return {"ok": True, **entry}
+
+
+@app.delete("/discover/history/{scan_id}")
+def discover_history_delete(scan_id: str):
+    """Belirli bir taramayı sil."""
+    from app.discover_history_store import delete_scan
+    ok = delete_scan(scan_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Tarama bulunamadı")
+    return {"ok": True, "deleted": scan_id}
+
+
+@app.delete("/discover/history")
+def discover_history_clear():
+    """Tüm tarama geçmişini temizle."""
+    from app.discover_history_store import clear_all
+    count = clear_all()
+    return {"ok": True, "cleared": count}
 
 
 # ── Reverse Lookup (Amazon → eBay arbitraj) ──────────────────────────────────
@@ -1192,6 +1238,13 @@ async def discover_reverse_endpoint(payload: ReverseLookupPayload, request: Requ
         raise HTTPException(status_code=422, detail="ISBN listesi boş")
 
     result = await reverse_lookup(payload.isbns, target_roi=payload.target_roi)
+
+    try:
+        from app.discover_history_store import save_scan as _dh_save
+        _dh_save("reverse", payload.isbns, result)
+    except Exception as _e:
+        logger.warning("discover_history save failed: %s", _e)
+
     return {"ok": True, **result}
 
 

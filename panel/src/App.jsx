@@ -64,7 +64,7 @@ const LIGHT = {
   green: "#16a34a", blue: "#2563eb", purple: "#7c3aed", orange: "#ea580c", red: "#dc2626",
 };
 
-const BUILD_ID = "2026-03-03-v22-ai-deal-scorer";
+const BUILD_ID = "2026-03-03-v23-discover-history";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const isbn13to10 = (isbn) => {
@@ -2174,7 +2174,7 @@ function ProfitCenter({ C, isDark }) {
 
 // ── Discover Tab ──────────────────────────────────────────────────────────────
 function DiscoverTab({ C, push }) {
-  const [mode, setMode] = useState("quick");  // quick | bulk | reverse
+  const [mode, setMode] = useState("quick");  // quick | bulk | reverse | history
   const [isbn, setIsbn] = useState("");
   const [isbnsText, setIsbnsText] = useState("");
   const [targetRoi, setTargetRoi] = useState(30);
@@ -2182,6 +2182,33 @@ function DiscoverTab({ C, push }) {
   const [result, setResult] = useState(null);
   const [bulkResults, setBulkResults] = useState(null);
   const [error, setError] = useState(null);
+  const [history, setHistory] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [expandedScan, setExpandedScan] = useState(null); // scan_id
+
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await req("/discover/history?limit=50");
+      setHistory(res.entries || []);
+    } catch { setHistory([]); }
+    setHistoryLoading(false);
+  };
+
+  const deleteScan = async (id) => {
+    try {
+      await req(`/discover/history/${id}`, { method: "DELETE" });
+      setHistory(h => (h || []).filter(e => e.id !== id));
+      if (expandedScan === id) setExpandedScan(null);
+    } catch { /* ignore */ }
+  };
+
+  const clearHistory = async () => {
+    if (!window.confirm("Tüm tarama geçmişi silinsin mi?")) return;
+    await req("/discover/history", { method: "DELETE" });
+    setHistory([]);
+    setExpandedScan(null);
+  };
 
   // Quick scan (single ISBN)
   const doQuickScan = async () => {
@@ -2228,9 +2255,12 @@ function DiscoverTab({ C, push }) {
   return (
     <div>
       {/* Mode selector */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        {[["quick", "⚡ Quick Scan"], ["bulk", "📦 Bulk Discover"], ["reverse", "🔄 Reverse Lookup"]].map(([k, label]) => (
-          <button key={k} onClick={() => { setMode(k); setResult(null); setBulkResults(null); setError(null); }}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+        {[["quick", "⚡ Quick Scan"], ["bulk", "📦 Bulk Discover"], ["reverse", "🔄 Reverse Lookup"], ["history", "📋 Geçmiş"]].map(([k, label]) => (
+          <button key={k} onClick={() => {
+            setMode(k); setResult(null); setBulkResults(null); setError(null);
+            if (k === "history" && history === null) loadHistory();
+          }}
             style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${mode === k ? C.accent : C.border}`, background: mode === k ? C.accent + "22" : C.surface2, color: mode === k ? C.accent : C.muted, fontFamily: "var(--mono)", fontSize: 12, fontWeight: 600, cursor: "pointer", transition: "all .2s" }}>
             {label}
           </button>
@@ -2369,6 +2399,85 @@ function DiscoverTab({ C, push }) {
           {error && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>⚠️ {error}</div>}
 
           {bulkResults && _renderReverseResults(bulkResults, C)}
+        </div>
+      )}
+
+      {/* ── Geçmiş ── */}
+      {mode === "history" && (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>📋 Tarama Geçmişi</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={loadHistory} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 5, background: C.surface2, border: `1px solid ${C.border}`, color: C.muted, cursor: "pointer" }}>↺ Yenile</button>
+              {(history || []).length > 0 && <button onClick={clearHistory} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 5, background: "none", border: `1px solid #ef444466`, color: "#ef4444", cursor: "pointer" }}>🗑 Tümünü Sil</button>}
+            </div>
+          </div>
+
+          {historyLoading && <div style={{ color: C.muted, fontSize: 12 }}>⏳ Yükleniyor…</div>}
+
+          {!historyLoading && (history || []).length === 0 && (
+            <div style={{ color: C.muted, fontSize: 12, textAlign: "center", padding: "24px 0" }}>
+              Henüz kayıtlı tarama yok.<br />
+              <span style={{ fontSize: 10, color: C.muted2 }}>Bulk Discover veya Reverse Lookup çalıştırınca otomatik kaydedilir.</span>
+            </div>
+          )}
+
+          {!historyLoading && (history || []).map(entry => {
+            const isExpanded = expandedScan === entry.id;
+            const date = new Date(entry.ts * 1000);
+            const dateStr = date.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", year: "2-digit" });
+            const timeStr = date.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+            const typeLabel = entry.type === "bulk" ? "📦 Bulk" : "🔄 Reverse";
+            const typeCol   = entry.type === "bulk" ? C.accent : "#a78bfa";
+            const scoreCol  = entry.best_score >= 70 ? "#22c55e" : entry.best_score >= 50 ? "#f59e0b" : C.muted;
+
+            return (
+              <div key={entry.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+                {/* Özet satır */}
+                <div
+                  onClick={() => setExpandedScan(isExpanded ? null : entry.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", cursor: "pointer", background: isExpanded ? C.surface2 : C.bg, flexWrap: "wrap" }}
+                >
+                  <span style={{ fontSize: 10, color: typeCol, fontWeight: 700, minWidth: 60 }}>{typeLabel}</span>
+                  <span style={{ fontSize: 11, color: C.muted, minWidth: 90, fontFamily: "var(--mono)" }}>{dateStr} {timeStr}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{entry.total} ISBN · {entry.scanned} tarandı · {entry.duration_s}s</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: scoreCol }}>⭐ {entry.best_score}/100</span>
+                  {entry.viable_count > 0 && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: "#22c55e22", color: "#22c55e", fontWeight: 700 }}>✅ {entry.viable_count} fırsat</span>}
+                  {entry.viable_count === 0 && <span style={{ fontSize: 10, color: C.muted2 }}>Kârlı fırsat yok</span>}
+                  <span style={{ marginLeft: "auto", fontSize: 12, color: C.muted }}>{isExpanded ? "▲" : "▼"}</span>
+                  <button onClick={e => { e.stopPropagation(); deleteScan(entry.id); }}
+                    style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: "none", border: `1px solid ${C.border}`, color: "#ef4444", cursor: "pointer" }}>✕</button>
+                </div>
+
+                {/* Top deals özeti (her zaman görünür) */}
+                {!isExpanded && (entry.top_deals || []).length > 0 && (
+                  <div style={{ padding: "6px 14px 10px", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {(entry.top_deals || []).slice(0, 3).map((d, di) => {
+                      const col = _srcCol(d.source);
+                      return (
+                        <div key={di} style={{ fontSize: 10, padding: "3px 8px", borderRadius: 6, background: `${col}18`, border: `1px solid ${col}33`, color: C.text }}>
+                          <span style={{ color: col, fontWeight: 700 }}>{d.source}</span>
+                          {" · "}{d.isbn} · <span style={{ color: "#22c55e", fontWeight: 700 }}>ROI {d.roi_pct}%</span>
+                          {" · "}${d.buy_price} → ${d.profit} kâr
+                          {d.url && <> · <a href={d.url} target="_blank" rel="noreferrer" style={{ color: C.muted2 }}>↗</a></>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Expanded: tam sonuçlar */}
+                {isExpanded && (
+                  <div style={{ padding: "0 8px 12px", maxHeight: 500, overflowY: "auto" }}>
+                    <div style={{ padding: "8px 6px", fontSize: 10, color: C.muted, fontFamily: "var(--mono)" }}>
+                      ISBN'ler: {(entry.isbns || []).join(", ")}
+                    </div>
+                    {_renderBulkResults({ results: entry.results || [], scanned: entry.scanned, total: entry.total, duration_s: entry.duration_s }, C)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
