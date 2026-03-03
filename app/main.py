@@ -273,10 +273,11 @@ def set_isbn_override_endpoint(isbn: str, payload: OverridePayload):
 # ---- Alert stats & clear (panel dashboard) ----
 from app import alert_store as _alert_store
 from app import alert_history_store as _alert_history
+from app import smart_dedup as _smart_dedup
 
 @app.get("/alerts/stats")
 def alerts_stats():
-    return {"ok": True, "stats": _alert_store.get_stats()}
+    return {"ok": True, "stats": _smart_dedup.get_stats()}
 
 @app.get("/alerts/summary")
 def alerts_summary():
@@ -290,15 +291,17 @@ def alerts_history(limit: int = 50, isbn: str | None = None):
 @app.delete("/alerts/dedup/{isbn}")
 def clear_dedup(isbn: str):
     """ISBN için dedup store'u temizle — bir sonraki scheduler çalışmasında yeniden alert gönderilir.
-    NOT: history store'a dokunmaz; sadece notified.json'u temizler."""
-    count = _alert_store.clear_isbn(isbn)
-    return {"ok": True, "isbn": isbn, "dedup_cleared": count}
+    smart_dedup.json (aktif) + notified.json (legacy) ikisi de temizlenir."""
+    smart_count = _smart_dedup.clear_isbn(isbn)
+    legacy_count = _alert_store.clear_isbn(isbn)
+    return {"ok": True, "isbn": isbn, "dedup_cleared": smart_count, "legacy_cleared": legacy_count}
 
 
 @app.delete("/alerts/{isbn}")
 def clear_alerts(isbn: str):
     """Hem dedup store'u hem history store'u temizler."""
-    _alert_store.clear_isbn(isbn)
+    _smart_dedup.clear_isbn(isbn)  # aktif dedup store
+    _alert_store.clear_isbn(isbn)  # legacy store
     _alert_history.clear_isbn(isbn)
     return {"ok": True, "isbn": isbn}
 
