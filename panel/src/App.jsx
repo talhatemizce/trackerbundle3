@@ -2504,7 +2504,7 @@ function _renderBulkResults(data, C) {
             const sc = r.score || 0;
             const scoreTier = r.score_tier || (sc >= 85 ? "🔥 FIRE" : sc >= 70 ? "✨ EXCELLENT" : sc >= 55 ? "👍 GOOD" : sc >= 40 ? "🤔 FAIR" : "❌ SKIP");
             const scCol = sc >= 85 ? "#ef4444" : sc >= 70 ? "#22c55e" : sc >= 55 ? "#f59e0b" : sc >= 40 ? "#60a5fa" : C.muted;
-            const deals = r.deals || [];
+            const deals = (r.deals || []).filter(d => (d.roi_pct ?? -1) >= 0);
             const best = deals[0] || r.best_deal || {};
             const amzUsed = r.amazon?.used_buybox;
             const amzNew  = r.amazon?.new_buybox;
@@ -2567,7 +2567,7 @@ function _renderReverseResults(data, C) {
             const sc = r.score || 0;
             const scoreTier = r.score_tier || (sc >= 85 ? "🔥 FIRE" : sc >= 70 ? "✨ EXCELLENT" : sc >= 55 ? "👍 GOOD" : sc >= 40 ? "🤔 FAIR" : "❌ SKIP");
             const scCol = sc >= 85 ? "#ef4444" : sc >= 70 ? "#22c55e" : sc >= 55 ? "#f59e0b" : sc >= 40 ? "#60a5fa" : C.muted;
-            const deals = r.deals || [];
+            const deals = (r.deals || []).filter(d => (d.roi_pct ?? -1) >= 0);
             const best = deals[0] || {};
             const sug = r.suggestion;
             return (
