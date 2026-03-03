@@ -1696,8 +1696,10 @@ function DetailDrawer({
                   })() : (
                     <div style={{fontSize:11,color:C.muted3}}>
                       {drawerData.amazon.reason === "not_configured"
-                        ? "Amazon SP-API yapılandırılmamış"
-                        : drawerData.amazon.note || drawerData.amazon.reason || "Veri yok"}
+                        ? "Amazon SP-API yapılandırılmamış (.env'de LWA_* eksik)"
+                        : drawerData.amazon.note?.includes("401")
+                          ? "⚠️ Amazon credentials geçersiz — LWA_REFRESH_TOKEN süresi dolmuş olabilir"
+                          : drawerData.amazon.note || drawerData.amazon.reason || "Veri yok"}
                     </div>
                   )}
                 </AccordionSection>

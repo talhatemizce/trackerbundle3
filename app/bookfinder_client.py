@@ -177,7 +177,9 @@ async def _src_bookfinder(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
                 f"https://www.bookfinder.com/search/?keywords={isbn}&currency=USD&destination=us&mode=basic&lang=en&st=sh&ac=qr"]:
         try:
             r = await c.get(url, headers=_hdrs(), timeout=18)
-            if r.status_code != 200: continue
+            if r.status_code != 200:
+                logger.warning("bookfinder non-200 url=%s status=%s", url, r.status_code)
+                continue
             sr = _bf_rsc(r.text)
             if sr:
                 def _po(o, cond):
@@ -198,7 +200,7 @@ async def _src_bookfinder(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
                 used_o = [o for o in jld if o["condition"]!="NEW"]
                 return {"source":"bookfinder","new":_stats(new_o),"used":_stats(used_o),"url":url}
         except Exception as e:
-            logger.debug("bookfinder err=%s", e)
+            logger.warning("bookfinder src err url=%s: %s", url, e)
     return None
 
 # ── Source 2: AbeBooks ───────────────────────────────────────────────────────
@@ -387,7 +389,9 @@ async def fetch_bookfinder(isbn: str, condition: str = "all", force: bool = Fals
     logger.info("bookfinder isbn=%s sources=%s", isbn_clean, sources_ok)
 
     if not results:
-        return {"ok": False, "error": "Tüm kaynaklar başarısız", "isbn": isbn_clean}
+        exceptions = [str(r) for r in tasks if isinstance(r, Exception)]
+        logger.warning("bookfinder all failed isbn=%s exceptions=%s", isbn_clean, exceptions[:3])
+        return {"ok": False, "error": "Tüm kaynaklar başarısız", "isbn": isbn_clean, "tried": 8, "hint": "VPS IP engellenmiş olabilir"}
 
     new_o, used_o = _merge(results)
 
