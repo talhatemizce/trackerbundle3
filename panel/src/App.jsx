@@ -795,7 +795,7 @@ function Thumb({ imageUrl, isbn, href, C, size = 72 }) {
   );
 }
 
-function AlertsFeedTab({ C, push, isbns, titles, bookMeta = {} }) {
+function AlertsFeedTab({ C, theme, push, isbns, titles, bookMeta = {} }) {
   const [entries, setEntries] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -2691,7 +2691,7 @@ function AppReal() {
               />
             )}
 
-{tab==="alerts"&&<AlertsFeedTab C={C} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
+{tab==="alerts"&&<AlertsFeedTab C={C} theme={theme} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
           </>
         )}
       </div>
