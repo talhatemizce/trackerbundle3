@@ -118,21 +118,10 @@ def delete_isbn(isbn: str):
         save_isbns(new_items)
     return {"ok": True, "count": len(new_items)}
 
-@app.get("/rules")
-def get_rules():
-    r = load_rules()
-    return {"ok": True, **r}
-
-@app.put("/rules")
-def set_rules(payload: RulesPayload):
-    r = {"new_max": float(payload.new_max), "used_max": float(payload.used_max)}
-    save_rules(r)
-    return {"ok": True, **r}
-
-# ==== RULES API ====
+# ==== Per-ISBN RULES API (rules_store) ====
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, Dict, Any
-from rules_store import load_rules, get_isbn_rules, set_rule, delete_rule
+from rules_store import load_rules as rs_load_rules, get_isbn_rules, set_rule, delete_rule
 
 Condition = Literal["new","used_like_new","used_very_good","used_good","used_acceptable"]
 
@@ -141,7 +130,7 @@ class RuleUpsert(BaseModel):
 
 @app.get("/rules")
 def rules_all() -> Dict[str, Any]:
-    return load_rules()
+    return rs_load_rules()
 
 @app.get("/rules/{isbn}")
 def rules_for_isbn(isbn: str) -> Dict[str, Any]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -47,6 +48,10 @@ class Settings(BaseSettings):
     # Price limits (base)
     default_new_limit: float = Field(default=50.0, validation_alias="DEFAULT_NEW_LIMIT")
     default_good_limit: float = Field(default=30.0, validation_alias="DEFAULT_GOOD_LIMIT")
+
+    # API authentication
+    api_key: Optional[str] = Field(default=None, validation_alias="API_KEY")
+    cors_origins: str = Field(default="", validation_alias="CORS_ORIGINS")  # comma-separated
 
     # Make offer ceiling multiplier
     make_offer_multiplier: float = Field(default=1.30, validation_alias="MAKE_OFFER_MULTIPLIER")

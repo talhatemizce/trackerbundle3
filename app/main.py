@@ -6,6 +6,10 @@ ISBN yönetimi, rules, watchlist endpointleri.
 """
 from __future__ import annotations
 
+import sys
+if sys.version_info < (3, 10):
+    raise RuntimeError("TrackerBundle requires Python 3.10 or later")
+
 import os
 from datetime import datetime, timezone
 import csv
@@ -24,13 +28,22 @@ logger = logging.getLogger("trackerbundle.main")
 
 app = FastAPI(title="TrackerBundle API", version="0.2.0")
 
-# CORS (panel dev mode port 3000 + production)
+# ── Auth middleware ──────────────────────────────────────────────────────────
+from app.core.config import get_settings as _get_settings
+from app.core.auth import APIKeyMiddleware
+
+_settings = _get_settings()
+app.add_middleware(APIKeyMiddleware, api_key=_settings.api_key)
+
+# ── CORS (restricted to configured origins) ─────────────────────────────────
 from fastapi.middleware.cors import CORSMiddleware
+
+_cors_origins = [o.strip() for o in _settings.cors_origins.split(",") if o.strip()] if _settings.cors_origins else []
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
 )
 
 
@@ -695,7 +708,7 @@ async def report_broken_link(request: Request):
     """
     Lightweight broken-link report from panel.
     Appends to data/link_telemetry.jsonl (newline-delimited JSON, append-only).
-    Internal use only — no auth needed since on VPS private network.
+    Internal use only — protected by API key middleware when API_KEY is set.
     """
     import json, time
     from pathlib import Path as _P
@@ -1134,6 +1147,7 @@ async def suggest_limit_batch(payload: SuggestBatchPayload):
     from app.amazon_client import get_top2_prices
 
     results = {}
+    errors = {}
     for isbn in payload.isbns[:50]:
         isbn = isbn.strip()
         try:
@@ -1141,9 +1155,10 @@ async def suggest_limit_batch(payload: SuggestBatchPayload):
             sug = _suggest(amazon_data, target_roi_pct=payload.target_roi)
             if sug:
                 results[isbn] = sug.to_dict()
-        except Exception:
-            pass
-    return {"ok": True, "suggestions": results, "count": len(results)}
+        except Exception as exc:
+            logger.warning("suggest-limit/batch error for isbn=%s: %s", isbn, exc)
+            errors[isbn] = str(exc)
+    return {"ok": True, "suggestions": results, "count": len(results), "errors": errors}
 
 
 # ── Bulk Discover (Paralel ISBN Keşif) ───────────────────────────────────────

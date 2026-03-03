@@ -298,7 +298,7 @@ def _calc_suggested(
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
-@router.get("/suggested-price/{isbn}/cache/clear", tags=["suggested-price"])
+@router.delete("/suggested-price/{isbn}/cache/clear", tags=["suggested-price"])
 async def clear_suggested_price_cache(isbn: str):
     """In-memory + disk cache'i bu ISBN için sıfırla (panel'den manuel tetikleme)."""
     isbn_clean = isbn.replace("-", "").replace(" ", "").strip()

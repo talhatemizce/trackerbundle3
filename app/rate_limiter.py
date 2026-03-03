@@ -64,12 +64,25 @@ discover_limiter = TokenBucket(capacity=10, refill_per_min=3.0)
 suggest_limiter = TokenBucket(capacity=20, refill_per_min=10.0)
 
 
+import os as _os
+
+# Comma-separated list of trusted reverse-proxy IPs (e.g. "127.0.0.1,10.0.0.1")
+_TRUSTED_PROXIES: set[str] = set(
+    p.strip() for p in _os.environ.get("TRUSTED_PROXIES", "127.0.0.1").split(",") if p.strip()
+)
+
+
 def get_client_ip(request: Request) -> str:
-    """Extract client IP, respecting X-Forwarded-For behind nginx."""
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """
+    Extract client IP.  Only trusts X-Forwarded-For when the direct
+    connection comes from a known reverse-proxy address.
+    """
+    direct_ip = request.client.host if request.client else "unknown"
+    if direct_ip in _TRUSTED_PROXIES:
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            return xff.split(",")[0].strip()
+    return direct_ip
 
 
 def check_discover_rate(request: Request, cost: int = 1):
