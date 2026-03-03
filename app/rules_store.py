@@ -1,36 +1,10 @@
-"""
-Rules storage and logic for TrackerBundle
-JSON-based price limit + scan-interval configuration with per-ISBN overrides.
-
-JSON structure (app/data/rules.json):
-{
-  "defaults": {
-    "new_max": 50.0,
-    "used_all_max": 20.0,
-    "interval_seconds": 300,
-    "used": {
-      "acceptable": 15.0,
-      "good": 18.0,
-      "very_good": 19.8,
-      "like_new": 21.78
-    }
-  },
-  "overrides": {
-    "<isbn>": {
-      "new_max": 30.0,          # optional
-      "used_all_max": 15.0,     # optional
-      "interval_seconds": 600,  # optional
-      "used": { ... }           # optional per-condition prices
-    }
-  }
-}
-"""
 import os
 import time
-import threading
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 from pathlib import Path
+
+from app.core.json_store import file_lock
 
 # Keep rules under app/data to match current repo convention
 RULES_FILE = Path(__file__).resolve().parent / "data" / "rules.json"
@@ -38,12 +12,6 @@ USED_CONDITIONS = ["acceptable", "good", "very_good", "like_new"]
 
 # Global fallback interval (overridden by env var or rules.json defaults)
 _DEFAULT_INTERVAL = int(os.getenv("SCHED_TICK_SECONDS", "300"))
-
-# ── In-memory cache (30s TTL) — prevents 500 disk reads/tick ──────────────────
-_rules_cache: Dict = {}
-_rules_cache_ts: float = 0.0
-_rules_cache_ttl: float = 30.0
-_rules_lock = threading.Lock()
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
@@ -85,29 +53,35 @@ def _normalize_condition(condition: str) -> Optional[str]:
     return None
 
 
-# ── File I/O ───────────────────────────────────────────────────────────────────
+# ── File I/O (thread-safe with file_lock + in-memory cache) ───────────────────
+
+_rules_cache: Dict[str, Any] | None = None
+_rules_cache_ts: float = 0.0
+_RULES_CACHE_TTL = 30.0  # seconds
+
+
+def _invalidate_cache() -> None:
+    global _rules_cache, _rules_cache_ts
+    _rules_cache = None
+    _rules_cache_ts = 0.0
+
 
 def save_rules(rules: Dict[str, Any]) -> None:
     import json
-    global _rules_cache, _rules_cache_ts
     RULES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write — temp file then replace
-    tmp = RULES_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(RULES_FILE)
-    # Invalidate cache
-    with _rules_lock:
-        _rules_cache = dict(rules)
-        _rules_cache_ts = time.monotonic()
+    with file_lock(RULES_FILE):
+        RULES_FILE.write_text(json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
+    _invalidate_cache()
 
 
 def load_rules() -> Dict[str, Any]:
     import json
     global _rules_cache, _rules_cache_ts
-    with _rules_lock:
-        if _rules_cache and (time.monotonic() - _rules_cache_ts) < _rules_cache_ttl:
-            return dict(_rules_cache)
-    # Cache miss — read from disk
+
+    now = time.time()
+    if _rules_cache is not None and (now - _rules_cache_ts) < _RULES_CACHE_TTL:
+        return _rules_cache
+
     if not RULES_FILE.exists():
         default_rules = {
             "defaults": {
@@ -125,12 +99,12 @@ def load_rules() -> Dict[str, Any]:
         }
         save_rules(default_rules)
         return default_rules
+
     raw = RULES_FILE.read_text(encoding="utf-8").strip()
-    rules = json.loads(raw or "{}")
-    with _rules_lock:
-        _rules_cache = dict(rules)
-        _rules_cache_ts = time.monotonic()
-    return rules
+    result = json.loads(raw or "{}")
+    _rules_cache = result
+    _rules_cache_ts = now
+    return result
 
 
 # ── Price limit resolution (used by scheduler) ─────────────────────────────────

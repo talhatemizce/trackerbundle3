@@ -281,8 +281,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Awaiting timeout kontrolü ────────────────────────────────────────────
     if _awaiting_expired(context):
-        await _reply(update, "⏰ İşlem zaman aşımına uğradı, sıfırlandı. Tekrar seç.")
-        return
+        return await _reply(update, "⏰ İşlem zaman aşımına uğradı, sıfırlandı. Tekrar seç.")
 
     # ── Yeni akış başlatma ───────────────────────────────────────────────────
     if txt == "➕ Add ISBN":
@@ -433,7 +432,274 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _reply(update, f"⚠️ {e}")
 
     # ── Bilinmiyor ───────────────────────────────────────────────────────────
-    await _reply(update, "Menüden seç: Status / Health / List / Add ISBN / Del ISBN / Decide ASIN\n(/cancel ile işlem iptal edilir)")
+    await _reply(update, "Menüden seç: Status / Health / List / Add ISBN / Del ISBN / Decide ASIN\n(/cancel, /scan, /profit, /trend komutları mevcut)")
+
+
+# ── /scan — Anlık eBay+Amazon tarama ─────────────────────────────────────────
+
+async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /scan 9780132350884
+    ISBN'i eBay+Amazon'da tara, en ucuz listing + profit göster.
+    """
+    await _log_update(update)
+    args = context.args
+    if not args:
+        return await _reply(update, "Kullanım: /scan <ISBN>\nÖrn: /scan 9780132350884")
+
+    isbn = clean_isbn(args[0])
+    if not is_valid_isbn(isbn):
+        return await _reply(update, f"⚠️ Geçersiz ISBN: {args[0]}")
+
+    await _reply(update, f"🔍 Taranıyor: {isbn}...")
+
+    try:
+        r = await api("GET", f"/suggest-limit/{isbn}?target_roi=30")
+        data = r.json()
+    except RuntimeError as e:
+        return await _reply(update, f"⚠️ {e}")
+
+    if not data.get("ok"):
+        # Amazon verisi yoksa sadece eBay tarama yap
+        try:
+            r2 = await api("POST", "/discover/bulk", json={"isbns": [isbn]})
+            bulk = r2.json()
+            results = bulk.get("results") or []
+            if results and results[0].get("ebay"):
+                ebay = results[0]["ebay"]
+                cheapest = ebay.get("cheapest") or []
+                if cheapest:
+                    lines = [f"📚 <b>ISBN: {isbn}</b>", f"eBay'de {ebay.get('total_found', 0)} ürün bulundu", ""]
+                    for i, c in enumerate(cheapest[:3], 1):
+                        lines.append(f"{i}. ${c['total']} · {c['condition']}")
+                        if c.get('make_offer'):
+                            lines.append("   🟡 Make Offer")
+                    lines.append(f"\n⚠️ Amazon fiyat verisi bulunamadı")
+                    return await _reply(update, "\n".join(lines), html=True)
+        except Exception:
+            pass
+        return await _reply(update, f"⚠️ ISBN {isbn} için Amazon fiyat verisi bulunamadı")
+
+    # Amazon + eBay verisi var
+    sell = data.get("sell_price", 0)
+    source = data.get("sell_source", "")
+    max_buy = data.get("max_buy", 0)
+    roi = data.get("target_roi_pct", 30)
+    fees = data.get("total_fees", 0)
+    profit = data.get("expected_profit", 0)
+
+    source_label = {"used_buybox": "Used BB", "new_buybox": "New BB", "used_top1": "Used Top", "new_top1": "New Top"}.get(source, source)
+
+    msg = (
+        f"📚 <b>ISBN: {isbn}</b>\n"
+        f"💰 Amazon {source_label}: ${sell}\n"
+        f"📊 Fees: ${fees}\n"
+        f"─────────────\n"
+        f"🎯 Max alım (ROI {roi}%): <b>${max_buy}</b>\n"
+        f"💵 Tahmini kâr: ${profit}\n"
+    )
+
+    # eBay'deki en ucuzları da ekle
+    try:
+        r3 = await api("POST", "/discover/bulk", json={"isbns": [isbn]})
+        bulk = r3.json()
+        results = bulk.get("results") or []
+        if results and results[0].get("ebay"):
+            cheapest = results[0]["ebay"].get("cheapest") or []
+            if cheapest:
+                msg += "\n📦 <b>eBay En Ucuzlar:</b>\n"
+                for i, c in enumerate(cheapest[:3], 1):
+                    offer = " 🟡" if c.get("make_offer") else ""
+                    msg += f"  {i}. ${c['total']} · {c['condition']}{offer}\n"
+
+                # Profit hesabı
+                deal = results[0].get("best_deal")
+                if deal:
+                    actual_roi = deal.get("roi_pct", 0)
+                    actual_profit = deal.get("profit", 0)
+                    tier = deal.get("roi_tier", "")
+                    emoji = {"fire": "🔥", "good": "✨", "low": "⚠️", "loss": "❌"}.get(tier, "")
+                    msg += f"\n{emoji} Gerçek ROI: {actual_roi}% · Kâr: ${actual_profit}"
+    except Exception:
+        pass
+
+    await _reply(update, msg, html=True)
+
+
+# ── /profit — Belirli bir alım fiyatı için ROI hesapla ───────────────────────
+
+async def cmd_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /profit 9780132350884 12.50
+    ISBN + eBay alım fiyatı → tam profit breakdown.
+    """
+    await _log_update(update)
+    args = context.args
+    if not args or len(args) < 2:
+        return await _reply(update, "Kullanım: /profit <ISBN> <eBay_fiyat>\nÖrn: /profit 9780132350884 12.50")
+
+    isbn = clean_isbn(args[0])
+    if not is_valid_isbn(isbn):
+        return await _reply(update, f"⚠️ Geçersiz ISBN: {args[0]}")
+
+    try:
+        ebay_price = float(args[1].replace("$", "").replace(",", "."))
+    except ValueError:
+        return await _reply(update, f"⚠️ Geçersiz fiyat: {args[1]}")
+
+    try:
+        r = await api("GET", f"/suggest-limit/{isbn}")
+        data = r.json()
+    except RuntimeError as e:
+        return await _reply(update, f"⚠️ {e}")
+
+    if not data.get("ok"):
+        return await _reply(update, f"⚠️ Amazon fiyat verisi bulunamadı: {isbn}")
+
+    sell = data.get("sell_price", 0)
+    fees = data.get("total_fees", 0)
+
+    profit = sell - fees - ebay_price
+    roi = (profit / ebay_price * 100) if ebay_price > 0 else 0
+
+    if roi >= 30:
+        emoji, tier = "🔥", "FIRE"
+    elif roi >= 15:
+        emoji, tier = "✨", "GOOD"
+    elif roi > 0:
+        emoji, tier = "⚠️", "LOW"
+    else:
+        emoji, tier = "❌", "LOSS"
+
+    msg = (
+        f"📚 <b>ISBN: {isbn}</b>\n"
+        f"─────────────\n"
+        f"💰 Amazon Satış: ${sell:.2f}\n"
+        f"🛒 eBay Alım: ${ebay_price:.2f}\n"
+        f"📊 Toplam Fee: ${fees:.2f}\n"
+        f"  • Referral: ${data.get('referral_fee', 0):.2f}\n"
+        f"  • Closing: ${data.get('closing_fee', 0):.2f}\n"
+        f"  • Fulfillment: ${data.get('fulfillment', 0):.2f}\n"
+        f"  • Inbound: ${data.get('inbound', 0):.2f}\n"
+        f"─────────────\n"
+        f"{emoji} <b>Kâr: ${profit:.2f} · ROI: {roi:.1f}% · {tier}</b>"
+    )
+    await _reply(update, msg, html=True)
+
+
+# ── /trend — Son alert/tarama özeti ──────────────────────────────────────────
+
+async def cmd_trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/trend — Son 24 saatteki alert aktivitesi ve watchlist durumu."""
+    await _log_update(update)
+
+    lines = ["📊 <b>Trend Raporu</b>\n"]
+
+    try:
+        # Watchlist durumu
+        r_stat = await api("GET", "/status")
+        stat = r_stat.json()
+        lines.append(f"📚 Watchlist: {stat.get('isbn_count', '?')} ISBN")
+        lines.append(f"⏱ Scan aralığı: {stat.get('sched_tick_seconds', '?')}s\n")
+
+        # Alert özeti
+        r_sum = await api("GET", "/alerts/summary")
+        summary = r_sum.json()
+        total = summary.get("total_alerts", 0)
+        today = summary.get("today", 0)
+        lines.append(f"🔔 Bugünkü alertler: {today}")
+        lines.append(f"📈 Toplam alert: {total}")
+
+        # Son 5 alert
+        r_hist = await api("GET", "/alerts/history?limit=5")
+        hist = r_hist.json()
+        entries = hist.get("entries") or []
+        if entries:
+            lines.append("\n📋 <b>Son 5 Alert:</b>")
+            for e in entries[:5]:
+                isbn = e.get("isbn", "?")
+                total_price = e.get("total", 0)
+                decision = e.get("decision", "?")
+                score = e.get("deal_score", 0)
+                ts = e.get("ts", "")
+                time_str = str(ts)[:16] if ts else "?"
+                emoji = "🟢" if decision == "BUY" else "🟡"
+                lines.append(f"  {emoji} {isbn} · ${total_price} · {decision} · Score:{score}")
+        else:
+            lines.append("\n📋 Son alert yok")
+
+        # Smart dedup durumu
+        try:
+            r_dedup = await api("GET", "/alerts/stats")
+            dedup = r_dedup.json()
+            stats = dedup.get("stats", {})
+            if stats:
+                total_tracked = sum(stats.values())
+                lines.append(f"\n🔄 Dedup: {len(stats)} ISBN takipte, {total_tracked} item")
+        except Exception:
+            pass
+
+    except RuntimeError as e:
+        lines.append(f"\n⚠️ API hatası: {e}")
+
+    await _reply(update, "\n".join(lines), html=True)
+
+
+# ── /discover — Toplu ISBN keşif (Telegram'dan) ─────────────────────────────
+
+async def cmd_discover(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /discover 9780132350884 9780201633610 9780596007126
+    Birden fazla ISBN'i tara, en iyi fırsatları göster.
+    """
+    await _log_update(update)
+    args = context.args
+    if not args:
+        return await _reply(update, "Kullanım: /discover <ISBN1> <ISBN2> ...\nÖrn: /discover 9780132350884 9780201633610")
+
+    isbns = [clean_isbn(a) for a in args if is_valid_isbn(clean_isbn(a))]
+    if not isbns:
+        return await _reply(update, "⚠️ Geçerli ISBN bulunamadı")
+
+    await _reply(update, f"🔍 {len(isbns)} ISBN taranıyor...")
+
+    try:
+        r = await api("POST", "/discover/bulk", json={"isbns": isbns})
+        data = r.json()
+    except RuntimeError as e:
+        return await _reply(update, f"⚠️ {e}")
+
+    results = data.get("results") or []
+    duration = data.get("duration_s", 0)
+    scanned = data.get("scanned", 0)
+
+    lines = [f"📊 <b>Keşif Raporu</b> ({scanned}/{len(isbns)} tarandı, {duration}s)\n"]
+
+    for r in results[:10]:
+        isbn = r.get("isbn", "?")
+        score = r.get("score", 0)
+        ebay = r.get("ebay") or {}
+        deal = r.get("best_deal")
+        sug = r.get("suggestion")
+
+        min_price = ebay.get("min_price")
+        ebay_str = f"${min_price}" if min_price else "—"
+
+        if deal and deal.get("viable"):
+            roi = deal.get("roi_pct", 0)
+            profit = deal.get("profit", 0)
+            emoji = "🔥" if roi >= 30 else "✨" if roi >= 15 else "⚠️"
+            lines.append(f"{emoji} <code>{isbn}</code> · eBay:{ebay_str} · ROI:{roi}% · Kâr:${profit} · [📊{score}]")
+        elif sug:
+            max_buy = sug.get("max_buy", 0)
+            lines.append(f"🎯 <code>{isbn}</code> · eBay:{ebay_str} · Max:${max_buy} · [📊{score}]")
+        else:
+            lines.append(f"📦 <code>{isbn}</code> · eBay:{ebay_str} · [📊{score}]")
+
+    if not results:
+        lines.append("Sonuç bulunamadı")
+
+    await _reply(update, "\n".join(lines), html=True)
 
 
 def main():
@@ -444,9 +710,14 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("add", cmd_add))
+    app.add_handler(CommandHandler("scan", cmd_scan))
+    app.add_handler(CommandHandler("profit", cmd_profit))
+    app.add_handler(CommandHandler("trend", cmd_trend))
+    app.add_handler(CommandHandler("discover", cmd_discover))
     app.add_handler(CommandHandler("cancel", lambda u, c: handle_text(u, c)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling(close_loop=False)
 
 if __name__ == "__main__":
     main()
+

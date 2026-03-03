@@ -75,20 +75,14 @@ def should_send(
             siblings = {k: v for k, v in entries.items() if k.startswith(prefix)}
             
             if siblings:
-                # Active sibling exists in TTL window — same item, slightly different price
+                # Find the min price seen recently
                 min_price = min((v.get("total", 9999) for v in siblings.values() if now - v.get("ts",0) < _DEDUP_TTL_S), default=9999)
-                if min_price < 9999:
-                    # Seen recently at a similar price
-                    if total <= min_price * (1 - _PRICE_OVERRIDE):
-                        # Significantly cheaper — fire as better_price
-                        _mark(entries, key, total, score, item_id, now)
-                        _write_unsafe(p, data)
-                        return True, "better_price"
-                    else:
-                        # Not cheap enough — suppress (same item, minor price wiggle)
-                        return False, "duplicate"
+                if min_price < 9999 and total <= min_price * (1 - _PRICE_OVERRIDE):
+                    # Significantly cheaper than anything seen — fire
+                    _mark(entries, key, total, score, item_id, now)
+                    _write_unsafe(p, data)
+                    return True, "better_price"
             
-            # Genuinely new — no active sibling in TTL window
             _mark(entries, key, total, score, item_id, now)
             _write_unsafe(p, data)
             return True, "new"

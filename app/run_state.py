@@ -6,33 +6,37 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.core.json_store import file_lock, _read_unsafe, _write_unsafe
 
-# In-memory cache — her due() çağrısında disk lock'tan kaçınır
-_cache: dict = {}  # isbn → float (last_run timestamp)
+# ── In-memory cache (avoids redundant disk I/O per due() call) ────────────────
+_cache: dict[str, float] | None = None
 
 
 def _path() -> Path:
     return get_settings().resolved_data_dir() / "last_run.json"
 
 
+def _ensure_cache() -> dict[str, float]:
+    global _cache
+    if _cache is None:
+        p = _path()
+        with file_lock(p):
+            data = _read_unsafe(p, default={"by_isbn": {}})
+        raw = data.get("by_isbn", {}) or {}
+        _cache = {k: float(v) for k, v in raw.items()}
+    return _cache
+
+
 def get_last_run(isbn: str) -> float:
-    if isbn in _cache:
-        return _cache[isbn]
-    p = _path()
-    with file_lock(p):
-        data = _read_unsafe(p, default={"by_isbn": {}})
-        by = data.get("by_isbn", {}) or {}
-        try:
-            val = float(by.get(isbn, 0))
-        except Exception:
-            val = 0.0
-    _cache[isbn] = val
-    return val
+    cache = _ensure_cache()
+    return cache.get(isbn, 0.0)
 
 
 def set_last_run(isbn: str, ts: float | None = None) -> None:
     if ts is None:
         ts = time.time()
-    _cache[isbn] = float(ts)  # cache'i anında güncelle
+
+    cache = _ensure_cache()
+    cache[isbn] = float(ts)
+
     p = _path()
     with file_lock(p):
         data = _read_unsafe(p, default={"by_isbn": {}})
@@ -44,5 +48,5 @@ def set_last_run(isbn: str, ts: float | None = None) -> None:
 def due(isbn: str, interval_seconds: int, now: float | None = None) -> bool:
     if now is None:
         now = time.time()
-    last = get_last_run(isbn)  # cache hit — disk'e gitmiyor
+    last = get_last_run(isbn)
     return (now - last) >= float(interval_seconds)

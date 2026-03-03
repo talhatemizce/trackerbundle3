@@ -115,3 +115,72 @@ def _tier(roi_pct: float) -> str:
     if roi_pct >= 15:  return "good"
     if roi_pct > 0:    return "low"
     return "loss"
+
+
+# ── Dynamic Limit Suggestion ──────────────────────────────────────────────────
+# "Amazon'da $X'e satılıyorsa ve %Y ROI istiyorsan, eBay'den max $Z'ye al."
+
+@dataclass
+class SuggestedLimit:
+    sell_price: float
+    sell_source: str
+    target_roi_pct: float
+    max_buy: float           # eBay'den en fazla bu fiyata al
+    referral_fee: float
+    closing_fee: float
+    fulfillment: float
+    inbound: float
+    total_fees: float
+    expected_profit: float   # sell - fees - max_buy
+    tier: str                # roi tier at exactly target ROI
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def suggest_limit(
+    amazon_data: Optional[dict],
+    target_roi_pct: float = 30.0,
+    fees: FeeConfig = DEFAULT_FEES,
+) -> Optional[SuggestedLimit]:
+    """
+    Amazon satış fiyatından geriye doğru hesapla:
+      max_buy = (sell_price - total_fees) / (1 + target_roi/100)
+
+    Bu fiyattan alırsan tam olarak target_roi_pct ROI elde edersin.
+    """
+    if target_roi_pct < 0:
+        return None
+
+    sell_price, sell_source = _extract_sell_price(amazon_data)
+    if sell_price is None or sell_price <= 0:
+        return None
+
+    referral = max(1.00, sell_price * fees.referral_pct)
+    total_fees = referral + fees.closing_fee + fees.fulfillment + fees.inbound
+
+    net_after_fees = sell_price - total_fees
+    if net_after_fees <= 0:
+        return None
+
+    # max_buy * (1 + roi/100) = net_after_fees
+    max_buy = net_after_fees / (1 + target_roi_pct / 100.0)
+    expected_profit = net_after_fees - max_buy
+
+    if max_buy <= 0:
+        return None
+
+    return SuggestedLimit(
+        sell_price=round(sell_price, 2),
+        sell_source=sell_source,
+        target_roi_pct=round(target_roi_pct, 1),
+        max_buy=round(max_buy, 2),
+        referral_fee=round(referral, 2),
+        closing_fee=fees.closing_fee,
+        fulfillment=fees.fulfillment,
+        inbound=fees.inbound,
+        total_fees=round(total_fees, 2),
+        expected_profit=round(expected_profit, 2),
+        tier=_tier(target_roi_pct),
+    )
+

@@ -19,6 +19,9 @@ logger = logging.getLogger("trackerbundle.amazon_client")
 _lwa_lock = asyncio.Lock()
 _lwa_cache: Dict[str, Any] = {}
 
+_price_cache: Dict[str, Any] = {}
+_PRICE_TTL_S = 15 * 60  # 15 minutes
+
 LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
 
 
@@ -179,22 +182,34 @@ async def get_top2_prices(
     """
     s = get_settings()
     mkt = (marketplace_id or s.spapi_marketplace_id).strip()
+    cache_key = f"{asin}|{mkt}"
+
+    now = time.time()
+    stale = [k for k, v in _price_cache.items() if now - v.get("ts", 0) > _PRICE_TTL_S]
+    for k in stale:
+        del _price_cache[k]
+
+    cached = _price_cache.get(cache_key)
+    if cached and now - cached["ts"] < _PRICE_TTL_S:
+        return cached["data"]
 
     async with httpx.AsyncClient(timeout=35) as client:
         access_token = await _get_lwa_token(client)
 
-        import asyncio as _asyncio
-        new_data, used_data = await _asyncio.gather(
+        new_data, used_data = await asyncio.gather(
             _fetch_offers(client, asin, "New", mkt, access_token),
             _fetch_offers(client, asin, "Used", mkt, access_token),
         )
 
-    return {
+    result = {
         "asin": asin,
         "marketplace_id": mkt,
         "new": new_data,
         "used": used_data,
     }
+
+    _price_cache[cache_key] = {"ts": now, "data": result}
+    return result
 
 
 def format_telegram(data: Dict[str, Any]) -> str:

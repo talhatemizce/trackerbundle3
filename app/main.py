@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import csv
 import io
 from typing import List, Optional
+import logging
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -19,14 +20,12 @@ from pydantic import BaseModel, Field
 from app import isbn_store
 from app import rules_store
 
+logger = logging.getLogger("trackerbundle.main")
+
 app = FastAPI(title="TrackerBundle API", version="0.2.0")
 
 # CORS (panel dev mode port 3000 + production)
 from fastapi.middleware.cors import CORSMiddleware
-import logging
-import time as _time
-import time
-logger = logging.getLogger("trackerbundle.main")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -274,11 +273,10 @@ def set_isbn_override_endpoint(isbn: str, payload: OverridePayload):
 # ---- Alert stats & clear (panel dashboard) ----
 from app import alert_store as _alert_store
 from app import alert_history_store as _alert_history
-from app import smart_dedup as _smart_dedup
 
 @app.get("/alerts/stats")
 def alerts_stats():
-    return {"ok": True, "stats": _smart_dedup.get_stats()}
+    return {"ok": True, "stats": _alert_store.get_stats()}
 
 @app.get("/alerts/summary")
 def alerts_summary():
@@ -292,35 +290,24 @@ def alerts_history(limit: int = 50, isbn: str | None = None):
 @app.delete("/alerts/dedup/{isbn}")
 def clear_dedup(isbn: str):
     """ISBN için dedup store'u temizle — bir sonraki scheduler çalışmasında yeniden alert gönderilir.
-    smart_dedup.json (aktif) + notified.json (legacy) ikisi de temizlenir."""
-    smart_count = _smart_dedup.clear_isbn(isbn)
-    legacy_count = _alert_store.clear_isbn(isbn)
-    return {"ok": True, "isbn": isbn, "dedup_cleared": smart_count, "legacy_cleared": legacy_count}
+    NOT: history store'a dokunmaz; sadece notified.json'u temizler."""
+    count = _alert_store.clear_isbn(isbn)
+    return {"ok": True, "isbn": isbn, "dedup_cleared": count}
 
 
 @app.delete("/alerts/{isbn}")
 def clear_alerts(isbn: str):
     """Hem dedup store'u hem history store'u temizler."""
-    _smart_dedup.clear_isbn(isbn)  # aktif dedup store
-    _alert_store.clear_isbn(isbn)  # legacy store
+    _alert_store.clear_isbn(isbn)
     _alert_history.clear_isbn(isbn)
     return {"ok": True, "isbn": isbn}
 
 # ── Alert details — drawer için, disk-backed 30 günlük cache ─────────────────
-_details_cache: dict = {}  # key: isbn → {ts, data} — in-memory, capped at 200 entries
-_DETAILS_TTL     = 30 * 24 * 3600
-_DETAILS_TTL_OK  = 30 * 24 * 3600
-_DETAILS_TTL_ERR = 30 * 24 * 3600
-_DETAILS_MAX     = 200  # max entries — LRU evict oldest when exceeded
-
-def _details_cache_set(isbn: str, data: dict) -> None:
-    global _details_cache
-    _details_cache[isbn] = {"ts": time.time(), "data": data}
-    # Evict oldest entries if over cap
-    if len(_details_cache) > _DETAILS_MAX:
-        oldest = sorted(_details_cache.items(), key=lambda x: x[1]["ts"])
-        for k, _ in oldest[:len(_details_cache) - _DETAILS_MAX]:
-            del _details_cache[k]
+import time as _time
+_details_cache: dict = {}  # key: isbn → {ts, data}
+_DETAILS_TTL     = 30 * 24 * 3600   # 30 gün — eBay bot'a takılmamak için
+_DETAILS_TTL_OK  = 30 * 24 * 3600   # başarılı veri → 30 gün
+_DETAILS_TTL_ERR = 30 * 24 * 3600   # hata durumu → yine 30 gün (stale göster)
 
 @app.get("/alerts/details")
 async def alert_details(isbn: str, ebay_item_id: str = ""):
@@ -343,6 +330,11 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
 
     isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
     now = _time.time()
+
+    # Evict expired cache entries to prevent memory leak
+    stale_keys = [k for k, v in _details_cache.items() if now - v["ts"] > _DETAILS_TTL]
+    for k in stale_keys:
+        del _details_cache[k]
 
     cached = _details_cache.get(isbn_clean)
     if cached and now - cached["ts"] < _DETAILS_TTL:
@@ -476,15 +468,17 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
     # eBay stale ise cache timestamp'i güncelleme — sadece fresh eBay verisi timestamp yeniler
     _ebay_fresh = ebay_data.get("ok") and not ebay_data.get("stale")
     _cache_ts = now if _ebay_fresh else (_stale["ts"] if _stale else now)
-    _details_cache_set(isbn_clean, result)
+    _details_cache[isbn_clean] = {"ts": _cache_ts, "data": result}
     return result
 
 
 @app.post("/debug/inject-history")
 def inject_test_history():
-    if not os.getenv("DEBUG"):
-        raise HTTPException(status_code=404, detail="Not found")
     """Test amaçlı — alert history'ye sahte entry ekler. UI'ı test etmek için kullan."""
+    import os
+    if not os.getenv("DEBUG"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Not found")
     import time
     _alert_history.add_entry(
         isbn="TEST0000001",
@@ -522,35 +516,23 @@ app.include_router(suggested_router)
 # ---- Amazon SP-API: top2 new + used with A/M label ----
 from app import amazon_client as _amz
 
-_amz_price_cache: dict = {}  # asin → {ts, data}
-_AMZ_PRICE_TTL = 20 * 60  # 20 dakika
-
 @app.get("/amazon/prices/{asin}")
 async def amazon_prices(asin: str):
-    """Top 2 New + Used fiyatlar — 20 dakika cache."""
-    cached = _amz_price_cache.get(asin)
-    if cached and time.time() - cached["ts"] < _AMZ_PRICE_TTL:
-        return {"ok": True, **cached["data"], "cached": True}
+    """Top 2 New + Used fiyatlar, A (FBA) / M (FBM) label ile."""
     try:
         data = await _amz.get_top2_prices(asin)
-        _amz_price_cache[asin] = {"ts": time.time(), "data": data}
         return {"ok": True, **data}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
 @app.get("/amazon/prices/{asin}/telegram")
 async def amazon_prices_telegram(asin: str):
-    """Telegram-ready formatted string — 20 dakika cache."""
-    cached = _amz_price_cache.get(asin)
-    if cached and time.time() - cached["ts"] < _AMZ_PRICE_TTL:
-        data = cached["data"]
-    else:
-        try:
-            data = await _amz.get_top2_prices(asin)
-            _amz_price_cache[asin] = {"ts": time.time(), "data": data}
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e))
-    return {"ok": True, "text": _amz.format_telegram(data)}
+    """Telegram-ready formatted string."""
+    try:
+        data = await _amz.get_top2_prices(asin)
+        return {"ok": True, "text": _amz.format_telegram(data)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # ---- Link telemetry (broken eBay links) ----
@@ -959,6 +941,96 @@ async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
         return r.json()
     except Exception:
         return {"upstream_status": r.status_code, "body": r.text}
+
+
+# ── Suggest Limit (Dynamic ROI-based limit) ──────────────────────────────────
+
+@app.get("/suggest-limit/{isbn_or_asin}")
+async def suggest_limit_endpoint(isbn_or_asin: str, target_roi: float = 30.0):
+    """
+    Amazon fiyatından geriye hesapla: "Bu ROI için max kaça al?"
+    Hem ISBN hem ASIN kabul eder.
+    """
+    from app.profit_calc import suggest_limit as _suggest
+    from app.amazon_client import get_top2_prices
+
+    try:
+        amazon_data = await get_top2_prices(isbn_or_asin.strip())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Amazon SP-API error: {e}")
+
+    result = _suggest(amazon_data, target_roi_pct=target_roi)
+    if result is None:
+        return {"ok": False, "error": "Amazon fiyat verisi bulunamadı veya fee'ler sell price'ı aşıyor"}
+
+    return {"ok": True, **result.to_dict()}
+
+
+class SuggestBatchPayload(BaseModel):
+    isbns: List[str]
+    target_roi: float = Field(default=30.0, ge=0, le=200)
+
+
+@app.post("/suggest-limit/batch")
+async def suggest_limit_batch(payload: SuggestBatchPayload):
+    """Birden fazla ISBN için dinamik limit önerisi."""
+    from app.profit_calc import suggest_limit as _suggest
+    from app.amazon_client import get_top2_prices
+
+    results = {}
+    for isbn in payload.isbns[:50]:
+        isbn = isbn.strip()
+        try:
+            amazon_data = await get_top2_prices(isbn)
+            sug = _suggest(amazon_data, target_roi_pct=payload.target_roi)
+            if sug:
+                results[isbn] = sug.to_dict()
+        except Exception:
+            pass
+    return {"ok": True, "suggestions": results, "count": len(results)}
+
+
+# ── Bulk Discover (Paralel ISBN Keşif) ───────────────────────────────────────
+
+class BulkDiscoverPayload(BaseModel):
+    isbns: List[str]
+
+
+@app.post("/discover/bulk")
+async def discover_bulk_endpoint(payload: BulkDiscoverPayload):
+    """
+    Toplu ISBN keşif: max 200 ISBN'i paralel tara.
+    eBay fiyat + Amazon fiyat + profit + skor.
+    """
+    from app.bulk_discover import bulk_discover
+
+    if not payload.isbns:
+        raise HTTPException(status_code=422, detail="ISBN listesi boş")
+
+    result = await bulk_discover(payload.isbns)
+    return {"ok": True, **result}
+
+
+# ── Reverse Lookup (Amazon → eBay arbitraj) ──────────────────────────────────
+
+class ReverseLookupPayload(BaseModel):
+    isbns: List[str]
+    target_roi: float = Field(default=30.0, ge=0, le=200)
+
+
+@app.post("/discover/reverse")
+async def discover_reverse_endpoint(payload: ReverseLookupPayload):
+    """
+    Verilen ISBN'leri eBay'de ara, Amazon fiyatla karşılaştır.
+    Arbitraj fırsatlarını skora göre sırala.
+    """
+    from app.reverse_lookup import reverse_lookup
+
+    if not payload.isbns:
+        raise HTTPException(status_code=422, detail="ISBN listesi boş")
+
+    result = await reverse_lookup(payload.isbns, target_roi=payload.target_roi)
+    return {"ok": True, **result}
 
 
 # ---- Static files: serve React panel build (production) ----

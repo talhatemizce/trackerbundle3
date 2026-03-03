@@ -449,21 +449,10 @@ async def run_once(force_all: bool = False) -> None:
         return
 
     async with httpx.AsyncClient(timeout=20) as client:
-        # Paralel tarama — max 3 ISBN aynı anda (eBay rate limit koruması)
-        sem = asyncio.Semaphore(3)
-
-        async def _check_with_sem(isbn: str) -> int:
-            async with sem:
-                try:
-                    s = await asyncio.wait_for(_check_isbn(client, isbn), timeout=90)
-                except asyncio.TimeoutError:
-                    logger.warning("isbn=%s timeout (>90s), skipping", isbn)
-                    s = 0
-                run_state.set_last_run(isbn, ts=now)
-                logger.info("isbn=%s alerts=%d", isbn, s)
-                return s
-
-        await asyncio.gather(*[_check_with_sem(isbn) for isbn in due_isbns])
+        for isbn in due_isbns:
+            sent = await _check_isbn(client, isbn)
+            run_state.set_last_run(isbn, ts=now)
+            logger.info("isbn=%s alerts=%d", isbn, sent)
 
 
 async def main() -> None:

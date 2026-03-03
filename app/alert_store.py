@@ -19,19 +19,20 @@ def check_and_mark(isbn: str, item_id: str) -> bool:
     Tek lock içinde kontrol + işaretle.
     True  => zaten vardı (gönderme)
     False => yeni (gönder)
+    Per-ISBN max 200 item_id tutulur (eski olanlar silinir).
     """
+    _MAX_PER_ISBN = 200
     p = _path()
     with file_lock(p):
         data = _read_unsafe(p, default={"by_isbn": {}})
         by_isbn = data.setdefault("by_isbn", {})
-        s = set(by_isbn.get(isbn, []))
+        items = by_isbn.get(isbn, [])
+        s = set(items)
         if item_id in s:
             return True
         s.add(item_id)
-        # ISBN başına max 200 item_id tut — sonsuz büyümeyi engelle
-        if len(s) > 200:
-            s = set(list(s)[-200:])
-        by_isbn[isbn] = sorted(s)
+        trimmed = sorted(s)[-_MAX_PER_ISBN:]
+        by_isbn[isbn] = trimmed
         _write_unsafe(p, data)
         return False
 
