@@ -454,7 +454,11 @@ async def run_once(force_all: bool = False) -> None:
 
         async def _check_with_sem(isbn: str) -> int:
             async with sem:
-                s = await _check_isbn(client, isbn)
+                try:
+                    s = await asyncio.wait_for(_check_isbn(client, isbn), timeout=90)
+                except asyncio.TimeoutError:
+                    logger.warning("isbn=%s timeout (>90s), skipping", isbn)
+                    s = 0
                 run_state.set_last_run(isbn, ts=now)
                 logger.info("isbn=%s alerts=%d", isbn, s)
                 return s

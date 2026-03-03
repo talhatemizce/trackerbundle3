@@ -23,6 +23,9 @@ app = FastAPI(title="TrackerBundle API", version="0.2.0")
 
 # CORS (panel dev mode port 3000 + production)
 from fastapi.middleware.cors import CORSMiddleware
+import logging
+import time as _time
+logger = logging.getLogger("trackerbundle.main")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -300,7 +303,6 @@ def clear_alerts(isbn: str):
     return {"ok": True, "isbn": isbn}
 
 # ── Alert details — drawer için, disk-backed 30 günlük cache ─────────────────
-import time as _time
 _details_cache: dict = {}  # key: isbn → {ts, data} — in-memory, capped at 200 entries
 _DETAILS_TTL     = 30 * 24 * 3600
 _DETAILS_TTL_OK  = 30 * 24 * 3600
@@ -959,7 +961,6 @@ async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
 from pathlib import Path as _Path
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-logger = logging.getLogger("trackerbundle.main")
 
 _panel_dist = _Path(__file__).resolve().parent.parent / "panel" / "dist"
 if _panel_dist.exists():

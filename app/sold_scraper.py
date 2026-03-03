@@ -83,7 +83,7 @@ def _cache_set(isbn: str, result: dict) -> None:
             data["entries"] = {
                 k: v for k, v in data.get("entries", {}).items()
                 # Stale entries kept indefinitely — only evict after 2 years
-                if now - v.get("ts", 0) < 730 * 24 * 3600
+                if now - v.get("ts", 0) < 180 * 24 * 3600
             }
             data["entries"][isbn] = {**result, "ts": int(now)}
             _write_unsafe(p, data)
