@@ -216,20 +216,25 @@ async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
 # ── eBay fiyat çekimi (mevcut Finding API'yi kullan) ─────────────────────────
 
 async def _get_ebay_offers(isbn: str) -> List[Dict]:
-    """eBay'den ISBN için aktif listingleri çek (Finding API)."""
+    """eBay'den ISBN için aktif listingleri çek (Browse API)."""
     try:
         from app.ebay_client import browse_search_isbn, item_total_price, normalize_condition
         from app.core.config import get_settings
         s = get_settings()
-        calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else None
+        # CALCULATED_SHIP_ESTIMATE_USD yoksa $3.99 default kullan — yoksa tüm ilanlar skip olur
+        calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else 3.99
 
         async with httpx.AsyncClient(timeout=20) as client:
             items = await browse_search_isbn(client, isbn)
+
+        if not items:
+            logger.debug("eBay browse_search_isbn isbn=%s returned 0 items", isbn)
 
         offers = []
         for it in (items or []):
             total = item_total_price(it, calc_ship_est=calc_est)
             if total is None or total <= 0:
+                logger.debug("eBay item_total_price=None isbn=%s item=%s", isbn, it.get("itemId","?"))
                 continue
             cond_text = (it.get("condition") or {}).get("conditionDisplayName") or ""
             cond_id = (it.get("condition") or {}).get("conditionId")
@@ -252,8 +257,14 @@ async def _get_ebay_offers(isbn: str) -> List[Dict]:
                 best[c] = o
         return list(best.values())
     except Exception as e:
-        logger.warning("eBay offers failed isbn=%s: %s", isbn, e)
-        return []
+        err_msg = str(e)
+        if "401" in err_msg or "Unauthorized" in err_msg:
+            logger.warning("eBay token hatası isbn=%s: %s", isbn, e)
+        elif "EBAY_CLIENT_ID" in err_msg:
+            logger.warning("eBay credentials eksik isbn=%s", isbn)
+        else:
+            logger.warning("eBay offers failed isbn=%s: %s", isbn, e)
+        return [{"_error": err_msg}]  # hata bilgisini taşı
 
 
 async def _get_bookfinder_offers(isbn: str) -> List[Dict]:
@@ -330,7 +341,10 @@ async def _scan_one(
     if isinstance(bf_offers, Exception):
         bf_offers = []
 
-    all_offers = (ebay_offers or []) + (bf_offers or [])
+    # Hata itemlarını filtrele ama reason kaydet
+    ebay_error = next((o["_error"] for o in (ebay_offers or []) if "_error" in o), None)
+    bf_error   = next((o["_error"] for o in (bf_offers   or []) if "_error" in o), None)
+    all_offers = [o for o in (ebay_offers or []) + (bf_offers or []) if "_error" not in o]
 
     # Kullanıcı alım fiyatı (generic CSV) → sentetik offer ekle
     csv_price = isbn_buy_prices.get(isbn) or isbn_buy_prices.get(asin)
@@ -361,9 +375,16 @@ async def _scan_one(
         logger.debug("Injected business_report price=%.2f for isbn=%s", amz_report_price, isbn)
 
     if not all_offers:
+        reason = "no_ebay_listings"
+        if ebay_error and ("401" in ebay_error or "Unauthorized" in ebay_error):
+            reason = "ebay_token_error"
+        elif ebay_error and "EBAY_CLIENT_ID" in ebay_error:
+            reason = "ebay_not_configured"
+        elif ebay_error:
+            reason = f"ebay_api_error"
         r = ArbResult(isbn=isbn, asin=asin, source="", source_condition="",
                       buy_price=0, amazon_sell_price=None, buybox_type=None, match_type=None)
-        r.reason = "no_ebay_listings"
+        r.reason = reason
         return [r]
 
     if not amazon_data:
