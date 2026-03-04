@@ -941,7 +941,7 @@ function ScanHistoryTab({ C }) {
                           <td style={{padding:"7px 10px"}}>
                             {r.roi_tier&&<span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:700,
                               background:`${tierColor(r.roi_tier)}22`,color:tierColor(r.roi_tier)}}>
-                              {r.roi_tier==="fire"?"🔥":r.roi_tier==="good"?"✅":r.roi_tier==="low"?"🔵":"❌"} {r.roi_tier}
+                              {r.roi_tier==="fire"?"🔥":r.roi_tier==="good"?"✅":r.roi_tier==="low"?"🔵":"❌"}
                             </span>}
                           </td>
                         </tr>
@@ -1503,7 +1503,7 @@ function DiscoverTab({ C, theme }) {
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:11}}>
                     <thead>
                       <tr style={{background:C.surface2, borderBottom:`1px solid ${C.border}`}}>
-                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Eşleşme","Kar $","ROI %","Tier",activeView==="rejected"?"Sebep":""].filter(Boolean).map(h=>(
+                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Eşleşme","Kar $","ROI %","Tier",activeView==="accepted"?"Linkler":"",activeView==="rejected"?"Sebep":""].filter(Boolean).map(h=>(
                           <th key={h} style={{padding:"8px 10px", textAlign:"left", color:C.muted, fontWeight:600, whiteSpace:"nowrap"}}>{h}</th>
                         ))}
                       </tr>
@@ -1531,9 +1531,41 @@ function DiscoverTab({ C, theme }) {
                           <td style={{padding:"7px 10px"}}>
                             {r.roi_tier&&<span style={{padding:"2px 6px", borderRadius:4, fontSize:10, fontWeight:700,
                               background:`${tierColor(r.roi_tier)}22`, color:tierColor(r.roi_tier)}}>
-                              {r.roi_tier==="fire"?"🔥":r.roi_tier==="good"?"✅":r.roi_tier==="low"?"🔵":"❌"} {r.roi_tier}
+                              {r.roi_tier==="fire"?"🔥":r.roi_tier==="good"?"✅":r.roi_tier==="low"?"🔵":"❌"}
                             </span>}
                           </td>
+                                                    {activeView==="accepted"&&(
+                            <td style={{padding:"6px 8px", whiteSpace:"nowrap"}}>
+                              {[
+                                {label:"AMZ", title:"Amazon",
+                                  url:`https://www.amazon.com/dp/${r.asin||r.isbn}`,
+                                  bg:"#FF9900", color:"#fff"},
+                                {label:"eBay", title:"eBay",
+                                  url:`https://www.ebay.com/sch/i.html?_nkw=${r.isbn}&_sacat=267`,
+                                  bg:"#E53238", color:"#fff"},
+                                {label:"ABE", title:"AbeBooks",
+                                  url:`https://www.abebooks.com/servlet/SearchResults?isbn=${r.isbn}`,
+                                  bg:"#990000", color:"#fff"},
+                                {label:"TB", title:"ThriftBooks",
+                                  url:`https://www.thriftbooks.com/browse/?b.search=${r.isbn}`,
+                                  bg:"#2E7D32", color:"#fff"},
+                                {label:"BF", title:"BookFinder",
+                                  url:`https://www.bookfinder.com/search/?isbn=${r.isbn}&new=1&used=1`,
+                                  bg:"#1565C0", color:"#fff"},
+                                {label:"KP", title:"Keepa",
+                                  url:`https://keepa.com/#!product/1-${r.asin||r.isbn}`,
+                                  bg:"#7B1FA2", color:"#fff"},
+                              ].map(({label,title,url,bg,color})=>(
+                                <a key={label} href={url} target="_blank" rel="noreferrer"
+                                  title={title}
+                                  style={{display:"inline-block", padding:"2px 5px", borderRadius:3,
+                                    fontSize:9, fontWeight:700, background:bg, color,
+                                    textDecoration:"none", marginRight:2, letterSpacing:"0.02em"}}>
+                                  {label}
+                                </a>
+                              ))}
+                            </td>
+                          )}
                           {activeView==="rejected"&&(
                             <td style={{padding:"7px 10px", color:C.muted, fontSize:10, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}
                               title={r.reason}>
