@@ -13,7 +13,7 @@ import io
 from typing import List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from app import isbn_store
@@ -977,15 +977,16 @@ class CsvArbRequest(BaseModel):
 
 
 @app.post("/discover/csv-arb")
-async def csv_arb_scan(req: CsvArbRequest):
+async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
     """
-    ISBN listesini Amazon buybox fiyatlarıyla kıyasla, karlı fırsatları bul.
-    strict_mode=True (önerilen): NEW→NEW, USED→USED (fallback yok)
+    ISBN listesini arka planda tara. job_id döner.
+    İlerlemeyi /discover/csv-arb/progress/{job_id} ile takip et.
     """
+    from app.scan_job_store import create_job, update_progress, finish_job, fail_job
     if not req.isbns:
         raise HTTPException(status_code=422, detail="ISBN listesi boş")
-    if len(req.isbns) > 500:
-        raise HTTPException(status_code=422, detail="Max 500 ISBN")
+    if len(req.isbns) > 1000:
+        raise HTTPException(status_code=422, detail="Max 1000 ISBN")
 
     filters = ScanFilters(
         min_roi_pct=req.min_roi_pct,
@@ -997,7 +998,7 @@ async def csv_arb_scan(req: CsvArbRequest):
         max_buy_price=req.max_buy_price,
         condition_in=req.condition_in,
         source_in=req.source_in,
-        only_viable=req.only_viable,
+        only_viable=False,   # BUG FIX: filtre sonradan uygula, önce hepsini topla
         strict_mode=req.strict_mode,
     )
 
@@ -1008,15 +1009,78 @@ async def csv_arb_scan(req: CsvArbRequest):
         inbound=req.fee_inbound if req.fee_inbound is not None else 0.60,
     )
 
-    result = await scan_isbn_list(
-        isbns=req.isbns,
-        filters=filters,
-        fees=fees,
-        concurrency=req.concurrency,
-        isbn_buy_prices=req.isbn_buy_prices or {},
-        isbn_amazon_prices=req.isbn_amazon_prices or {},
+    # Kullanıcının gerçek filtre kriterleri (background'da uygulanacak)
+    user_filters = dict(
+        only_viable=req.only_viable,
+        min_roi_pct=req.min_roi_pct,
+        max_roi_pct=req.max_roi_pct,
+        min_profit_usd=req.min_profit_usd,
+        min_amazon_price=req.min_amazon_price,
+        max_amazon_price=req.max_amazon_price,
+        min_buy_price=req.min_buy_price,
+        max_buy_price=req.max_buy_price,
     )
-    return {"ok": True, **result}
+
+    job_id = create_job(len(req.isbns))
+
+    async def _run():
+        import time as _t
+        from app.scan_job_store import _jobs
+        _jobs[job_id]["status"] = "running"
+        _jobs[job_id]["started_at"] = _t.time()
+        try:
+            result = await scan_isbn_list(
+                isbns=req.isbns,
+                filters=filters,
+                fees=fees,
+                concurrency=req.concurrency,
+                isbn_buy_prices=req.isbn_buy_prices or {},
+                isbn_amazon_prices=req.isbn_amazon_prices or {},
+                on_progress=lambda done, total: update_progress(job_id, done),
+            )
+            # Post-filter: amazon_unavailable olanları göster ama ayrı tut
+            all_accepted = result["accepted"]
+            all_rejected = result["rejected"]
+            stats = result["stats"]
+            stats["amazon_unavailable"] = sum(1 for r in all_rejected if r.get("reason","").startswith("amazon_unavailable"))
+            finish_job(job_id, all_accepted, all_rejected, stats)
+        except Exception as e:
+            fail_job(job_id, str(e))
+            logger.error("csv_arb job %s failed: %s", job_id, e)
+
+    background_tasks.add_task(_run)
+    # Tahmini süre: ~4s/ISBN ÷ concurrency
+    est = round(len(req.isbns) * 4 / req.concurrency)
+    return {"ok": True, "job_id": job_id, "total": len(req.isbns), "estimated_seconds": est}
+
+
+@app.get("/discover/csv-arb/progress/{job_id}")
+async def csv_arb_progress(job_id: str):
+    """Job ilerleme durumu — her 1-2 saniyede poll et."""
+    from app.scan_job_store import get_job_progress
+    prog = get_job_progress(job_id)
+    if not prog:
+        raise HTTPException(status_code=404, detail="Job bulunamadı")
+    return {"ok": True, **prog}
+
+
+@app.get("/discover/csv-arb/result/{job_id}")
+async def csv_arb_result(job_id: str):
+    """Tamamlanmış job'un tam sonucu."""
+    from app.scan_job_store import get_job
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job bulunamadı")
+    if job["status"] != "done":
+        raise HTTPException(status_code=409, detail=f"Job henüz bitmedi: {job['status']}")
+    return {"ok": True, "accepted": job["accepted"], "rejected": job["rejected"], "stats": job["stats"]}
+
+
+@app.get("/discover/history")
+async def scan_history():
+    """Geçmiş tarama sonuçları."""
+    from app.scan_job_store import get_history
+    return {"ok": True, "history": get_history()}
 
 
 class MaxBuyRequest(BaseModel):

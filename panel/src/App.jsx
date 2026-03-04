@@ -799,6 +799,167 @@ function Thumb({ imageUrl, isbn, href, C, size = 72 }) {
 // ═══════════════════════════════════════════════════════════════════
 // DISCOVER TAB — CSV Arbitrage Scanner
 // ═══════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════
+// SCAN HISTORY TAB
+// ═══════════════════════════════════════════════════════════════════
+function ScanHistoryTab({ C }) {
+  const BASE = window.API_BASE || "";
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(BASE + "/discover/history");
+      const d = await r.json();
+      if (d.ok) setHistory(d.history || []);
+    } catch(e) {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const fmtDate = ts => new Date(ts*1000).toLocaleString("tr-TR", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+  const tierColor = t => t==="fire"?"#f97316":t==="good"?"#22c55e":t==="low"?"#3b82f6":"#ef4444";
+
+  const exportCsv = (entry) => {
+    const cols = ["isbn","asin","source","source_condition","buy_price","amazon_sell_price","match_type","profit","roi_pct","roi_tier"];
+    const header = cols.join(",");
+    const lines = (entry.accepted||[]).map(r => cols.map(c => r[c]??'').join(","));
+    const blob = new Blob([header+"\n"+lines.join("\n")], {type:"text/csv"});
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `scan_${new Date(entry.ts*1000).toISOString().slice(0,10)}_${entry.job_id}.csv`; a.click();
+  };
+
+  if (loading) return <div style={{textAlign:"center",paddingTop:80,color:C.muted3}}>Yükleniyor…</div>;
+  if (!history.length) return (
+    <div style={{textAlign:"center",paddingTop:80,color:C.muted3}}>
+      <div style={{fontSize:32,marginBottom:12}}>📋</div>
+      <div>Henüz kayıtlı tarama yok</div>
+      <div style={{fontSize:11,marginTop:6}}>Discover sekmesinden tarama yap</div>
+    </div>
+  );
+
+  return (
+    <div style={{display:"flex",gap:20}}>
+      {/* List */}
+      <div style={{width:280,flexShrink:0}}>
+        <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:10}}>
+          📋 Geçmiş Taramalar ({history.length})
+        </div>
+        {history.map((entry,i) => (
+          <div key={entry.job_id}
+            onClick={()=>setSelected(entry)}
+            style={{background: selected?.job_id===entry.job_id ? C.surface2 : C.surface,
+              border:`1px solid ${selected?.job_id===entry.job_id ? C.accent : C.border}`,
+              borderRadius:8, padding:"10px 12px", marginBottom:6, cursor:"pointer"}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:3}}>{fmtDate(entry.ts)}</div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <span style={{fontSize:13,fontWeight:600,color:C.green}}>✅ {entry.stats?.accepted_count||0}</span>
+              <span style={{fontSize:11,color:C.muted}}>/ {entry.stats?.total_isbns||"?"} ISBN</span>
+            </div>
+            {entry.stats?.duration_s && <div style={{fontSize:10,color:C.muted3,marginTop:2}}>⏱ {entry.stats.duration_s}s</div>}
+          </div>
+        ))}
+      </div>
+
+      {/* Detail */}
+      <div style={{flex:1,minWidth:0}}>
+        {!selected ? (
+          <div style={{textAlign:"center",paddingTop:80,color:C.muted3}}>Sol taraftan bir tarama seç</div>
+        ) : (
+          <>
+            <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+              {[
+                {label:"Toplam ISBN", val:selected.stats?.total_isbns||"?", color:C.text},
+                {label:"✅ Kabul", val:selected.stats?.accepted_count||0, color:C.green},
+                {label:"❌ Elenen", val:selected.rejected_count||0, color:C.muted},
+                {label:"⏱ Süre", val:(selected.stats?.duration_s||"?")+"s", color:C.blue},
+                {label:"⚠️ Amazon yok", val:selected.stats?.amazon_unavailable||0, color:"#f97316"},
+              ].map(s=>(
+                <div key={s.label} style={{background:C.surface,border:`1px solid ${C.border}`,
+                  borderRadius:8,padding:"8px 12px",minWidth:80}}>
+                  <div style={{fontSize:10,color:C.muted}}>{s.label}</div>
+                  <div style={{fontSize:16,fontWeight:700,color:s.color}}>{s.val}</div>
+                </div>
+              ))}
+              <button onClick={()=>exportCsv(selected)} style={{marginLeft:"auto",padding:"6px 12px",
+                fontSize:11,borderRadius:6,cursor:"pointer",background:C.surface2,
+                color:C.muted,border:`1px solid ${C.border}`}}>⬇ CSV İndir</button>
+            </div>
+
+            {/* Top reject reasons */}
+            {selected.top_reasons && Object.keys(selected.top_reasons).length > 0 && (
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,
+                padding:"10px 14px",marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:600,color:C.text,marginBottom:8}}>Eleme Sebepleri</div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {Object.entries(selected.top_reasons).map(([reason,count])=>(
+                    <span key={reason} style={{padding:"3px 8px",borderRadius:4,fontSize:10,
+                      background:C.surface2,color:C.muted}}>
+                      {reason}: <b style={{color:C.text}}>{count}</b>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Results table */}
+            {(selected.accepted||[]).length === 0 ? (
+              <div style={{padding:40,textAlign:"center",color:C.muted3,fontSize:12}}>
+                Bu taramada kabul edilen sonuç yok
+              </div>
+            ) : (
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead>
+                      <tr style={{background:C.surface2,borderBottom:`1px solid ${C.border}`}}>
+                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Eşleşme","Kar $","ROI %","Tier"].map(h=>(
+                          <th key={h} style={{padding:"8px 10px",textAlign:"left",color:C.muted,fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(selected.accepted||[]).map((r,i)=>(
+                        <tr key={i} style={{borderBottom:`1px solid ${C.border}`,background:i%2===0?C.surface:C.surface2}}>
+                          <td style={{padding:"7px 10px",color:C.text,fontFamily:"monospace"}}>{r.isbn}</td>
+                          <td style={{padding:"7px 10px",color:C.muted,fontFamily:"monospace",fontSize:10}}>{r.asin||"—"}</td>
+                          <td style={{padding:"7px 10px",color:C.accent}}>{r.source}</td>
+                          <td style={{padding:"7px 10px"}}>
+                            <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:600,
+                              background:r.source_condition==="new"?`${C.green}22`:`${C.accent}22`,
+                              color:r.source_condition==="new"?C.green:C.accent}}>
+                              {(r.source_condition||"").toUpperCase()}
+                            </span>
+                          </td>
+                          <td style={{padding:"7px 10px",color:C.text}}>{r.buy_price>0?`$${r.buy_price}`:"—"}</td>
+                          <td style={{padding:"7px 10px",color:C.text}}>{r.amazon_sell_price!=null?`$${r.amazon_sell_price}`:"—"}</td>
+                          <td style={{padding:"7px 10px",color:C.muted,fontSize:10}}>{r.match_type||"—"}</td>
+                          <td style={{padding:"7px 10px",fontWeight:600,color:r.profit>0?C.green:"#ef4444"}}>{r.profit!=null?`$${r.profit}`:"—"}</td>
+                          <td style={{padding:"7px 10px",fontWeight:600,color:tierColor(r.roi_tier)}}>{r.roi_pct!=null?`${r.roi_pct}%`:"—"}</td>
+                          <td style={{padding:"7px 10px"}}>
+                            {r.roi_tier&&<span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:700,
+                              background:`${tierColor(r.roi_tier)}22`,color:tierColor(r.roi_tier)}}>
+                              {r.roi_tier==="fire"?"🔥":r.roi_tier==="good"?"✅":r.roi_tier==="low"?"🔵":"❌"} {r.roi_tier}
+                            </span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DiscoverTab({ C, theme }) {
   const BASE = window.API_BASE || "";
   const [csvText, setCsvText] = useState("");
@@ -808,8 +969,10 @@ function DiscoverTab({ C, theme }) {
   const [csvReportType, setCsvReportType] = useState(""); // "amazon_business_report" | "generic"
   const [csvTitleMap, setCsvTitleMap] = useState({}); // {isbn: title}
   const [scanning, setScanning] = useState(false);
-  const [progress, setProgress] = useState(null); // {done, total}
-  const [results, setResults] = useState(null);   // {accepted, rejected, stats}
+  const [jobId, setJobId] = useState(null);
+  const [progress, setProgress] = useState(null); // {done, total, eta_s, status}
+  const [results, setResults] = useState(null);
+  const pollRef = useRef(null);
   const [error, setError] = useState("");
   const [activeView, setActiveView] = useState("accepted"); // "accepted"|"rejected"
 
@@ -941,10 +1104,14 @@ function DiscoverTab({ C, theme }) {
 
   const isbns = csvText.split("\n").map(s => s.trim()).filter(Boolean);
 
-  // ── Scan ────────────────────────────────────────────────────────
+  // ── Scan (background job + polling) ────────────────────────────
+  const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+
   const runScan = async () => {
     if (!isbns.length) return;
-    setScanning(true); setResults(null); setError(""); setProgress({done:0, total:isbns.length});
+    stopPolling();
+    setScanning(true); setResults(null); setError(""); setJobId(null);
+    setProgress({done:0, total:isbns.length, eta_s:null, status:"pending"});
 
     const body = {
       isbns,
@@ -965,21 +1132,44 @@ function DiscoverTab({ C, theme }) {
     };
 
     try {
+      // 1. Job başlat — hemen job_id döner
       const res = await fetch(BASE + "/discover/csv-arb", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify(body),
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (data.ok) {
-        setResults(data);
-        setProgress({done: isbns.length, total: isbns.length});
-      } else {
-        setError(data.detail || "Tarama başarısız");
-      }
+      if (!data.ok) { setError(data.detail || "Başlatılamadı"); setScanning(false); return; }
+
+      const jid = data.job_id;
+      setJobId(jid);
+      setProgress({done:0, total:data.total, eta_s:data.estimated_seconds, status:"running"});
+
+      // 2. Poll progress
+      pollRef.current = setInterval(async () => {
+        try {
+          const pr = await fetch(BASE + "/discover/csv-arb/progress/" + jid);
+          const pd = await pr.json();
+          if (!pd.ok) return;
+          setProgress({done:pd.progress, total:pd.total, eta_s:pd.eta_s, status:pd.status,
+            accepted_count:pd.accepted_count, rejected_count:pd.rejected_count});
+
+          if (pd.status === "done") {
+            stopPolling();
+            // Tam sonucu çek
+            const rr = await fetch(BASE + "/discover/csv-arb/result/" + jid);
+            const rd = await rr.json();
+            if (rd.ok) setResults(rd);
+            else setError("Sonuç alınamadı");
+            setScanning(false);
+          } else if (pd.status === "error") {
+            stopPolling();
+            setError("Tarama hatası: " + (pd.error || "bilinmiyor"));
+            setScanning(false);
+          }
+        } catch(e) { /* poll hatası — devam et */ }
+      }, 1500);
+
     } catch(e) {
       setError("Bağlantı hatası: " + e.message);
-    } finally {
       setScanning(false);
     }
   };
@@ -1210,7 +1400,14 @@ function DiscoverTab({ C, theme }) {
             color: scanning||!isbns.length ? C.muted : "#fff",
             border:"none", borderRadius:8, cursor: scanning||!isbns.length?"not-allowed":"pointer"}}
         >
-          {scanning ? `⏳ Tarıyor… ${progress?.done||0}/${progress?.total||0}` : `🔍 ${isbns.length} ISBN Tara`}
+          {scanning ? (() => {
+          const done = progress?.done||0, total = progress?.total||0;
+          const pct = total > 0 ? Math.round(done/total*100) : 0;
+          const eta = progress?.eta_s;
+          const etaStr = eta ? (eta>60 ? `~${Math.ceil(eta/60)}dk` : `~${eta}s`) : "";
+          const accepted = progress?.accepted_count||0;
+          return `⏳ ${done}/${total} (${pct}%) · ✅${accepted} ${etaStr}`;
+        })() : `🔍 ${isbns.length} ISBN Tara`}
         </button>
 
         {error && <div style={{marginTop:8, color:C.red||"#ef4444", fontSize:11, padding:"6px 8px",
@@ -2576,7 +2773,7 @@ function DetailDrawer({
   );
 }
 
-const TABS = ["dashboard","watchlist","pricing","alerts","discover"];
+const TABS = ["dashboard","watchlist","pricing","alerts","discover","history"];
 
 export default function App() {
   return <ErrorBoundary><AppReal /></ErrorBoundary>;
@@ -2836,7 +3033,7 @@ function AppReal() {
         </div>
         <div style={{display:"flex"}}>
           {TABS.map(t=>{
-            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",discover:"🔍 Discover"}[t]||t;
+            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",discover:"🔍 Discover",history:"📋 Geçmiş"}[t]||t;
             return <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:12,color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400,letterSpacing:"0.01em"}}>{label}</button>;
           })}
         </div>
@@ -3234,6 +3431,7 @@ function AppReal() {
 
 {tab==="alerts"&&<AlertsFeedTab C={C} theme={theme} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
             {tab==="discover"&&<DiscoverTab C={C} theme={theme}/>}
+            {tab==="history"&&<ScanHistoryTab C={C}/>}
           </>
         )}
       </div>
