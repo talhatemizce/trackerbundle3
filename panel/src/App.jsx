@@ -965,13 +965,18 @@ function DiscoverTab({ C, theme }) {
   const [isbnAmazonPrices, setIsbnAmazonPrices] = useState({}); // {isbn: avgPrice} — Amazon Business Report ortalaması
   const [csvReportType, setCsvReportType] = useState(""); // "amazon_business_report" | "generic"
   const [csvTitleMap, setCsvTitleMap] = useState({}); // {isbn: title}
-  const [scanning, setScanning] = useState(false);
-  const [jobId, setJobId] = useState(null);
-  const [progress, setProgress] = useState(null); // {done, total, eta_s, status}
-  const [results, setResults] = useState(null);
-  const pollRef = useRef(null);
+  // Scan state App seviyesinde — tab degisince kaybolmaz
+  const jobId    = scanJob?.jobId    ?? null;
+  const progress = scanJob?.progress ?? null;
+  const results  = scanJob?.results  ?? null;
+  const scanning = scanJob?.scanning ?? false;
+  const setJobId    = v => setScanJob(p => ({...(p||{}), jobId: typeof v==="function"?v(p?.jobId):v}));
+  const setProgress = v => setScanJob(p => ({...(p||{}), progress: typeof v==="function"?v(p?.progress):v}));
+  const setResults  = v => setScanJob(p => ({...(p||{}), results: typeof v==="function"?v(p?.results):v}));
+  const setScanning = v => setScanJob(p => ({...(p||{}), scanning: typeof v==="function"?v(p?.scanning):v}));
+  const pollRef = scanPollRef;
   const [error, setError] = useState("");
-  const [activeView, setActiveView] = useState("accepted"); // "accepted"|"rejected"
+  const [activeView, setActiveView] = useState("accepted");
 
   // Filters
   const [strictMode, setStrictMode] = useState(true);
@@ -2792,6 +2797,9 @@ function AppReal() {
     document.documentElement.style.filter = blueFilter ? "sepia(0.15) saturate(0.85) hue-rotate(-5deg)" : "none";
   }, [blueFilter]);
   const [tab, setTab] = useState("dashboard");
+  // ── Global scan state — tab değişince kaybolmaz ──────────────────
+  const [scanJob, setScanJob] = useState(null);       // {jobId, progress, results, error, scanning}
+  const scanPollRef = useRef(null);
   const { toasts, push } = useToast();
 
   const [isbns, setIsbns] = useState([]);
@@ -3032,7 +3040,8 @@ function AppReal() {
         </div>
         <div style={{display:"flex"}}>
           {TABS.map(t=>{
-            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",discover:"🔍 Discover",history:"📋 Geçmiş"}[t]||t;
+            const isScanning = t==="discover" && scanJob?.scanning;
+            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",discover: isScanning ? `⏳ ${scanJob?.progress?.done||0}/${scanJob?.progress?.total||0}` : "🔍 Discover",history:"📋 Geçmiş"}[t]||t;
             return <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:12,color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400,letterSpacing:"0.01em"}}>{label}</button>;
           })}
         </div>
@@ -3429,7 +3438,7 @@ function AppReal() {
             )}
 
 {tab==="alerts"&&<AlertsFeedTab C={C} theme={theme} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
-            {tab==="discover"&&<DiscoverTab C={C} theme={theme}/>}
+            {tab==="discover"&&<DiscoverTab C={C} theme={theme} scanJob={scanJob} setScanJob={setScanJob} scanPollRef={scanPollRef}/>}
             {tab==="history"&&<ScanHistoryTab C={C}/>}
           </>
         )}

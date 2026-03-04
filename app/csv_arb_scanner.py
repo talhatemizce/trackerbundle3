@@ -381,7 +381,9 @@ async def _scan_one(
         elif ebay_error and "EBAY_CLIENT_ID" in ebay_error:
             reason = "ebay_not_configured"
         elif ebay_error:
-            reason = f"ebay_api_error"
+            # Gerçek hata mesajını ilk 80 karaktere kes
+            short = ebay_error.replace("\n", " ")[:80]
+            reason = f"ebay_error:{short}"
         r = ArbResult(isbn=isbn, asin=asin, source="", source_condition="",
                       buy_price=0, amazon_sell_price=None, buybox_type=None, match_type=None)
         r.reason = reason
