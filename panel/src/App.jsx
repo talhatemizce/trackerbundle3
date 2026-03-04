@@ -1110,6 +1110,30 @@ function DiscoverTab({ C, theme }) {
   // ── Scan (background job + polling) ────────────────────────────
   const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
 
+  // Remount'ta aktif job varsa polling'i yeniden başlat
+  useEffect(() => {
+    const jid = scanJob?.jobId;
+    if (!jid || scanJob?.progress?.status === "done" || scanJob?.progress?.status === "error") return;
+    if (pollRef.current) return; // zaten çalışıyor
+    pollRef.current = setInterval(async () => {
+      try {
+        const pd = await req("/discover/csv-arb/progress/" + jid, {}, 10000);
+        if (!pd.ok) return;
+        setScanJob(p => ({...(p||{}), progress: {done:pd.progress, total:pd.total, eta_s:pd.eta_s,
+          status:pd.status, accepted_count:pd.accepted_count, rejected_count:pd.rejected_count}}));
+        if (pd.status === "done") {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          const rd = await req("/discover/csv-arb/result/" + jid, {}, 30000);
+          if (rd.ok) setScanJob(p => ({...(p||{}), results: rd, scanning: false}));
+        } else if (pd.status === "error") {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          setScanJob(p => ({...(p||{}), scanning: false}));
+        }
+      } catch(e) {}
+    }, 1500);
+    return; // cleanup YOK — interval App-level ref'te yaşıyor
+  }, []); // sadece mount'ta çalış
+
   const runScan = async () => {
     if (!isbns.length) return;
     stopPolling();

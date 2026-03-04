@@ -236,8 +236,18 @@ async def _get_ebay_offers(isbn: str) -> List[Dict]:
             if total is None or total <= 0:
                 logger.debug("eBay item_total_price=None isbn=%s item=%s", isbn, it.get("itemId","?"))
                 continue
-            cond_text = (it.get("condition") or {}).get("conditionDisplayName") or ""
-            cond_id = (it.get("condition") or {}).get("conditionId")
+            # Browse API: condition is a list [{conditionDisplayName:[...], conditionId:[...]}]
+            cond_raw = it.get("condition") or []
+            if isinstance(cond_raw, list) and cond_raw:
+                cond_info = cond_raw[0] if isinstance(cond_raw[0], dict) else {}
+                cond_text = (cond_info.get("conditionDisplayName") or [""])[0] if isinstance(cond_info.get("conditionDisplayName"), list) else (cond_info.get("conditionDisplayName") or "")
+                cond_id_raw = cond_info.get("conditionId")
+                cond_id = (cond_id_raw[0] if isinstance(cond_id_raw, list) else cond_id_raw)
+            elif isinstance(cond_raw, dict):
+                cond_text = cond_raw.get("conditionDisplayName") or ""
+                cond_id = cond_raw.get("conditionId")
+            else:
+                cond_text = ""; cond_id = None
             cond = normalize_condition(cond_text, cond_id)
             # normalize → "brand_new" | "like_new" | "very_good" | "good" | "acceptable"
             source_cond = "new" if cond == "brand_new" else "used"
