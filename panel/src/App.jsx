@@ -795,6 +795,415 @@ function Thumb({ imageUrl, isbn, href, C, size = 72 }) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════
+// DISCOVER TAB — CSV Arbitrage Scanner
+// ═══════════════════════════════════════════════════════════════════
+function DiscoverTab({ C, theme }) {
+  const BASE = window.API_BASE || "";
+  const [csvText, setCsvText] = React.useState("");
+  const [fileName, setFileName] = React.useState("");
+  const [scanning, setScanning] = React.useState(false);
+  const [progress, setProgress] = React.useState(null); // {done, total}
+  const [results, setResults] = React.useState(null);   // {accepted, rejected, stats}
+  const [error, setError] = React.useState("");
+  const [activeView, setActiveView] = React.useState("accepted"); // "accepted"|"rejected"
+
+  // Filters
+  const [strictMode, setStrictMode] = React.useState(true);
+  const [minRoi, setMinRoi] = React.useState("");
+  const [maxRoi, setMaxRoi] = React.useState("");
+  const [minProfit, setMinProfit] = React.useState("");
+  const [minAmazon, setMinAmazon] = React.useState("");
+  const [maxAmazon, setMaxAmazon] = React.useState("");
+  const [minBuy, setMinBuy] = React.useState("");
+  const [maxBuy, setMaxBuy] = React.useState("");
+  const [condFilter, setCondFilter] = React.useState("all"); // "all"|"new"|"used"
+  const [sourceFilter, setSourceFilter] = React.useState("all"); // "all"|"ebay"|"thriftbooks"|"abebooks"
+  const [concurrency, setConcurrency] = React.useState(3);
+
+  // Dynamic limit calculator
+  const [calcSell, setCalcSell] = React.useState("");
+  const [calcRoi, setCalcRoi] = React.useState("30");
+  const [calcResult, setCalcResult] = React.useState(null);
+
+  const fileRef = React.useRef();
+
+  // ── File upload handler ──────────────────────────────────────────
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setFileName(file.name);
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (ext === "csv" || ext === "txt") {
+      const text = await file.text();
+      // Extract ISBNs: each line, grab first token that looks like ISBN
+      const isbns = text.split(/\n|,|;|\t/)
+        .map(s => s.replace(/[^0-9X]/gi, "").trim())
+        .filter(s => s.length === 10 || s.length === 13);
+      setCsvText([...new Set(isbns)].join("\n"));
+    } else if (ext === "xlsx" || ext === "xls") {
+      // XLSX — use SheetJS
+      try {
+        const XLSX = await import("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        const isbns = rows.flat()
+          .map(v => String(v || "").replace(/[^0-9X]/gi, "").trim())
+          .filter(s => s.length === 10 || s.length === 13);
+        setCsvText([...new Set(isbns)].join("\n"));
+      } catch(err) {
+        setError("XLSX okunamadı: " + err.message);
+      }
+    } else {
+      setError("Desteklenen formatlar: .csv .txt .xlsx .xls");
+    }
+  };
+
+  const isbns = csvText.split("\n").map(s => s.trim()).filter(Boolean);
+
+  // ── Scan ────────────────────────────────────────────────────────
+  const runScan = async () => {
+    if (!isbns.length) return;
+    setScanning(true); setResults(null); setError(""); setProgress({done:0, total:isbns.length});
+
+    const body = {
+      isbns,
+      strict_mode: strictMode,
+      only_viable: true,
+      concurrency,
+      ...(minRoi   ? {min_roi_pct: parseFloat(minRoi)}   : {}),
+      ...(maxRoi   ? {max_roi_pct: parseFloat(maxRoi)}   : {}),
+      ...(minProfit? {min_profit_usd: parseFloat(minProfit)}: {}),
+      ...(minAmazon? {min_amazon_price: parseFloat(minAmazon)}: {}),
+      ...(maxAmazon? {max_amazon_price: parseFloat(maxAmazon)}: {}),
+      ...(minBuy   ? {min_buy_price: parseFloat(minBuy)} : {}),
+      ...(maxBuy   ? {max_buy_price: parseFloat(maxBuy)} : {}),
+      ...(condFilter !== "all" ? {condition_in: [condFilter]} : {}),
+      ...(sourceFilter !== "all" ? {source_in: [sourceFilter]} : {}),
+    };
+
+    try {
+      const res = await fetch(BASE + "/discover/csv-arb", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setResults(data);
+        setProgress({done: isbns.length, total: isbns.length});
+      } else {
+        setError(data.detail || "Tarama başarısız");
+      }
+    } catch(e) {
+      setError("Bağlantı hatası: " + e.message);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  // ── Dynamic limit calc ───────────────────────────────────────────
+  const calcMaxBuy = async () => {
+    if (!calcSell) return;
+    try {
+      const res = await fetch(BASE + "/discover/suggest-max-buy", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({sell_price: parseFloat(calcSell), target_roi_pct: parseFloat(calcRoi)||30}),
+      });
+      const data = await res.json();
+      setCalcResult(data);
+    } catch(e) {
+      setCalcResult({ok: false, reason: e.message});
+    }
+  };
+
+  // ── Export CSV ───────────────────────────────────────────────────
+  const exportCsv = () => {
+    if (!results) return;
+    const rows = activeView === "accepted" ? results.accepted : results.rejected;
+    const cols = ["isbn","asin","source","source_condition","buy_price","amazon_sell_price",
+                  "buybox_type","match_type","profit","roi_pct","roi_tier","reason"];
+    const header = cols.join(",");
+    const lines = rows.map(r => cols.map(c => {
+      const v = r[c] ?? "";
+      return typeof v === "string" && v.includes(",") ? `"${v}"` : v;
+    }).join(","));
+    const blob = new Blob([header + "\n" + lines.join("\n")], {type:"text/csv"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `arb_${activeView}_${Date.now()}.csv`;
+    a.click();
+  };
+
+  const inpStyle = {background:C.inputBg, border:`1px solid ${C.inputBorder}`, color:C.text,
+    borderRadius:6, padding:"5px 8px", fontSize:11, width:"100%"};
+  const labelStyle = {fontSize:10, color:C.muted, marginBottom:2, display:"block"};
+  const tierColor = (tier) => tier==="fire"?"#f97316":tier==="good"?C.green:tier==="low"?C.blue:C.red||"#ef4444";
+
+  return (
+    <div style={{display:"flex", gap:20}}>
+      {/* Left panel */}
+      <div style={{width:280, flexShrink:0}}>
+
+        {/* Upload */}
+        <div style={{background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:16, marginBottom:12}}>
+          <div style={{fontSize:12, fontWeight:600, color:C.text, marginBottom:10}}>📂 ISBN Dosyası</div>
+          <div
+            onClick={() => fileRef.current?.click()}
+            style={{border:`2px dashed ${C.border2}`, borderRadius:8, padding:"20px 10px",
+              textAlign:"center", cursor:"pointer", color:C.muted, fontSize:11, marginBottom:8,
+              background: fileName ? C.surface2 : "transparent"}}
+          >
+            {fileName ? `✅ ${fileName}` : "CSV / XLSX / TXT yükle"}
+          </div>
+          <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.txt"
+            onChange={handleFile} style={{display:"none"}}/>
+          <textarea
+            value={csvText}
+            onChange={e=>setCsvText(e.target.value)}
+            placeholder={"ISBN'leri buraya yapıştır (her satıra bir tane)\n9780132350884\n9781234567890\n..."}
+            rows={6}
+            style={{...inpStyle, width:"100%", resize:"vertical", fontFamily:"monospace", marginTop:4}}
+          />
+          <div style={{fontSize:10, color:C.muted3, marginTop:4}}>
+            {isbns.length} ISBN · max 500
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div style={{background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:16, marginBottom:12}}>
+          <div style={{fontSize:12, fontWeight:600, color:C.text, marginBottom:10}}>⚙️ Filtreler</div>
+
+          {/* Strict mode */}
+          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
+            <input type="checkbox" checked={strictMode} onChange={e=>setStrictMode(e.target.checked)}/>
+            <span>Strict Mode (NEW→NEW, USED→USED)</span>
+          </label>
+
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6}}>
+            <div>
+              <span style={labelStyle}>Min ROI %</span>
+              <input style={inpStyle} type="number" value={minRoi} onChange={e=>setMinRoi(e.target.value)} placeholder="örn: 20"/>
+            </div>
+            <div>
+              <span style={labelStyle}>Max ROI %</span>
+              <input style={inpStyle} type="number" value={maxRoi} onChange={e=>setMaxRoi(e.target.value)} placeholder="opsiyonel"/>
+            </div>
+            <div>
+              <span style={labelStyle}>Min Kar $</span>
+              <input style={inpStyle} type="number" value={minProfit} onChange={e=>setMinProfit(e.target.value)} placeholder="örn: 2"/>
+            </div>
+            <div>
+              <span style={labelStyle}>Min Alım $</span>
+              <input style={inpStyle} type="number" value={minBuy} onChange={e=>setMinBuy(e.target.value)} placeholder="opsiyonel"/>
+            </div>
+            <div>
+              <span style={labelStyle}>Max Alım $</span>
+              <input style={inpStyle} type="number" value={maxBuy} onChange={e=>setMaxBuy(e.target.value)} placeholder="örn: 15"/>
+            </div>
+            <div>
+              <span style={labelStyle}>Min Amazon $</span>
+              <input style={inpStyle} type="number" value={minAmazon} onChange={e=>setMinAmazon(e.target.value)} placeholder="örn: 10"/>
+            </div>
+            <div style={{gridColumn:"1/-1"}}>
+              <span style={labelStyle}>Max Amazon $</span>
+              <input style={inpStyle} type="number" value={maxAmazon} onChange={e=>setMaxAmazon(e.target.value)} placeholder="opsiyonel"/>
+            </div>
+          </div>
+
+          <div style={{marginBottom:6}}>
+            <span style={labelStyle}>Kondisyon</span>
+            <select style={inpStyle} value={condFilter} onChange={e=>setCondFilter(e.target.value)}>
+              <option value="all">Tümü (New + Used)</option>
+              <option value="new">Sadece New</option>
+              <option value="used">Sadece Used</option>
+            </select>
+          </div>
+          <div style={{marginBottom:6}}>
+            <span style={labelStyle}>Kaynak</span>
+            <select style={inpStyle} value={sourceFilter} onChange={e=>setSourceFilter(e.target.value)}>
+              <option value="all">Tümü</option>
+              <option value="ebay">eBay</option>
+              <option value="thriftbooks">ThriftBooks</option>
+              <option value="abebooks">AbeBooks</option>
+              <option value="betterworldbooks">BetterWorldBooks</option>
+            </select>
+          </div>
+          <div>
+            <span style={labelStyle}>Paralel tarama (1-8)</span>
+            <input style={inpStyle} type="number" min={1} max={8} value={concurrency} onChange={e=>setConcurrency(Math.min(8,Math.max(1,parseInt(e.target.value)||3)))}/>
+          </div>
+        </div>
+
+        {/* Dynamic limit calc */}
+        <div style={{background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:16, marginBottom:12}}>
+          <div style={{fontSize:12, fontWeight:600, color:C.text, marginBottom:8}}>🧮 Dinamik Limit Hesabı</div>
+          <div style={{fontSize:10, color:C.muted, marginBottom:8}}>Hedef ROI için max eBay alım fiyatı</div>
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:8}}>
+            <div>
+              <span style={labelStyle}>Amazon satış $</span>
+              <input style={inpStyle} type="number" value={calcSell} onChange={e=>setCalcSell(e.target.value)} placeholder="örn: 20"/>
+            </div>
+            <div>
+              <span style={labelStyle}>Hedef ROI %</span>
+              <input style={inpStyle} type="number" value={calcRoi} onChange={e=>setCalcRoi(e.target.value)} placeholder="30"/>
+            </div>
+          </div>
+          <button onClick={calcMaxBuy} disabled={!calcSell}
+            style={{width:"100%", padding:"7px 0", background:C.accent, color:"#fff",
+              border:"none", borderRadius:6, cursor:"pointer", fontSize:11}}>
+            Hesapla
+          </button>
+          {calcResult && (
+            <div style={{marginTop:8, fontSize:11}}>
+              {calcResult.ok ? (
+                <div style={{background:C.surface2, borderRadius:6, padding:"8px 10px"}}>
+                  <div style={{color:C.green, fontWeight:700, fontSize:14}}>
+                    Max: ${calcResult.max_buy_price}
+                  </div>
+                  <div style={{color:C.muted, fontSize:10, marginTop:2}}>
+                    Amazon: ${calcResult.sell_price} · Fees: ${calcResult.total_fees} · Net: ${calcResult.net_after_fees}
+                  </div>
+                </div>
+              ) : (
+                <div style={{color:C.red||"#ef4444", fontSize:10}}>{calcResult.reason}</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Scan button */}
+        <button
+          onClick={runScan}
+          disabled={scanning || !isbns.length}
+          style={{width:"100%", padding:"12px 0", fontSize:13, fontWeight:700,
+            background: scanning||!isbns.length ? C.border : C.accent,
+            color: scanning||!isbns.length ? C.muted : "#fff",
+            border:"none", borderRadius:8, cursor: scanning||!isbns.length?"not-allowed":"pointer"}}
+        >
+          {scanning ? `⏳ Tarıyor… ${progress?.done||0}/${progress?.total||0}` : `🔍 ${isbns.length} ISBN Tara`}
+        </button>
+
+        {error && <div style={{marginTop:8, color:C.red||"#ef4444", fontSize:11, padding:"6px 8px",
+          background:C.surface2, borderRadius:6}}>{error}</div>}
+      </div>
+
+      {/* Right panel — results */}
+      <div style={{flex:1, minWidth:0}}>
+        {!results && !scanning && (
+          <div style={{textAlign:"center", paddingTop:80, color:C.muted3, fontSize:13}}>
+            <div style={{fontSize:32, marginBottom:12}}>🔍</div>
+            <div>ISBN dosyası yükle veya yapıştır, filtrele, tara</div>
+            <div style={{marginTop:6, fontSize:11}}>Amazon anlık buybox fiyatlarıyla kıyaslar</div>
+            <div style={{marginTop:4, fontSize:11, color:C.muted}}>
+              Strict mode: NEW kitap → sadece Amazon New Buybox · USED kitap → sadece Amazon Used Buybox
+            </div>
+          </div>
+        )}
+
+        {results && (
+          <>
+            {/* Stats bar */}
+            <div style={{display:"flex", gap:10, marginBottom:16, flexWrap:"wrap"}}>
+              {[
+                {label:"Toplam ISBN", val:results.stats.total_isbns, color:C.text},
+                {label:"✅ Kabul", val:results.stats.accepted_count, color:C.green},
+                {label:"❌ Elenen", val:results.stats.rejected_count, color:C.muted},
+                {label:"⏱ Süre", val:results.stats.duration_s+"s", color:C.blue},
+                {label:"Mod", val:results.stats.strict_mode?"Strict":"Fallback", color:C.accent},
+              ].map(s => (
+                <div key={s.label} style={{background:C.surface, border:`1px solid ${C.border}`,
+                  borderRadius:8, padding:"8px 14px", minWidth:80}}>
+                  <div style={{fontSize:10, color:C.muted}}>{s.label}</div>
+                  <div style={{fontSize:16, fontWeight:700, color:s.color}}>{s.val}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* View toggle + export */}
+            <div style={{display:"flex", gap:8, marginBottom:12, alignItems:"center"}}>
+              {["accepted","rejected"].map(v => (
+                <button key={v} onClick={()=>setActiveView(v)}
+                  style={{padding:"6px 14px", fontSize:11, borderRadius:6, cursor:"pointer",
+                    background: activeView===v ? C.accent : C.surface,
+                    color: activeView===v ? "#fff" : C.muted,
+                    border:`1px solid ${activeView===v ? C.accent : C.border}`}}>
+                  {v==="accepted"?`✅ Kabul (${results.accepted.length})`:`❌ Elenen (${results.rejected.length})`}
+                </button>
+              ))}
+              <button onClick={exportCsv}
+                style={{marginLeft:"auto", padding:"6px 12px", fontSize:11, borderRadius:6,
+                  cursor:"pointer", background:C.surface2, color:C.muted, border:`1px solid ${C.border}`}}>
+                ⬇ CSV İndir
+              </button>
+            </div>
+
+            {/* Results table */}
+            <div style={{background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, overflow:"hidden"}}>
+              {(activeView==="accepted" ? results.accepted : results.rejected).length === 0 ? (
+                <div style={{padding:40, textAlign:"center", color:C.muted3, fontSize:12}}>
+                  {activeView==="accepted" ? "Filtreden geçen sonuç yok" : "Elenen kayıt yok"}
+                </div>
+              ) : (
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%", borderCollapse:"collapse", fontSize:11}}>
+                    <thead>
+                      <tr style={{background:C.surface2, borderBottom:`1px solid ${C.border}`}}>
+                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Eşleşme","Kar $","ROI %","Tier",activeView==="rejected"?"Sebep":""].filter(Boolean).map(h=>(
+                          <th key={h} style={{padding:"8px 10px", textAlign:"left", color:C.muted, fontWeight:600, whiteSpace:"nowrap"}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(activeView==="accepted" ? results.accepted : results.rejected).map((r,i)=>(
+                        <tr key={i} style={{borderBottom:`1px solid ${C.border}`, background: i%2===0?C.surface:C.surface2}}>
+                          <td style={{padding:"7px 10px", color:C.text, fontFamily:"monospace"}}>{r.isbn}</td>
+                          <td style={{padding:"7px 10px", color:C.muted, fontFamily:"monospace", fontSize:10}}>{r.asin||"—"}</td>
+                          <td style={{padding:"7px 10px", color:C.accent}}>{r.source}</td>
+                          <td style={{padding:"7px 10px"}}>
+                            <span style={{padding:"2px 6px", borderRadius:4, fontSize:10, fontWeight:600,
+                              background: r.source_condition==="new"?`${C.green}22`:`${C.accent}22`,
+                              color: r.source_condition==="new"?C.green:C.accent}}>
+                              {r.source_condition?.toUpperCase()||"—"}
+                            </span>
+                          </td>
+                          <td style={{padding:"7px 10px", color:C.text}}>{r.buy_price>0?`$${r.buy_price}`:"—"}</td>
+                          <td style={{padding:"7px 10px", color:C.text}}>{r.amazon_sell_price!=null?`$${r.amazon_sell_price}`:"—"}</td>
+                          <td style={{padding:"7px 10px", color:C.muted, fontSize:10}}>{r.match_type||"—"}</td>
+                          <td style={{padding:"7px 10px", fontWeight:600,
+                            color: r.profit>0?C.green:C.red||"#ef4444"}}>{r.profit!==undefined?`$${r.profit}`:"—"}</td>
+                          <td style={{padding:"7px 10px", fontWeight:600,
+                            color: tierColor(r.roi_tier)}}>{r.roi_pct!=null?`${r.roi_pct}%`:"—"}</td>
+                          <td style={{padding:"7px 10px"}}>
+                            {r.roi_tier&&<span style={{padding:"2px 6px", borderRadius:4, fontSize:10, fontWeight:700,
+                              background:`${tierColor(r.roi_tier)}22`, color:tierColor(r.roi_tier)}}>
+                              {r.roi_tier==="fire"?"🔥":r.roi_tier==="good"?"✅":r.roi_tier==="low"?"🔵":"❌"} {r.roi_tier}
+                            </span>}
+                          </td>
+                          {activeView==="rejected"&&(
+                            <td style={{padding:"7px 10px", color:C.muted, fontSize:10, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}
+                              title={r.reason}>
+                              {r.reason}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AlertsFeedTab({ C, theme, push, isbns, titles, bookMeta = {} }) {
   const [entries, setEntries] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -2042,7 +2451,7 @@ function DetailDrawer({
   );
 }
 
-const TABS = ["dashboard","watchlist","pricing","alerts"];
+const TABS = ["dashboard","watchlist","pricing","alerts","discover"];
 
 export default function App() {
   return <ErrorBoundary><AppReal /></ErrorBoundary>;
@@ -2300,7 +2709,7 @@ function AppReal() {
         </div>
         <div style={{display:"flex"}}>
           {TABS.map(t=>{
-            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts"}[t]||t;
+            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",discover:"🔍 Discover"}[t]||t;
             return <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:12,color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400,letterSpacing:"0.01em"}}>{label}</button>;
           })}
         </div>
@@ -2694,6 +3103,7 @@ function AppReal() {
             )}
 
 {tab==="alerts"&&<AlertsFeedTab C={C} theme={theme} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
+            {tab==="discover"&&<DiscoverTab C={C} theme={theme}/>}
           </>
         )}
       </div>

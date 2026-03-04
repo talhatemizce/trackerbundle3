@@ -948,6 +948,105 @@ async def ebay_debug_search(isbn: str, limit: int = 5, strict: bool = False):
     }
 
 
+
+# ── CSV Arbitrage Scanner ─────────────────────────────────────────────────────
+from app.csv_arb_scanner import ScanFilters, scan_isbn_list, suggest_max_buy
+from app.profit_calc import FeeConfig
+
+class CsvArbRequest(BaseModel):
+    isbns: List[str] = Field(..., description="ISBN listesi (10 veya 13 hane)")
+    strict_mode: bool = Field(default=True, description="True: NEW→NEW, USED→USED only")
+    min_roi_pct: Optional[float] = None
+    max_roi_pct: Optional[float] = None
+    min_profit_usd: Optional[float] = None
+    min_amazon_price: Optional[float] = None
+    max_amazon_price: Optional[float] = None
+    min_buy_price: Optional[float] = None
+    max_buy_price: Optional[float] = None
+    condition_in: Optional[List[str]] = None   # ["new"] | ["used"] | ["new","used"]
+    source_in: Optional[List[str]] = None      # ["ebay","thriftbooks","abebooks",...]
+    only_viable: bool = True
+    concurrency: int = Field(default=3, ge=1, le=8)
+    # Fee overrides (opsiyonel)
+    fee_referral_pct: Optional[float] = None
+    fee_closing: Optional[float] = None
+    fee_fulfillment: Optional[float] = None
+    fee_inbound: Optional[float] = None
+
+
+@app.post("/discover/csv-arb")
+async def csv_arb_scan(req: CsvArbRequest):
+    """
+    ISBN listesini Amazon buybox fiyatlarıyla kıyasla, karlı fırsatları bul.
+    strict_mode=True (önerilen): NEW→NEW, USED→USED (fallback yok)
+    """
+    if not req.isbns:
+        raise HTTPException(status_code=422, detail="ISBN listesi boş")
+    if len(req.isbns) > 500:
+        raise HTTPException(status_code=422, detail="Max 500 ISBN")
+
+    filters = ScanFilters(
+        min_roi_pct=req.min_roi_pct,
+        max_roi_pct=req.max_roi_pct,
+        min_profit_usd=req.min_profit_usd,
+        min_amazon_price=req.min_amazon_price,
+        max_amazon_price=req.max_amazon_price,
+        min_buy_price=req.min_buy_price,
+        max_buy_price=req.max_buy_price,
+        condition_in=req.condition_in,
+        source_in=req.source_in,
+        only_viable=req.only_viable,
+        strict_mode=req.strict_mode,
+    )
+
+    fees = FeeConfig(
+        referral_pct=req.fee_referral_pct if req.fee_referral_pct is not None else 0.15,
+        closing_fee=req.fee_closing if req.fee_closing is not None else 1.80,
+        fulfillment=req.fee_fulfillment if req.fee_fulfillment is not None else 3.50,
+        inbound=req.fee_inbound if req.fee_inbound is not None else 0.60,
+    )
+
+    result = await scan_isbn_list(
+        isbns=req.isbns,
+        filters=filters,
+        fees=fees,
+        concurrency=req.concurrency,
+    )
+    return {"ok": True, **result}
+
+
+class MaxBuyRequest(BaseModel):
+    sell_price: float = Field(..., gt=0)
+    target_roi_pct: float = Field(default=30.0, gt=0)
+    fee_referral_pct: Optional[float] = None
+    fee_closing: Optional[float] = None
+    fee_fulfillment: Optional[float] = None
+    fee_inbound: Optional[float] = None
+
+
+@app.post("/discover/suggest-max-buy")
+def suggest_max_buy_endpoint(req: MaxBuyRequest):
+    """Amazon satış fiyatı + hedef ROI verilen bir alım için max eBay alım fiyatı hesapla."""
+    fees = FeeConfig(
+        referral_pct=req.fee_referral_pct or 0.15,
+        closing_fee=req.fee_closing or 1.80,
+        fulfillment=req.fee_fulfillment or 3.50,
+        inbound=req.fee_inbound or 0.60,
+    )
+    max_buy = suggest_max_buy(req.sell_price, req.target_roi_pct, fees)
+    if max_buy is None:
+        return {"ok": False, "reason": "sell_price_too_low_after_fees"}
+    referral = max(1.00, req.sell_price * fees.referral_pct)
+    total_fees = referral + fees.closing_fee + fees.fulfillment + fees.inbound
+    return {
+        "ok": True,
+        "sell_price": req.sell_price,
+        "target_roi_pct": req.target_roi_pct,
+        "max_buy_price": max_buy,
+        "total_fees": round(total_fees, 2),
+        "net_after_fees": round(req.sell_price - total_fees, 2),
+    }
+
 # ---- SP-API offers proxy (legacy, nginx panel_api) ----
 @app.get("/offers/top2")
 async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
