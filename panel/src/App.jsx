@@ -2543,6 +2543,7 @@ function AppReal() {
   const [status, setStatus] = useState(null);
   const schedTick = status?.sched_tick_seconds || 3600;
   const [alertStats, setAlertStats] = useState({});
+  const [isbnAlertCounts, setIsbnAlertCounts] = useState({}); // {isbn: count} — geçmiş alert sayısı
   const [runState, setRunState] = useState({});
   const [loading, setLoading] = useState(true);
   const [backoffStatus, setBackoffStatus] = useState(null);
@@ -2623,7 +2624,7 @@ function AppReal() {
 
   const load = useCallback(async () => {
     try {
-      const [a,b,c,d,e] = await Promise.allSettled([req("/isbns"),req("/rules"),req("/status"),req("/alerts/stats"),req("/run-state")]);
+      const [a,b,c,d,e,f] = await Promise.allSettled([req("/isbns"),req("/rules"),req("/status"),req("/alerts/stats"),req("/run-state"),req("/alerts/summary")]);
       if (a.status==="fulfilled") {
         const loaded = a.value.items||[];
         setIsbns(loaded);
@@ -2642,6 +2643,7 @@ function AppReal() {
       if (c.status==="fulfilled") setStatus(c.value);
       if (d.status==="fulfilled") setAlertStats(d.value.stats||{});
       if (e.status==="fulfilled") setRunState(e.value.by_isbn||{});
+      if (f.status==="fulfilled") setIsbnAlertCounts(f.value.by_isbn||{});
       /* Finding API backoff — deprecated, no longer fetched */
     } catch(err) { push("Yüklenirken hata: "+err.message,"error"); }
     finally { setLoading(false); }
@@ -2716,7 +2718,7 @@ function AppReal() {
   };
 
   const clearAlerts = async (isbn) => {
-    try { await req(`/alerts/${isbn}`,{method:"DELETE"}); setAlertStats(p=>{const r={...p};delete r[isbn];return r;}); push("Alertler temizlendi","success"); }
+    try { await req(`/alerts/${isbn}`,{method:"DELETE"}); setIsbnAlertCounts(p=>{const r={...p};delete r[isbn];return r;}); push("Alertler temizlendi","success"); }
     catch(e){ push("Temizlenemedi: "+e.message,"error"); }
   };
 
@@ -2797,16 +2799,19 @@ function AppReal() {
                 </div>
 
                 {/* Finding API Backoff — removed (Finding API deprecated) */}
-                {Object.keys(alertStats).length>0&&(
+                {(alertStats.active_keys>0||alertStats.total_keys>0)&&(
                   <div style={{marginBottom:24}}>
-                    <ST C={C}>Bildirim Gönderilen ISBNler</ST>
-                    {Object.entries(alertStats).map(([isbn,count])=>(
-                      <div key={isbn} className="row-item" style={{...row}}>
-                        <span style={{flex:1,fontSize:13}}>{isbn}</span>
-                        <span className="badge" style={{background:theme==="dark"?"#1a2a1a":theme==="soft"?"#d4ede1":"#f0fdf4",color:C.green}}>🎯 {count}</span>
-                        <button className="icon-btn" style={{color:C.red,fontSize:16}} onClick={()=>clearAlerts(isbn)} title="Alertleri temizle">🗑️</button>
+                    <ST C={C}>Dedup Durumu</ST>
+                    <div style={{display:"flex",gap:12}}>
+                      <div style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 14px"}}>
+                        <div style={{fontSize:10,color:C.muted}}>Aktif</div>
+                        <div style={{fontSize:18,fontWeight:700,color:C.green}}>{alertStats.active_keys||0}</div>
                       </div>
-                    ))}
+                      <div style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 14px"}}>
+                        <div style={{fontSize:10,color:C.muted}}>Toplam</div>
+                        <div style={{fontSize:18,fontWeight:700,color:C.text}}>{alertStats.total_keys||0}</div>
+                      </div>
+                    </div>
                   </div>
                 )}
                 <ST C={C}>Watchlist Önizleme</ST>
@@ -2818,7 +2823,7 @@ function AppReal() {
                     </div>
                     <span style={{fontSize:10,color:C.muted}}>interval: {fmtSecs(intervals[isbn])}</span>
                     {runState[isbn]&&<span style={{fontSize:10,color:C.muted2}}>son: {fmtTime(runState[isbn])}</span>}
-                    {alertStats[isbn]>0&&<span className="badge" style={{background:theme==="dark"?"#1a2a1a":theme==="soft"?"#d4ede1":"#f0fdf4",color:C.green,fontSize:10}}>🎯 {alertStats[isbn]}</span>}
+                    {isbnAlertCounts[isbn]>0&&<span className="badge" style={{background:theme==="dark"?"#1a2a1a":theme==="soft"?"#d4ede1":"#f0fdf4",color:C.green,fontSize:10}}>🎯 {isbnAlertCounts[isbn]}</span>}
                     <span style={{width:8,height:8,borderRadius:"50%",background:C.green,display:"inline-block"}}/>
                   </div>
                 ))}
@@ -3073,7 +3078,7 @@ function AppReal() {
                             {titles[isbn]&&<span style={{fontSize:12,color:C.muted,fontFamily:"var(--sans)"}}>— {titles[isbn]}</span>}
                             {titles[isbn]===null&&<span style={{fontSize:10,color:C.muted3}}>…</span>}
                             {bookMeta[isbn]?.author&&<span style={{fontSize:10,color:C.muted3,fontFamily:"var(--sans)"}}>{bookMeta[isbn].author}{bookMeta[isbn].year?` · ${bookMeta[isbn].year}`:""}</span>}
-                            {alertStats[isbn]>0&&<span className="badge" style={{background:theme==="dark"?"#1a2a1a":theme==="soft"?"#d4ede1":"#f0fdf4",color:C.green}}>🎯 {alertStats[isbn]}</span>}
+                            {isbnAlertCounts[isbn]>0&&<span className="badge" style={{background:theme==="dark"?"#1a2a1a":theme==="soft"?"#d4ede1":"#f0fdf4",color:C.green}}>🎯 {isbnAlertCounts[isbn]}</span>}
                           </div>
                           <div style={{fontSize:10,color:C.muted2,marginTop:3,display:"flex",gap:12}}>
                             <span>{runState[isbn]?`📡 ${fmtTime(runState[isbn])}`:"🕐 henüz taranmadı"}</span>
