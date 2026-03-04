@@ -150,8 +150,9 @@ class ScanFilters:
     max_amazon_price: Optional[float] = None
     min_buy_price: Optional[float] = None
     max_buy_price: Optional[float] = None
-    condition_in: Optional[List[str]] = None  # ["new","used"] veya sadece biri
-    source_in: Optional[List[str]] = None     # ["ebay","thriftbooks","abebooks",...]
+    max_buy_ratio_pct: Optional[float] = None  # alım fiyatı amazon fiyatının max %X'i (örn. 50 = max %50)
+    condition_in: Optional[List[str]] = None   # ["new","used"] veya sadece biri
+    source_in: Optional[List[str]] = None      # ["ebay","thriftbooks","abebooks",...]
     only_viable: bool = True
     strict_mode: bool = True
 
@@ -164,6 +165,11 @@ def _filter_result(r: ArbResult, f: ScanFilters) -> str:
         return f"buy_price_above_max(${f.max_buy_price})"
     if r.amazon_sell_price is None:
         return r.reason or "no_amazon_price"
+    # Ratio filtresi: alım fiyatı amazon buybox fiyatının max %X'i olmalı
+    if f.max_buy_ratio_pct is not None and r.amazon_sell_price > 0:
+        max_allowed = r.amazon_sell_price * f.max_buy_ratio_pct / 100
+        if r.buy_price > max_allowed:
+            return f"buy_ratio_too_high({round(r.buy_price/r.amazon_sell_price*100)}%>max{f.max_buy_ratio_pct}%)"
     if f.min_amazon_price is not None and r.amazon_sell_price < f.min_amazon_price:
         return f"amazon_price_below_min(${f.min_amazon_price})"
     if f.max_amazon_price is not None and r.amazon_sell_price > f.max_amazon_price:

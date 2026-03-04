@@ -965,6 +965,7 @@ class CsvArbRequest(BaseModel):
     max_amazon_price: Optional[float] = None
     min_buy_price: Optional[float] = None
     max_buy_price: Optional[float] = None
+    max_buy_ratio_pct: Optional[float] = Field(default=None, description="Alım fiyatı amazon buybox'ının max %X'i olmalı (örn. 50 = max %50)")
     condition_in: Optional[List[str]] = None   # ["new"] | ["used"] | ["new","used"]
     source_in: Optional[List[str]] = None      # ["ebay","thriftbooks","abebooks",...]
     only_viable: bool = True
@@ -996,6 +997,7 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
         max_amazon_price=req.max_amazon_price,
         min_buy_price=req.min_buy_price,
         max_buy_price=req.max_buy_price,
+        max_buy_ratio_pct=req.max_buy_ratio_pct,
         condition_in=req.condition_in,
         source_in=req.source_in,
         only_viable=False,   # BUG FIX: filtre sonradan uygula, önce hepsini topla

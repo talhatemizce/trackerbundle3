@@ -983,6 +983,7 @@ function DiscoverTab({ C, theme }) {
   const [minProfit, setMinProfit] = useState("");
   const [minAmazon, setMinAmazon] = useState("");
   const [maxAmazon, setMaxAmazon] = useState("");
+  const [maxBuyRatio, setMaxBuyRatio] = useState(""); // % of amazon price, e.g. 50 = max 50% of buybox
   const [minBuy, setMinBuy] = useState("");
   const [maxBuy, setMaxBuy] = useState("");
   const [condFilter, setCondFilter] = useState("all"); // "all"|"new"|"used"
@@ -1129,6 +1130,7 @@ function DiscoverTab({ C, theme }) {
       ...(maxBuy   ? {max_buy_price: parseFloat(maxBuy)} : {}),
       ...(condFilter !== "all" ? {condition_in: [condFilter]} : {}),
       ...(sourceFilter !== "all" ? {source_in: [sourceFilter]} : {}),
+      ...(maxBuyRatio ? {max_buy_ratio_pct: parseFloat(maxBuyRatio)} : {}),
     };
 
     try {
@@ -1321,12 +1323,19 @@ function DiscoverTab({ C, theme }) {
               <input style={inpStyle} type="number" value={maxBuy} onChange={e=>setMaxBuy(e.target.value)} placeholder="örn: 15"/>
             </div>
             <div>
-              <span style={labelStyle}>Min Amazon $</span>
-              <input style={inpStyle} type="number" value={minAmazon} onChange={e=>setMinAmazon(e.target.value)} placeholder="örn: 10"/>
+              <span style={labelStyle}>Min Amazon Buybox $</span>
+              <input style={inpStyle} type="number" value={minAmazon} onChange={e=>setMinAmazon(e.target.value)} placeholder="opsiyonel"/>
+            </div>
+            <div>
+              <span style={labelStyle}>Max Amazon Buybox $</span>
+              <input style={inpStyle} type="number" value={maxAmazon} onChange={e=>setMaxAmazon(e.target.value)} placeholder="opsiyonel"/>
             </div>
             <div style={{gridColumn:"1/-1"}}>
-              <span style={labelStyle}>Max Amazon $</span>
-              <input style={inpStyle} type="number" value={maxAmazon} onChange={e=>setMaxAmazon(e.target.value)} placeholder="opsiyonel"/>
+              <span style={labelStyle}>⚡ Max Alım (Amazon %'si)</span>
+              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                <input style={{...inpStyle,width:60}} type="number" value={maxBuyRatio} onChange={e=>setMaxBuyRatio(e.target.value)} placeholder="50"/>
+                <span style={{fontSize:11,color:C.muted}}>% → Amazon $100 ise max $50</span>
+              </div>
             </div>
           </div>
 
@@ -1432,11 +1441,11 @@ function DiscoverTab({ C, theme }) {
             {/* Stats bar */}
             <div style={{display:"flex", gap:10, marginBottom:16, flexWrap:"wrap"}}>
               {[
-                {label:"Toplam ISBN", val:results.stats.total_isbns, color:C.text},
-                {label:"✅ Kabul", val:results.stats.accepted_count, color:C.green},
-                {label:"❌ Elenen", val:results.stats.rejected_count, color:C.muted},
-                {label:"⏱ Süre", val:results.stats.duration_s+"s", color:C.blue},
-                {label:"Mod", val:results.stats.strict_mode?"Strict":"Fallback", color:C.accent},
+                {label:"Toplam ISBN", val:results.stats?.total_isbns||"?", color:C.text},
+                {label:"✅ Kabul", val:results.stats?.accepted_count||0, color:C.green},
+                {label:"❌ Elenen", val:results.stats?.rejected_count||0, color:C.muted},
+                {label:"⏱ Süre", val:(results.stats?.duration_s||"?")+"s", color:C.blue},
+                {label:"Mod", val:results.stats?.strict_mode?"Strict":"Fallback", color:C.accent},
               ].map(s => (
                 <div key={s.label} style={{background:C.surface, border:`1px solid ${C.border}`,
                   borderRadius:8, padding:"8px 14px", minWidth:80}}>
