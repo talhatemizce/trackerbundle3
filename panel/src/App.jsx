@@ -801,33 +801,33 @@ function Thumb({ imageUrl, isbn, href, C, size = 72 }) {
 // ═══════════════════════════════════════════════════════════════════
 function DiscoverTab({ C, theme }) {
   const BASE = window.API_BASE || "";
-  const [csvText, setCsvText] = React.useState("");
-  const [fileName, setFileName] = React.useState("");
-  const [scanning, setScanning] = React.useState(false);
-  const [progress, setProgress] = React.useState(null); // {done, total}
-  const [results, setResults] = React.useState(null);   // {accepted, rejected, stats}
-  const [error, setError] = React.useState("");
-  const [activeView, setActiveView] = React.useState("accepted"); // "accepted"|"rejected"
+  const [csvText, setCsvText] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [progress, setProgress] = useState(null); // {done, total}
+  const [results, setResults] = useState(null);   // {accepted, rejected, stats}
+  const [error, setError] = useState("");
+  const [activeView, setActiveView] = useState("accepted"); // "accepted"|"rejected"
 
   // Filters
-  const [strictMode, setStrictMode] = React.useState(true);
-  const [minRoi, setMinRoi] = React.useState("");
-  const [maxRoi, setMaxRoi] = React.useState("");
-  const [minProfit, setMinProfit] = React.useState("");
-  const [minAmazon, setMinAmazon] = React.useState("");
-  const [maxAmazon, setMaxAmazon] = React.useState("");
-  const [minBuy, setMinBuy] = React.useState("");
-  const [maxBuy, setMaxBuy] = React.useState("");
-  const [condFilter, setCondFilter] = React.useState("all"); // "all"|"new"|"used"
-  const [sourceFilter, setSourceFilter] = React.useState("all"); // "all"|"ebay"|"thriftbooks"|"abebooks"
-  const [concurrency, setConcurrency] = React.useState(3);
+  const [strictMode, setStrictMode] = useState(true);
+  const [minRoi, setMinRoi] = useState("");
+  const [maxRoi, setMaxRoi] = useState("");
+  const [minProfit, setMinProfit] = useState("");
+  const [minAmazon, setMinAmazon] = useState("");
+  const [maxAmazon, setMaxAmazon] = useState("");
+  const [minBuy, setMinBuy] = useState("");
+  const [maxBuy, setMaxBuy] = useState("");
+  const [condFilter, setCondFilter] = useState("all"); // "all"|"new"|"used"
+  const [sourceFilter, setSourceFilter] = useState("all"); // "all"|"ebay"|"thriftbooks"|"abebooks"
+  const [concurrency, setConcurrency] = useState(3);
 
   // Dynamic limit calculator
-  const [calcSell, setCalcSell] = React.useState("");
-  const [calcRoi, setCalcRoi] = React.useState("30");
-  const [calcResult, setCalcResult] = React.useState(null);
+  const [calcSell, setCalcSell] = useState("");
+  const [calcRoi, setCalcRoi] = useState("30");
+  const [calcResult, setCalcResult] = useState(null);
 
-  const fileRef = React.useRef();
+  const fileRef = useRef();
 
   // ── File upload handler ──────────────────────────────────────────
   const handleFile = async (e) => {
