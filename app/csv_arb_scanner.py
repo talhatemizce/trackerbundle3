@@ -298,6 +298,7 @@ async def _scan_one(
     isbn: str,
     filters: ScanFilters,
     fees: FeeConfig,
+    isbn_buy_prices: Dict[str, float] = {},
 ) -> List[ArbResult]:
     """Tek ISBN için tüm kaynakları tara, ArbResult listesi döndür."""
     asin = _isbn13_to_asin(isbn)
@@ -323,6 +324,20 @@ async def _scan_one(
         bf_offers = []
 
     all_offers = (ebay_offers or []) + (bf_offers or [])
+
+    # CSV'den gelen opsiyonel alım fiyatı → sentetik offer oluştur
+    csv_price = isbn_buy_prices.get(isbn) or isbn_buy_prices.get(asin)
+    if csv_price and csv_price > 0:
+        # Her iki kondisyon için de sentetik offer ekle (strict mode halleder)
+        for cond in ["new", "used"]:
+            all_offers.append({
+                "source": "csv_input",
+                "source_condition": cond,
+                "buy_price": round(float(csv_price), 2),
+                "item_id": "csv",
+                "title": "CSV alım fiyatı",
+                "url": "",
+            })
 
     if not all_offers:
         r = ArbResult(isbn=isbn, asin=asin, source="", source_condition="",
@@ -377,6 +392,7 @@ async def scan_isbn_list(
     fees: FeeConfig = DEFAULT_FEES,
     concurrency: int = 3,
     on_progress: Any = None,  # optional callback(done, total)
+    isbn_buy_prices: Dict[str, float] = {},  # opsiyonel: CSV'den gelen hedef alım fiyatları
 ) -> Dict[str, Any]:
     """
     ISBN listesini paralel tara (max `concurrency` aynı anda).
@@ -392,7 +408,7 @@ async def scan_isbn_list(
     async def _run(isbn: str):
         nonlocal done_count
         async with sem:
-            results = await _scan_one(isbn.strip(), filters, fees)
+            results = await _scan_one(isbn.strip(), filters, fees, isbn_buy_prices=isbn_buy_prices)
             for r in results:
                 d = r.to_dict()
                 if r.accepted:

@@ -803,6 +803,7 @@ function DiscoverTab({ C, theme }) {
   const BASE = window.API_BASE || "";
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
+  const [isbnBuyPrices, setIsbnBuyPrices] = useState({}); // {isbn: buyPrice} — CSV'den gelen opsiyonel fiyatlar
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState(null); // {done, total}
   const [results, setResults] = useState(null);   // {accepted, rejected, stats}
@@ -830,30 +831,70 @@ function DiscoverTab({ C, theme }) {
   const fileRef = useRef();
 
   // ── File upload handler ──────────────────────────────────────────
+  // CSV/XLSX'ten ISBN + opsiyonel buy_price kolonunu parse et
+  const _parseRows = (rows) => {
+    // rows: string[][] — header satırı varsa kolon isimlerine bak
+    const isIsbn = v => { const s = String(v||"").replace(/[^0-9X]/gi,"").trim(); return s.length===10||s.length===13 ? s : null; };
+    const isPrice = v => { const n = parseFloat(String(v||"").replace(/[^0-9.]/g,"")); return isFinite(n)&&n>0 ? n : null; };
+
+    // Header satırı tespiti
+    const firstRow = rows[0] || [];
+    const headers = firstRow.map(h => String(h||"").toLowerCase().trim());
+    const isbnCol = headers.findIndex(h => h.includes("isbn") || h.includes("ean"));
+    const priceCol = headers.findIndex(h => h.includes("buy") || h.includes("price") || h.includes("fiyat") || h.includes("alım") || h.includes("cost"));
+    const hasHeader = isbnCol >= 0;
+
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    const priceMap = {};
+    const isbns = [];
+
+    for (const row of dataRows) {
+      if (!row || !row.length) continue;
+      let isbn = null, price = null;
+
+      if (hasHeader && isbnCol >= 0) {
+        isbn = isIsbn(row[isbnCol]);
+        if (priceCol >= 0) price = isPrice(row[priceCol]);
+      } else {
+        // No header: scan all cells for ISBN, then look for price nearby
+        for (let i = 0; i < row.length; i++) {
+          const candidate = isIsbn(row[i]);
+          if (candidate) { isbn = candidate; price = isPrice(row[i+1]); break; }
+        }
+      }
+
+      if (isbn && !isbns.includes(isbn)) {
+        isbns.push(isbn);
+        if (price) priceMap[isbn] = price;
+      }
+    }
+    return { isbns, priceMap };
+  };
+
   const handleFile = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setFileName(file.name);
     const ext = file.name.split(".").pop().toLowerCase();
+
     if (ext === "csv" || ext === "txt") {
       const text = await file.text();
-      // Extract ISBNs: each line, grab first token that looks like ISBN
-      const isbns = text.split(/\n|,|;|\t/)
-        .map(s => s.replace(/[^0-9X]/gi, "").trim())
-        .filter(s => s.length === 10 || s.length === 13);
-      setCsvText([...new Set(isbns)].join("\n"));
+      const rows = text.split("\n").map(line => line.split(/,|;|\t/));
+      const { isbns, priceMap } = _parseRows(rows);
+      setCsvText(isbns.join("\n"));
+      setIsbnBuyPrices(priceMap);
+      if (Object.keys(priceMap).length > 0)
+        setError(""); // clear any previous error
     } else if (ext === "xlsx" || ext === "xls") {
-      // XLSX — use SheetJS
       try {
         const XLSX = await import("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
-        const isbns = rows.flat()
-          .map(v => String(v || "").replace(/[^0-9X]/gi, "").trim())
-          .filter(s => s.length === 10 || s.length === 13);
-        setCsvText([...new Set(isbns)].join("\n"));
+        const { isbns, priceMap } = _parseRows(rows);
+        setCsvText(isbns.join("\n"));
+        setIsbnBuyPrices(priceMap);
       } catch(err) {
         setError("XLSX okunamadı: " + err.message);
       }
@@ -874,6 +915,7 @@ function DiscoverTab({ C, theme }) {
       strict_mode: strictMode,
       only_viable: true,
       concurrency,
+      ...(Object.keys(isbnBuyPrices).length ? {isbn_buy_prices: isbnBuyPrices} : {}),
       ...(minRoi   ? {min_roi_pct: parseFloat(minRoi)}   : {}),
       ...(maxRoi   ? {max_roi_pct: parseFloat(maxRoi)}   : {}),
       ...(minProfit? {min_profit_usd: parseFloat(minProfit)}: {}),
@@ -971,7 +1013,30 @@ function DiscoverTab({ C, theme }) {
           />
           <div style={{fontSize:10, color:C.muted3, marginTop:4}}>
             {isbns.length} ISBN · max 500
+            {Object.keys(isbnBuyPrices).length > 0 && (
+              <span style={{marginLeft:8, color:C.green}}>
+                ✅ {Object.keys(isbnBuyPrices).length} ISBN için alım fiyatı yüklendi
+              </span>
+            )}
           </div>
+          {Object.keys(isbnBuyPrices).length > 0 && (
+            <div style={{marginTop:6, background:C.surface2, borderRadius:6, padding:"6px 8px", fontSize:10}}>
+              <div style={{color:C.muted, marginBottom:3}}>📋 Alım fiyatı önizleme (ilk 3):</div>
+              {Object.entries(isbnBuyPrices).slice(0,3).map(([isbn, price]) => (
+                <div key={isbn} style={{color:C.text, fontFamily:"monospace"}}>
+                  {isbn} → <span style={{color:C.green}}>${price}</span>
+                </div>
+              ))}
+              {Object.keys(isbnBuyPrices).length > 3 && (
+                <div style={{color:C.muted}}>+{Object.keys(isbnBuyPrices).length-3} daha…</div>
+              )}
+              <button onClick={()=>setIsbnBuyPrices({})}
+                style={{marginTop:4, fontSize:10, color:C.red||"#ef4444", background:"none",
+                  border:"none", cursor:"pointer", padding:0}}>
+                ✕ Fiyatları sıfırla
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Filters */}
