@@ -804,6 +804,9 @@ function DiscoverTab({ C, theme }) {
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
   const [isbnBuyPrices, setIsbnBuyPrices] = useState({}); // {isbn: buyPrice} — CSV'den gelen opsiyonel fiyatlar
+  const [isbnAmazonPrices, setIsbnAmazonPrices] = useState({}); // {isbn: avgPrice} — Amazon Business Report ortalaması
+  const [csvReportType, setCsvReportType] = useState(""); // "amazon_business_report" | "generic"
+  const [csvTitleMap, setCsvTitleMap] = useState({}); // {isbn: title}
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState(null); // {done, total}
   const [results, setResults] = useState(null);   // {accepted, rejected, stats}
@@ -831,44 +834,66 @@ function DiscoverTab({ C, theme }) {
   const fileRef = useRef();
 
   // ── File upload handler ──────────────────────────────────────────
-  // CSV/XLSX'ten ISBN + opsiyonel buy_price kolonunu parse et
+  // CSV/XLSX'ten ISBN/ASIN + opsiyonel fiyat kolonunu parse et
+  // Amazon Business Report formatını otomatik algılar
   const _parseRows = (rows) => {
-    // rows: string[][] — header satırı varsa kolon isimlerine bak
-    const isIsbn = v => { const s = String(v||"").replace(/[^0-9X]/gi,"").trim(); return s.length===10||s.length===13 ? s : null; };
-    const isPrice = v => { const n = parseFloat(String(v||"").replace(/[^0-9.]/g,"")); return isFinite(n)&&n>0 ? n : null; };
+    const parseNum = v => { const n = parseFloat(String(v||"").replace(/[^0-9.]/g,"")); return isFinite(n)&&n>0 ? n : null; };
+    const isIsbn  = v => { const s = String(v||"").replace(/[^0-9X]/gi,"").trim(); return (s.length===10||s.length===13) ? s : null; };
 
-    // Header satırı tespiti
     const firstRow = rows[0] || [];
     const headers = firstRow.map(h => String(h||"").toLowerCase().trim());
-    const isbnCol = headers.findIndex(h => h.includes("isbn") || h.includes("ean"));
-    const priceCol = headers.findIndex(h => h.includes("buy") || h.includes("price") || h.includes("fiyat") || h.includes("alım") || h.includes("cost"));
-    const hasHeader = isbnCol >= 0;
 
-    const dataRows = hasHeader ? rows.slice(1) : rows;
-    const priceMap = {};
-    const isbns = [];
-
-    for (const row of dataRows) {
-      if (!row || !row.length) continue;
-      let isbn = null, price = null;
-
-      if (hasHeader && isbnCol >= 0) {
-        isbn = isIsbn(row[isbnCol]);
-        if (priceCol >= 0) price = isPrice(row[priceCol]);
-      } else {
-        // No header: scan all cells for ISBN, then look for price nearby
-        for (let i = 0; i < row.length; i++) {
-          const candidate = isIsbn(row[i]);
-          if (candidate) { isbn = candidate; price = isPrice(row[i+1]); break; }
+    // ── Amazon Business Report tespiti ─────────────────────────────
+    // Kolonlar: [1]=(Child) ASIN, [14]=Units Ordered, [18]=Ordered Product Sales
+    const isAmazonReport = headers.some(h => h.includes("ordered product sales"))
+                        && headers.some(h => h.includes("child") && h.includes("asin"));
+    if (isAmazonReport) {
+      const asinCol   = headers.findIndex(h => h.includes("child") && h.includes("asin"));
+      const unitsCol  = headers.findIndex(h => h === "units ordered");
+      const salesCol  = headers.findIndex(h => h === "ordered product sales");
+      const titleCol  = headers.findIndex(h => h === "title");
+      const isbns = [], priceMap = {}, titleMap = {};
+      for (const row of rows.slice(1)) {
+        const asin = isIsbn(row[asinCol]);
+        if (!asin) continue;
+        const units = parseInt(row[unitsCol]||"0");
+        const sales = parseNum(row[salesCol]);
+        const avg   = (units > 0 && sales > 0) ? Math.round(sales/units*100)/100 : null;
+        const title = titleCol >= 0 ? String(row[titleCol]||"").slice(0,60) : "";
+        if (!isbns.includes(asin)) {
+          isbns.push(asin);
+          if (avg) priceMap[asin] = avg;
+          if (title) titleMap[asin] = title;
         }
       }
+      return { isbns, priceMap, titleMap, reportType: "amazon_business_report" };
+    }
 
+    // ── Genel CSV formatı ────────────────────────────────────────────
+    const isbnCol  = headers.findIndex(h => h.includes("isbn") || h.includes("ean") || h.includes("asin"));
+    const priceCol = headers.findIndex(h => h.includes("buy") || h.includes("price") || h.includes("fiyat") || h.includes("alım") || h.includes("cost"));
+    const hasHeader = isbnCol >= 0;
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    const isbns = [], priceMap = {};
+
+    for (const row of dataRows) {
+      if (!row||!row.length) continue;
+      let isbn = null, price = null;
+      if (hasHeader) {
+        isbn  = isIsbn(row[isbnCol]);
+        if (priceCol >= 0) price = parseNum(row[priceCol]);
+      } else {
+        for (let i = 0; i < row.length; i++) {
+          const c = isIsbn(row[i]);
+          if (c) { isbn = c; price = parseNum(row[i+1]); break; }
+        }
+      }
       if (isbn && !isbns.includes(isbn)) {
         isbns.push(isbn);
         if (price) priceMap[isbn] = price;
       }
     }
-    return { isbns, priceMap };
+    return { isbns, priceMap, titleMap: {}, reportType: "generic" };
   };
 
   const handleFile = async (e) => {
@@ -880,11 +905,16 @@ function DiscoverTab({ C, theme }) {
     if (ext === "csv" || ext === "txt") {
       const text = await file.text();
       const rows = text.split("\n").map(line => line.split(/,|;|\t/));
-      const { isbns, priceMap } = _parseRows(rows);
+      const { isbns, priceMap, titleMap, reportType } = _parseRows(rows);
       setCsvText(isbns.join("\n"));
-      setIsbnBuyPrices(priceMap);
-      if (Object.keys(priceMap).length > 0)
-        setError(""); // clear any previous error
+      setCsvReportType(reportType||"");
+      setCsvTitleMap(titleMap||{});
+      if (reportType === "amazon_business_report") {
+        setIsbnAmazonPrices(priceMap); setIsbnBuyPrices({});
+      } else {
+        setIsbnBuyPrices(priceMap); setIsbnAmazonPrices({});
+      }
+      setError("");
     } else if (ext === "xlsx" || ext === "xls") {
       try {
         const XLSX = await import("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
@@ -892,9 +922,15 @@ function DiscoverTab({ C, theme }) {
         const wb = XLSX.read(buf, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
-        const { isbns, priceMap } = _parseRows(rows);
+        const { isbns, priceMap, titleMap, reportType } = _parseRows(rows);
         setCsvText(isbns.join("\n"));
-        setIsbnBuyPrices(priceMap);
+        setCsvReportType(reportType||"");
+        setCsvTitleMap(titleMap||{});
+        if (reportType === "amazon_business_report") {
+          setIsbnAmazonPrices(priceMap); setIsbnBuyPrices({});
+        } else {
+          setIsbnBuyPrices(priceMap); setIsbnAmazonPrices({});
+        }
       } catch(err) {
         setError("XLSX okunamadı: " + err.message);
       }
@@ -916,6 +952,7 @@ function DiscoverTab({ C, theme }) {
       only_viable: true,
       concurrency,
       ...(Object.keys(isbnBuyPrices).length ? {isbn_buy_prices: isbnBuyPrices} : {}),
+      ...(Object.keys(isbnAmazonPrices).length ? {isbn_amazon_prices: isbnAmazonPrices} : {}),
       ...(minRoi   ? {min_roi_pct: parseFloat(minRoi)}   : {}),
       ...(maxRoi   ? {max_roi_pct: parseFloat(maxRoi)}   : {}),
       ...(minProfit? {min_profit_usd: parseFloat(minProfit)}: {}),
@@ -1012,14 +1049,37 @@ function DiscoverTab({ C, theme }) {
             style={{...inpStyle, width:"100%", resize:"vertical", fontFamily:"monospace", marginTop:4}}
           />
           <div style={{fontSize:10, color:C.muted3, marginTop:4}}>
-            {isbns.length} ISBN · max 500
-            {Object.keys(isbnBuyPrices).length > 0 && (
-              <span style={{marginLeft:8, color:C.green}}>
-                ✅ {Object.keys(isbnBuyPrices).length} ISBN için alım fiyatı yüklendi
-              </span>
+            {isbns.length} ISBN/ASIN · max 500
+            {csvReportType === "amazon_business_report" && (
+              <span style={{marginLeft:8, color:C.accent}}>📊 Amazon Business Report</span>
             )}
           </div>
-          {Object.keys(isbnBuyPrices).length > 0 && (
+          {csvReportType === "amazon_business_report" && Object.keys(isbnAmazonPrices).length > 0 && (
+            <div style={{marginTop:6, background:C.surface2, borderRadius:6, padding:"6px 8px", fontSize:10}}>
+              <div style={{color:C.accent, fontWeight:600, marginBottom:4}}>
+                📊 Amazon Business Report — {Object.keys(isbnAmazonPrices).length} ürün
+              </div>
+              <div style={{color:C.muted, marginBottom:3, fontSize:9}}>
+                Ortalama satış fiyatı (Ordered Product Sales ÷ Units Ordered)
+              </div>
+              {Object.entries(isbnAmazonPrices).slice(0,3).map(([asin, price]) => (
+                <div key={asin} style={{color:C.text, fontFamily:"monospace", marginBottom:1}}>
+                  {asin}
+                  {csvTitleMap[asin] && <span style={{color:C.muted, fontFamily:"sans-serif"}}> — {csvTitleMap[asin].slice(0,30)}</span>}
+                  <span style={{color:C.green}}> ≈${price}</span>
+                </div>
+              ))}
+              {Object.keys(isbnAmazonPrices).length > 3 && (
+                <div style={{color:C.muted}}>+{Object.keys(isbnAmazonPrices).length-3} daha…</div>
+              )}
+              <button onClick={()=>{setIsbnAmazonPrices({}); setCsvReportType(""); setCsvTitleMap({});}}
+                style={{marginTop:4, fontSize:10, color:C.red||"#ef4444", background:"none",
+                  border:"none", cursor:"pointer", padding:0}}>
+                ✕ Sıfırla
+              </button>
+            </div>
+          )}
+          {csvReportType !== "amazon_business_report" && Object.keys(isbnBuyPrices).length > 0 && (
             <div style={{marginTop:6, background:C.surface2, borderRadius:6, padding:"6px 8px", fontSize:10}}>
               <div style={{color:C.muted, marginBottom:3}}>📋 Alım fiyatı önizleme (ilk 3):</div>
               {Object.entries(isbnBuyPrices).slice(0,3).map(([isbn, price]) => (

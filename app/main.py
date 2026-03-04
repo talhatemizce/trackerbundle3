@@ -956,7 +956,8 @@ from app.profit_calc import FeeConfig
 class CsvArbRequest(BaseModel):
     isbns: List[str] = Field(..., description="ISBN listesi (10 veya 13 hane)")
     strict_mode: bool = Field(default=True, description="True: NEW→NEW, USED→USED only")
-    isbn_buy_prices: Optional[dict] = Field(default=None, description="Opsiyonel: {isbn: buy_price} CSV'den gelen hedef alım fiyatları")
+    isbn_buy_prices: Optional[dict] = Field(default=None, description="Opsiyonel: {isbn: buy_price} — kullanıcı alım fiyatları")
+    isbn_amazon_prices: Optional[dict] = Field(default=None, description="Opsiyonel: {asin: avg_price} — Amazon Business Report'tan hesaplanan ortalama satış fiyatı")
     min_roi_pct: Optional[float] = None
     max_roi_pct: Optional[float] = None
     min_profit_usd: Optional[float] = None
@@ -1013,6 +1014,7 @@ async def csv_arb_scan(req: CsvArbRequest):
         fees=fees,
         concurrency=req.concurrency,
         isbn_buy_prices=req.isbn_buy_prices or {},
+        isbn_amazon_prices=req.isbn_amazon_prices or {},
     )
     return {"ok": True, **result}
 

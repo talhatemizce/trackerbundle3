@@ -299,6 +299,7 @@ async def _scan_one(
     filters: ScanFilters,
     fees: FeeConfig,
     isbn_buy_prices: Dict[str, float] = {},
+    isbn_amazon_prices: Dict[str, float] = {},
 ) -> List[ArbResult]:
     """Tek ISBN için tüm kaynakları tara, ArbResult listesi döndür."""
     asin = _isbn13_to_asin(isbn)
@@ -325,10 +326,9 @@ async def _scan_one(
 
     all_offers = (ebay_offers or []) + (bf_offers or [])
 
-    # CSV'den gelen opsiyonel alım fiyatı → sentetik offer oluştur
+    # Kullanıcı alım fiyatı (generic CSV) → sentetik offer ekle
     csv_price = isbn_buy_prices.get(isbn) or isbn_buy_prices.get(asin)
     if csv_price and csv_price > 0:
-        # Her iki kondisyon için de sentetik offer ekle (strict mode halleder)
         for cond in ["new", "used"]:
             all_offers.append({
                 "source": "csv_input",
@@ -338,6 +338,21 @@ async def _scan_one(
                 "title": "CSV alım fiyatı",
                 "url": "",
             })
+
+    # Amazon Business Report ortalama satış fiyatı → amazon_data'yı override et
+    amz_report_price = isbn_amazon_prices.get(isbn) or isbn_amazon_prices.get(asin)
+    if amz_report_price and amz_report_price > 0:
+        # Business Report fiyatını hem new hem used buybox olarak enjekte et
+        # (rapordaki fiyat hangi kondisyonda satıldığını bilmiyoruz, iki seçenek de göster)
+        bb_entry = {"total": amz_report_price, "price": amz_report_price, "ship": 0.0,
+                    "label": "A", "buybox": True, "source": "business_report"}
+        if not amazon_data:
+            amazon_data = {}
+        if not amazon_data.get("new", {}).get("buybox"):
+            amazon_data.setdefault("new", {})["buybox"] = bb_entry
+        if not amazon_data.get("used", {}).get("buybox"):
+            amazon_data.setdefault("used", {})["buybox"] = bb_entry
+        logger.debug("Injected business_report price=%.2f for isbn=%s", amz_report_price, isbn)
 
     if not all_offers:
         r = ArbResult(isbn=isbn, asin=asin, source="", source_condition="",
@@ -392,7 +407,8 @@ async def scan_isbn_list(
     fees: FeeConfig = DEFAULT_FEES,
     concurrency: int = 3,
     on_progress: Any = None,  # optional callback(done, total)
-    isbn_buy_prices: Dict[str, float] = {},  # opsiyonel: CSV'den gelen hedef alım fiyatları
+    isbn_buy_prices: Dict[str, float] = {},     # opsiyonel: kullanıcı alım fiyatları (generic CSV)
+    isbn_amazon_prices: Dict[str, float] = {},  # opsiyonel: Amazon Business Report ortalama satış fiyatı
 ) -> Dict[str, Any]:
     """
     ISBN listesini paralel tara (max `concurrency` aynı anda).
@@ -408,7 +424,7 @@ async def scan_isbn_list(
     async def _run(isbn: str):
         nonlocal done_count
         async with sem:
-            results = await _scan_one(isbn.strip(), filters, fees, isbn_buy_prices=isbn_buy_prices)
+            results = await _scan_one(isbn.strip(), filters, fees, isbn_buy_prices=isbn_buy_prices, isbn_amazon_prices=isbn_amazon_prices)
             for r in results:
                 d = r.to_dict()
                 if r.accepted:
