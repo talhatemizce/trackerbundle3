@@ -804,7 +804,6 @@ function Thumb({ imageUrl, isbn, href, C, size = 72 }) {
 // SCAN HISTORY TAB
 // ═══════════════════════════════════════════════════════════════════
 function ScanHistoryTab({ C }) {
-  const BASE = window.API_BASE || "";
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
@@ -812,8 +811,7 @@ function ScanHistoryTab({ C }) {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await fetch(BASE + "/discover/history");
-      const d = await r.json();
+      const d = await req("/discover/history", {}, 10000);
       if (d.ok) setHistory(d.history || []);
     } catch(e) {}
     setLoading(false);
@@ -961,7 +959,6 @@ function ScanHistoryTab({ C }) {
 }
 
 function DiscoverTab({ C, theme }) {
-  const BASE = window.API_BASE || "";
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
   const [isbnBuyPrices, setIsbnBuyPrices] = useState({}); // {isbn: buyPrice} — CSV'den gelen opsiyonel fiyatlar
@@ -1135,10 +1132,7 @@ function DiscoverTab({ C, theme }) {
 
     try {
       // 1. Job başlat — hemen job_id döner
-      const res = await fetch(BASE + "/discover/csv-arb", {
-        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body),
-      });
-      const data = await res.json();
+      const data = await req("/discover/csv-arb", {method:"POST", body:JSON.stringify(body)}, 30000);
       if (!data.ok) { setError(data.detail || "Başlatılamadı"); setScanning(false); return; }
 
       const jid = data.job_id;
@@ -1148,8 +1142,7 @@ function DiscoverTab({ C, theme }) {
       // 2. Poll progress
       pollRef.current = setInterval(async () => {
         try {
-          const pr = await fetch(BASE + "/discover/csv-arb/progress/" + jid);
-          const pd = await pr.json();
+          const pd = await req("/discover/csv-arb/progress/" + jid, {}, 10000);
           if (!pd.ok) return;
           setProgress({done:pd.progress, total:pd.total, eta_s:pd.eta_s, status:pd.status,
             accepted_count:pd.accepted_count, rejected_count:pd.rejected_count});
@@ -1157,8 +1150,7 @@ function DiscoverTab({ C, theme }) {
           if (pd.status === "done") {
             stopPolling();
             // Tam sonucu çek
-            const rr = await fetch(BASE + "/discover/csv-arb/result/" + jid);
-            const rd = await rr.json();
+            const rd = await req("/discover/csv-arb/result/" + jid, {}, 30000);
             if (rd.ok) setResults(rd);
             else setError("Sonuç alınamadı");
             setScanning(false);
@@ -1180,12 +1172,10 @@ function DiscoverTab({ C, theme }) {
   const calcMaxBuy = async () => {
     if (!calcSell) return;
     try {
-      const res = await fetch(BASE + "/discover/suggest-max-buy", {
+      const data = await req("/discover/suggest-max-buy", {
         method: "POST",
-        headers: {"Content-Type":"application/json"},
         body: JSON.stringify({sell_price: parseFloat(calcSell), target_roi_pct: parseFloat(calcRoi)||30}),
-      });
-      const data = await res.json();
+      }, 10000);
       setCalcResult(data);
     } catch(e) {
       setCalcResult({ok: false, reason: e.message});
