@@ -958,7 +958,7 @@ function ScanHistoryTab({ C }) {
   );
 }
 
-function DiscoverTab({ C, theme }) {
+function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
   const [isbnBuyPrices, setIsbnBuyPrices] = useState({}); // {isbn: buyPrice} — CSV'den gelen opsiyonel fiyatlar
