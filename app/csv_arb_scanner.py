@@ -26,12 +26,24 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from app.profit_calc import FeeConfig, DEFAULT_FEES, _tier
-from app.analytics import (
-    bsr_to_velocity, bsr_to_days_to_sell,
-    compute_confidence, confidence_tier,
-    compute_ev, compute_scenarios,
-    seasonal_velocity_mult,
-)
+try:
+    from app.analytics import (
+        bsr_to_velocity, bsr_to_days_to_sell,
+        compute_confidence, confidence_tier,
+        compute_ev, compute_scenarios,
+        seasonal_velocity_mult,
+    )
+    _ANALYTICS_OK = True
+except Exception as _analytics_err:
+    import logging as _al; _al.getLogger("trackerbundle").warning("analytics import failed: %s", _analytics_err)
+    _ANALYTICS_OK = False
+    def bsr_to_velocity(b): return None
+    def bsr_to_days_to_sell(b): return None
+    def compute_confidence(d): return 0
+    def confidence_tier(s): return "uncertain"
+    def compute_ev(p, v, c): return None
+    def compute_scenarios(*a, **k): return {}
+    def seasonal_velocity_mult(*a, **k): return 1.0
 
 logger = logging.getLogger("trackerbundle.csv_arb_scanner")
 
@@ -258,18 +270,12 @@ async def _get_ebay_offers(isbn: str) -> List[Dict]:
             if total is None or total <= 0:
                 logger.debug("eBay item_total_price=None isbn=%s item=%s", isbn, it.get("itemId","?"))
                 continue
-            # Browse API: condition is a list [{conditionDisplayName:[...], conditionId:[...]}]
-            cond_raw = it.get("condition") or []
-            if isinstance(cond_raw, list) and cond_raw:
-                cond_info = cond_raw[0] if isinstance(cond_raw[0], dict) else {}
-                cond_text = (cond_info.get("conditionDisplayName") or [""])[0] if isinstance(cond_info.get("conditionDisplayName"), list) else (cond_info.get("conditionDisplayName") or "")
-                cond_id_raw = cond_info.get("conditionId")
-                cond_id = (cond_id_raw[0] if isinstance(cond_id_raw, list) else cond_id_raw)
-            elif isinstance(cond_raw, dict):
-                cond_text = cond_raw.get("conditionDisplayName") or ""
-                cond_id = cond_raw.get("conditionId")
-            else:
-                cond_text = ""; cond_id = None
+            # Browse API item_summary: condition = plain string, conditionId = plain string
+            # e.g. {"condition": "Very Good", "conditionId": "4000"}
+            cond_text = it.get("condition") or ""
+            cond_id   = it.get("conditionId")
+            if not isinstance(cond_text, str):
+                cond_text = str(cond_text)
             cond = normalize_condition(cond_text, cond_id)
             # normalize → "brand_new" | "like_new" | "very_good" | "good" | "acceptable"
             source_cond = "new" if cond == "brand_new" else "used"
