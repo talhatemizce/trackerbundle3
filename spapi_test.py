@@ -1,5 +1,6 @@
 import os
 import requests
+from typing import Optional
 from dotenv import load_dotenv
 
 from botocore.auth import SigV4Auth
@@ -28,7 +29,7 @@ def get_lwa_access_token():
     r.raise_for_status()
     return r.json()["access_token"]
 
-def sigv4_headers(method: str, url: str, headers: dict, body: bytes | None = None):
+def sigv4_headers(method: str, url: str, headers: dict, body: Optional[bytes] = None):
     creds = Credentials(
         os.environ["AWS_ACCESS_KEY_ID"],
         os.environ["AWS_SECRET_ACCESS_KEY"]

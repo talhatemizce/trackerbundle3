@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Rules storage and logic for TrackerBundle
 JSON-based price limit + scan-interval configuration with per-ISBN overrides.

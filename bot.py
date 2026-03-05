@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os, json, re, time, logging
 import httpx
 from telegram import Update, ReplyKeyboardMarkup

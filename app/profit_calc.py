@@ -28,6 +28,11 @@ class FeeConfig:
     def total_fixed(self) -> float:
         return self.closing_fee + self.fulfillment + self.inbound
 
+    def total(self, sell_price: float) -> float:
+        """Verilen satış fiyatı için toplam fee (referral + sabit)."""
+        referral = max(1.00, sell_price * self.referral_pct)
+        return round(referral + self.total_fixed, 2)
+
 
 DEFAULT_FEES = FeeConfig()
 

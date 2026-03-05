@@ -1000,6 +1000,34 @@ function DiscoverTab({ C, theme }) {
   const fileRef = useRef();
 
   // ── File upload handler ──────────────────────────────────────────
+
+  // ── RFC 4180 uyumlu CSV parser ─────────────────────────────────────
+  // BOM temizleme, quoted fields, multi-delimiter algılama
+  const _parseCsvRobust = (text) => {
+    // BOM temizle
+    const clean = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    // Delimiter algıla: tab > semicolon > comma
+    const firstLine = clean.split("\n")[0] || "";
+    const delim = firstLine.includes("\t") ? "\t" : firstLine.includes(";") ? ";" : ",";
+    const rows = [];
+    let row = [], field = "", inQuote = false;
+    for (let i = 0; i < clean.length; i++) {
+      const ch = clean[i];
+      if (inQuote) {
+        if (ch === '"' && clean[i+1] === '"') { field += '"'; i++; }
+        else if (ch === '"') { inQuote = false; }
+        else { field += ch; }
+      } else {
+        if (ch === '"') { inQuote = true; }
+        else if (ch === delim) { row.push(field.trim()); field = ""; }
+        else if (ch === "\n") { row.push(field.trim()); rows.push(row); row = []; field = ""; }
+        else { field += ch; }
+      }
+    }
+    if (field || row.length) { row.push(field.trim()); if (row.some(Boolean)) rows.push(row); }
+    return rows;
+  };
+
   // CSV/XLSX'ten ISBN/ASIN + opsiyonel fiyat kolonunu parse et
   // Amazon Business Report formatını otomatik algılar
   const _parseRows = (rows) => {
@@ -1070,7 +1098,7 @@ function DiscoverTab({ C, theme }) {
 
     if (ext === "csv" || ext === "txt") {
       const text = await file.text();
-      const rows = text.split("\n").map(line => line.split(/,|;|\t/));
+      const rows = _parseCsvRobust(text);
       const { isbns, priceMap, titleMap, reportType } = _parseRows(rows);
       setCsvText(isbns.join("\n"));
       setCsvReportType(reportType||"");

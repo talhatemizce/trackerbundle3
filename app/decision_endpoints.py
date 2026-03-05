@@ -1,3 +1,4 @@
+from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 import httpx
 from app.rules_store import effective_limit

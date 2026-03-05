@@ -1,3 +1,4 @@
+from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from app.watchlist_endpoints import router as watchlist_router
 from pydantic import BaseModel
