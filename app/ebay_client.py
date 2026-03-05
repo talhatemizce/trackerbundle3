@@ -15,6 +15,53 @@ logger = logging.getLogger("trackerbundle.ebay_client")
 
 BOOKS_CATEGORY_ID = "267"
 
+# ── Browse API 429 rate-limit state ──────────────────────────────────────────
+_browse_backoff_until: float = 0.0   # epoch seconds
+
+
+async def _browse_request(
+    client: "httpx.AsyncClient",
+    params: dict,
+    headers: dict,
+    max_retries: int = 3,
+) -> "httpx.Response":
+    """
+    Browse API isteği — 429 gelirse exponential backoff ile retry yapar.
+    Backoff süresi: 2s → 8s → 30s
+    """
+    global _browse_backoff_until
+    import time as _time
+
+    for attempt in range(max_retries):
+        wait = _browse_backoff_until - _time.time()
+        if wait > 0:
+            logger.info("Browse API backoff — %.1fs bekleniyor (attempt %d)", wait, attempt + 1)
+            await asyncio.sleep(wait)
+
+        r = await client.get(
+            f"{_browse_base()}/item_summary/search",
+            params=params,
+            headers=headers,
+            timeout=20,
+        )
+
+        if r.status_code == 429:
+            retry_after = float(r.headers.get("Retry-After", [2, 8, 30][min(attempt, 2)]))
+            _browse_backoff_until = _time.time() + retry_after
+            logger.warning(
+                "Browse API 429 — %.0fs backoff (attempt %d/%d)",
+                retry_after, attempt + 1, max_retries,
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_after)
+                continue
+
+        r.raise_for_status()
+        return r
+
+    return r  # type: ignore
+
+
 _token_lock = asyncio.Lock()
 _token_cache: Dict[str, Any] = {}
 
@@ -642,8 +689,7 @@ async def _browse_fetch_one(
         "filter": "buyingOptions:{FIXED_PRICE|BEST_OFFER}",
     }
     headers = {"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"}
-    r = await client.get(f"{_browse_base()}/item_summary/search", params=params, headers=headers, timeout=20)
-    r.raise_for_status()
+    r = await _browse_request(client, params, headers)
     return r.json().get("itemSummaries") or []
 
 
@@ -664,13 +710,7 @@ async def _browse_gtin_search(
         "filter": "buyingOptions:{FIXED_PRICE|BEST_OFFER}",
     }
     headers = {"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"}
-    r = await client.get(
-        f"{_browse_base()}/item_summary/search",
-        params=params,
-        headers=headers,
-        timeout=20,
-    )
-    r.raise_for_status()
+    r = await _browse_request(client, params, headers)
     return r.json().get("itemSummaries") or []
 
 

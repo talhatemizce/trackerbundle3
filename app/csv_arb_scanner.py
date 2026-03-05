@@ -260,6 +260,8 @@ async def _get_ebay_offers(isbn: str) -> List[Dict]:
 
         async with httpx.AsyncClient(timeout=20) as client:
             items = await browse_search_isbn(client, isbn)
+        # eBay rate limit koruması: istekler arası min 1s bekle
+        await asyncio.sleep(1.0)
 
         if not items:
             logger.debug("eBay browse_search_isbn isbn=%s returned 0 items", isbn)

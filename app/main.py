@@ -969,7 +969,7 @@ class CsvArbRequest(BaseModel):
     condition_in: Optional[List[str]] = None   # ["new"] | ["used"] | ["new","used"]
     source_in: Optional[List[str]] = None      # ["ebay","thriftbooks","abebooks",...]
     only_viable: bool = True
-    concurrency: int = Field(default=3, ge=1, le=8)
+    concurrency: int = Field(default=1, ge=1, le=5)
     # Fee overrides (opsiyonel)
     fee_referral_pct: Optional[float] = None
     fee_closing: Optional[float] = None
