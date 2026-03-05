@@ -1,63 +1,187 @@
 """
-Analytics — TrackerBundle3
-==========================
-BSR → velocity, confidence scoring, EV hesabı, scenario simulator.
-Patch review bulgularını (P0-P2) ve PM önerilerini (mevsimsellik, dinamik worst-case) içerir.
+TrackerBundle3 — Analitik Katman
+==================================
+BSR → Sales Velocity, Confidence Score, EV, Scenario Simulator.
+
+Can & Ali PM/Dev tartışmasından türetilen P3 özellik seti.
 """
 from __future__ import annotations
 
-import datetime as _dt
 import math
 from typing import Optional
 
-# ── BSR → Velocity ─────────────────────────────────────────────────────────────
 
-# Books kategorisi için deneysel katsayılar (Amazon US).
-# BSR 1 = ~300 satış/gün, BSR 1M = ~0.01 satış/gün (logaritmik eğri).
-_BSR_BREAKPOINTS: list[tuple[int, float]] = [
-    (1_000,    300.0),
-    (5_000,     60.0),
-    (10_000,    25.0),
-    (50_000,     8.0),
-    (100_000,    3.0),
-    (500_000,    0.5),
-    (1_000_000,  0.1),
+# ── BSR → Aylık Satış Hızı ────────────────────────────────────────────────────
+# Amazon Books US için ampirik eğri (Jungle Scout / Keepa 2023-24 kalibrasyonu)
+# Tier tablo: (BSR_eşik, aylık_satış_adet)
+_BSR_TIERS = [
+    (1_000,      200.0),
+    (5_000,       80.0),
+    (20_000,      30.0),
+    (50_000,      12.0),
+    (100_000,      6.0),
+    (250_000,      2.5),
+    (500_000,      1.2),
+    (1_000_000,    0.5),
+    (float("inf"), 0.15),
 ]
 
 
 def bsr_to_velocity(bsr: Optional[int]) -> Optional[float]:
-    """
-    BSR → günlük tahmini satış (float).
-    Dönüş değeri aylık bazda normalize edilmiş değil — günlük.
-    None: BSR yok veya geçersiz.
-    """
+    """BSR → tahmini aylık satış adet. BSR None/0 → None."""
     if not bsr or bsr <= 0:
         return None
-    for rank, daily in _BSR_BREAKPOINTS:
-        if bsr <= rank:
-            return round(daily, 2)
-    return 0.05  # çok yüksek BSR
+    for threshold, vel in _BSR_TIERS:
+        if bsr < threshold:
+            return vel
+    return 0.15
 
 
 def bsr_to_days_to_sell(bsr: Optional[int]) -> Optional[int]:
-    """BSR → stokun kaç günde satılacağı tahmini (tek adet)."""
+    """
+    BSR → tek birim için beklenen satış süresi (gün).
+    max 730 (2 yıl) ile sınırlı.
+    """
     vel = bsr_to_velocity(bsr)
-    if not vel or vel <= 0:
+    if not vel:
         return None
-    return max(1, round(1.0 / vel))
+    days = math.ceil(30.0 / vel)
+    return min(days, 730)
 
 
-# ── Mevsimsellik Çarpanları ────────────────────────────────────────────────────
+# ── Confidence Score (0–100) ─────────────────────────────────────────────────
+# Veri kalitesi, fiyat kararlılığı ve kaynak güvenilirliğini ölçer.
+# ROI'den bağımsız: yüksek ROI + düşük confidence = riskli fırsat.
+
+def compute_confidence(result: dict) -> int:
+    """
+    ArbResult dict'inden 0-100 güven skoru üretir.
+
+    Bileşen dağılımı (toplam 100):
+      20  buybox kalitesi (buybox > top1/2 fallback)
+      15  sub-condition bilgisi (specific > generic)
+      15  spike yok
+      15  Amazon self-seller değil
+      10  cross-condition fallback yok
+      10  rakip sayısı az
+       7  seller feedback % yüksek
+       5  seller feedback hacmi yeterli (scam önleme)
+       3  BSR mevcut (likidite sinyali var)
+    """
+    score = 0
+
+    # Buybox kalitesi
+    sell_src = (result.get("sell_source") or "").lower()
+    if "buybox" in sell_src:
+        score += 20
+    elif "top" in sell_src:
+        score += 8  # buybox suppressed ama fiyat var
+
+    # Sub-condition netliği
+    sub = (result.get("ebay_sub_condition") or "").lower()
+    if sub in ("brand_new", "like_new", "very_good", "good", "acceptable"):
+        score += 15
+    elif sub == "used_all":
+        score += 6  # genel "used" — kısmi bilgi
+
+    # Spike yok
+    if not result.get("spike_warning", False):
+        score += 15
+
+    # Amazon self-seller değil
+    if not result.get("is_amazon_selling", False):
+        score += 15
+
+    # Cross-condition fallback yok
+    if "FALLBACK" not in (result.get("match_type") or "").upper():
+        score += 10
+
+    # Rakip sayısı (ilgili kondisyon)
+    cond = result.get("source_condition", "used")
+    cnt_key = "amazon_used_count" if cond == "used" else "amazon_new_count"
+    cnt = result.get(cnt_key) or 0
+    if cnt == 0:
+        score += 10
+    elif cnt <= 3:
+        score += 7
+    elif cnt <= 5:
+        score += 4
+    elif cnt <= 10:
+        score += 1
+
+    # Seller feedback %
+    fb_pct = result.get("ebay_seller_feedback")
+    if fb_pct is not None:
+        if fb_pct >= 99.0:
+            score += 7
+        elif fb_pct >= 97.0:
+            score += 5
+        elif fb_pct >= 95.0:
+            score += 3
+        elif fb_pct >= 90.0:
+            score += 1
+
+    # Seller feedback hacmi (scam önleme: 100% + 3 yorum = kırmızı bayrak)
+    fb_cnt = result.get("ebay_seller_feedback_count")
+    if fb_cnt is not None:
+        if fb_cnt >= 500:
+            score += 5
+        elif fb_cnt >= 100:
+            score += 3
+        elif fb_cnt >= 50:
+            score += 2
+        elif fb_cnt >= 10:
+            score += 1
+
+    # BSR mevcut (likidite sinyali)
+    if result.get("bsr") and result["bsr"] > 0:
+        score += 3
+
+    return max(0, min(100, score))
+
+
+def confidence_tier(score: int) -> str:
+    if score >= 75: return "high"
+    if score >= 50: return "medium"
+    if score >= 25: return "low"
+    return "very_low"
+
+
+# ── EV Score (Expected Value) ─────────────────────────────────────────────────
+# EV = base_profit × min(velocity, 30) × (confidence / 100)
+# Birim: USD/ay — "Bu kitabı 1 ay tutarsak güven-ayarlı beklenen kazanç"
+
+def compute_ev(
+    base_profit: Optional[float],
+    velocity: Optional[float],
+    confidence: int,
+) -> Optional[float]:
+    """
+    Monthly Expected Value.
+    Negatif base_profit → None (zarar beklentisi EV hesabına katılmaz).
+    """
+    if base_profit is None or velocity is None:
+        return None
+    if base_profit <= 0 or velocity <= 0:
+        return None
+    ev = base_profit * min(velocity, 30.0) * (confidence / 100.0)
+    return round(ev, 2)
+
+
+# ── Mevsimsellik Çarpanları (Textbook / Genel) ──────────────────────────
+# Ders kitapları: Ocak-Şubat ve Ağustos-Eylül döneminde talep patlar.
+# Yaz aylarında BSR velocity anlamsızlaşır — mevsimsel düzeltme gerekir.
+import datetime as _dt
 
 _TEXTBOOK_SEASON_MULT: dict[int, float] = {
     1: 1.40,   # Ocak: bahar dönemi başlangıcı (talep zirvesi)
     2: 1.25,   # Şubat: geç kayıt
     3: 0.90,   # Mart
-    4: 0.80,   # Nisan: dönem sonu
+    4: 0.80,   # Nisan: dönem sonu — ders kitapları satılıyor
     5: 0.60,   # Mayıs: yaz tatili
     6: 0.55,   # Haziran: en düşük
     7: 0.70,   # Temmuz: erken alıcılar
-    8: 1.35,   # Ağustos: güz dönemi (talep zirvesi)
+    8: 1.35,   # Ağustos: güz dönemi başlangıcı (talep zirvesi)
     9: 1.25,   # Eylül: geç kayıt
     10: 0.85,  # Ekim
     11: 0.75,  # Kasım
@@ -78,120 +202,38 @@ def seasonal_velocity_mult(
     """
     Aylık mevsimsel velocity çarpanı.
     month=None → mevcut ay kullanılır.
+    Textbook modunda ders kitabı talep patternini uygular.
     """
     m = month or _dt.date.today().month
     table = _TEXTBOOK_SEASON_MULT if is_textbook else _GENERAL_SEASON_MULT
     return table.get(m, 1.0)
 
 
-# ── Confidence Score ───────────────────────────────────────────────────────────
-
-def compute_confidence(
-    sell_source: str,           # "used_buybox" | "new_buybox" | "used_top1" | "new_top1"
-    spike_warning: bool,
-    is_amazon_selling: bool,
-    seller_count: Optional[int],
-    seller_feedback_pct: Optional[float],
-    bsr: Optional[int],
-    roi_pct: float,
-) -> int:
-    """
-    0-100 arası confidence skoru.
-    Muhafazakar: eksik veri → puan verilmez.
-    """
-    score = 0
-
-    # Buybox kaynağı (20 puan)
-    if "buybox" in sell_source:
-        score += 20
-    elif "top1" in sell_source or "top2" in sell_source:
-        score += 10
-
-    # Spike yok (15 puan)
-    if not spike_warning:
-        score += 15
-
-    # Amazon satıcı değil (15 puan)
-    if not is_amazon_selling:
-        score += 15
-
-    # Satıcı sayısı (10 puan)
-    if seller_count is not None:
-        if seller_count <= 3:
-            score += 10
-        elif seller_count <= 8:
-            score += 5
-
-    # Seller feedback (7 + 5 puan)
-    if seller_feedback_pct is not None:
-        if seller_feedback_pct >= 98:
-            score += 7
-        elif seller_feedback_pct >= 95:
-            score += 5
-        elif seller_feedback_pct >= 90:
-            score += 3
-
-    # BSR (15 puan)
-    if bsr is not None:
-        if bsr <= 10_000:
-            score += 15
-        elif bsr <= 50_000:
-            score += 10
-        elif bsr <= 200_000:
-            score += 5
-
-    # ROI tier (18 puan)
-    if roi_pct >= 30:
-        score += 18
-    elif roi_pct >= 15:
-        score += 12
-    elif roi_pct > 0:
-        score += 5
-
-    return min(score, 100)
-
-
-def confidence_tier(score: int) -> str:
-    if score >= 80: return "high"
-    if score >= 60: return "medium"
-    if score >= 40: return "low"
-    return "uncertain"
-
-
-# ── Expected Value ─────────────────────────────────────────────────────────────
-
-def compute_ev(
-    profit: float,
-    velocity: Optional[float],   # günlük satış tahmini
-    confidence_score: int,
-) -> Optional[float]:
-    """
-    EV = profit × monthly_velocity_capped × (confidence/100)
-    monthly_velocity capped at 30 (tek satıcı olarak tüm aylık satışı alamayız).
-    """
-    if velocity is None or velocity <= 0:
-        return None
-    monthly = min(velocity * 30, 30.0)
-    ev = profit * monthly * (confidence_score / 100)
-    return round(ev, 2)
-
-
-# ── Scenario Simulator (v2 — dinamik worst-case) ──────────────────────────────
+# ── Scenario Simulator ────────────────────────────────────────────────────
+# Tek bir fiyat noktası yerine üç senaryo: best / base / worst
+# v2: Worst case artık dinamik — yavaş satan kitaplarda risk çarpanı artar.
 
 def _dynamic_worst_pct(velocity: Optional[float], bsr: Optional[int]) -> float:
     """
-    Worst-case kırpma yüzdesi (0.0–1.0).
-    Hızlı satanlar → düşük risk → küçük kırpma.
-    Veri yok → maksimum ceza.
+    Worst-case fiyat kırpma yüzdesi (0.0-1.0 arası — sell_price * (1 - pct) = worst).
+
+    Hızlı satanlar (velocity > 10) → %15 kırpma (düşük risk)
+    Orta satanlar (1-10)           → %25 kırpma
+    Yavaş satanlar (< 1)          → %40 kırpma (yüksek risk — stok kalma ihtimali)
+    BSR yok veya > 1M             → %45 kırpma (veri yokluğu cezası)
     """
     if not velocity or velocity <= 0:
         return 0.45
     if not bsr or bsr > 1_000_000:
         return 0.45
-    if velocity >= 10.0: return 0.15
-    if velocity >= 5.0:  return 0.20
-    if velocity >= 1.0:  return 0.25
-    if velocity >= 0.5:  return 0.35
+    if velocity >= 10.0:
+        return 0.15
+    if velocity >= 5.0:
+        return 0.20
+    if velocity >= 1.0:
+        return 0.25
+    if velocity >= 0.5:
+        return 0.35
     return 0.40
 
 
@@ -204,35 +246,40 @@ def compute_scenarios(
     bsr: Optional[int] = None,
 ) -> dict:
     """
-    3 senaryo: best / base / worst.
-    best:  anlık buybox fiyatı
-    base:  tarihsel ortalama (avg_sell) veya current_sell × 0.85
-    worst: base × (1 - dynamic_pct)  — v2: velocity/BSR'a göre dinamik
+    best_case:   anlık buybox fiyatı (fiyat bu seviyede tutarsa)
+    base_case:   tarihsel ortalama fiyat (avg_sell) — daha gerçekçi
+                 avg yoksa: current_sell * 0.85 (ihtiyat payı)
+    worst_case:  base_case * (1 - dynamic_pct)
+                 v2: Kırpma yüzdesi velocity/BSR'a göre dinamik.
+
+    Dönüş: {best_case_*, base_case_*, worst_case_*} dict'i.
+    Eksik veri durumunda boş dict döner.
     """
-    if not current_sell or current_sell <= 0:
+    if not current_sell or buy_price <= 0:
         return {}
 
     best  = round(current_sell, 2)
     base  = round(avg_sell, 2) if (avg_sell and avg_sell > 0) else round(current_sell * 0.85, 2)
+
     worst_pct = _dynamic_worst_pct(velocity, bsr)
     worst = round(base * (1.0 - worst_pct), 2)
 
-    def _profit(sell: float) -> float:
+    def _p(sell: float) -> float:
         return round(sell - total_fees - buy_price, 2)
 
     def _roi(sell: float) -> float:
-        p = _profit(sell)
+        p = _p(sell)
         return round(p / buy_price * 100, 1) if buy_price > 0 else 0.0
 
     return {
         "best_case_sell":    best,
-        "best_case_profit":  _profit(best),
+        "best_case_profit":  _p(best),
         "best_case_roi":     _roi(best),
         "base_case_sell":    base,
-        "base_case_profit":  _profit(base),
+        "base_case_profit":  _p(base),
         "base_case_roi":     _roi(base),
         "worst_case_sell":   worst,
-        "worst_case_profit": _profit(worst),
+        "worst_case_profit": _p(worst),
         "worst_case_roi":    _roi(worst),
         "worst_cut_pct":     round(worst_pct * 100, 1),
     }

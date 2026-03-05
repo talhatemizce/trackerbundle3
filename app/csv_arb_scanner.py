@@ -26,6 +26,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from app.profit_calc import FeeConfig, DEFAULT_FEES, _tier
+from app.analytics import (
+    bsr_to_velocity, bsr_to_days_to_sell,
+    compute_confidence, confidence_tier,
+    compute_ev, compute_scenarios,
+    seasonal_velocity_mult,
+)
 
 logger = logging.getLogger("trackerbundle.csv_arb_scanner")
 
@@ -70,6 +76,22 @@ class ArbResult:
     roi_tier: str = "loss"
     reason: str = ""             # reject sebebi (boşsa accepted)
     accepted: bool = False
+    # ── Analitik alanlar (analytics.py) ──────────────────────────────
+    bsr: Optional[int] = None
+    velocity: Optional[float] = None       # aylık tahmini satış adet
+    days_to_sell: Optional[int] = None
+    confidence: Optional[int] = None       # 0-100
+    confidence_tier: Optional[str] = None  # high/medium/low/very_low
+    ev_score: Optional[float] = None       # monthly EV ($)
+    sell_source: str = ""                  # used_buybox/new_top1 etc.
+    # Senaryo alanları
+    best_case_profit: Optional[float] = None
+    best_case_roi: Optional[float] = None
+    base_case_profit: Optional[float] = None
+    base_case_roi: Optional[float] = None
+    worst_case_profit: Optional[float] = None
+    worst_case_roi: Optional[float] = None
+    worst_cut_pct: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -428,6 +450,47 @@ async def _scan_one(
             r.reason = reason
         else:
             _apply_profit(r, sell_price, bb_type, match_type, fees)
+
+            # ── Analitik Layer ────────────────────────────────────────
+            # BSR → velocity → days_to_sell (amazon_data'dan BSR gelebilir)
+            _bsr = (amazon_data.get(bb_type or "used") or {}).get("bsr") or                    (amazon_data.get("used") or {}).get("bsr") or                    (amazon_data.get("new") or {}).get("bsr")
+            if _bsr:
+                r.bsr = int(_bsr)
+                r.velocity = bsr_to_velocity(r.bsr)
+                r.days_to_sell = bsr_to_days_to_sell(r.bsr)
+
+            # sell_source: "used_buybox" / "new_top1" formatı (P1 fix)
+            _sec = (amazon_data.get(bb_type) or {}) if bb_type else {}
+            _has_bb = bool((_sec.get("buybox") or {}).get("total"))
+            r.sell_source = f"{bb_type}_buybox" if (_has_bb and bb_type) else                             (f"{bb_type}_top1" if bb_type else "")
+
+            # Confidence score
+            _r_dict = r.to_dict()
+            r.confidence = compute_confidence(_r_dict)
+            r.confidence_tier = confidence_tier(r.confidence)
+
+            # EV score
+            r.ev_score = compute_ev(r.profit, r.velocity, r.confidence)
+
+            # Scenario simulator (v2 — dinamik worst-case)
+            _amz_report_price = isbn_amazon_prices.get(isbn) or isbn_amazon_prices.get(asin)
+            _scen = compute_scenarios(
+                buy_price=r.buy_price,
+                current_sell=sell_price,
+                avg_sell=_amz_report_price if _amz_report_price and _amz_report_price > 0 else None,
+                total_fees=r.total_fees or 0,
+                velocity=r.velocity,
+                bsr=r.bsr,
+            )
+            if _scen:
+                r.best_case_profit  = _scen.get("best_case_profit")
+                r.best_case_roi     = _scen.get("best_case_roi")
+                r.base_case_profit  = _scen.get("base_case_profit")
+                r.base_case_roi     = _scen.get("base_case_roi")
+                r.worst_case_profit = _scen.get("worst_case_profit")
+                r.worst_case_roi    = _scen.get("worst_case_roi")
+                r.worst_cut_pct     = _scen.get("worst_cut_pct")
+
             reject_reason = _filter_result(r, filters)
             if reject_reason:
                 r.reason = reject_reason

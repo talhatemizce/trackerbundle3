@@ -1531,7 +1531,7 @@ function DiscoverTab({ C, theme }) {
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:11}}>
                     <thead>
                       <tr style={{background:C.surface2, borderBottom:`1px solid ${C.border}`}}>
-                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Eşleşme","Kar $","ROI %","Tier",activeView==="accepted"?"Linkler":"",activeView==="rejected"?"Sebep":""].filter(Boolean).map(h=>(
+                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Kar $","ROI %","Tier",activeView==="accepted"?"Güven":"",activeView==="accepted"?"EV/mo":"",activeView==="accepted"?"Worst":"",activeView==="accepted"?"Linkler":"",activeView==="rejected"?"Sebep":""].filter(Boolean).map(h=>(
                           <th key={h} style={{padding:"8px 10px", textAlign:"left", color:C.muted, fontWeight:600, whiteSpace:"nowrap"}}>{h}</th>
                         ))}
                       </tr>
@@ -1551,7 +1551,6 @@ function DiscoverTab({ C, theme }) {
                           </td>
                           <td style={{padding:"7px 10px", color:C.text}}>{r.buy_price>0?`$${r.buy_price}`:"—"}</td>
                           <td style={{padding:"7px 10px", color:C.text}}>{r.amazon_sell_price!=null?`$${r.amazon_sell_price}`:"—"}</td>
-                          <td style={{padding:"7px 10px", color:C.muted, fontSize:10}}>{r.match_type||"—"}</td>
                           <td style={{padding:"7px 10px", fontWeight:600,
                             color: r.profit>0?C.green:C.red||"#ef4444"}}>{r.profit!==undefined?`$${r.profit}`:"—"}</td>
                           <td style={{padding:"7px 10px", fontWeight:600,
@@ -1563,6 +1562,28 @@ function DiscoverTab({ C, theme }) {
                             </span>}
                           </td>
                                                     {activeView==="accepted"&&(
+                            <td style={{padding:"7px 10px", textAlign:"center"}}>
+                              {r.confidence!=null&&(
+                                <span style={{padding:"2px 6px", borderRadius:4, fontSize:10, fontWeight:700,
+                                  background: r.confidence>=75?"#22c55e22":r.confidence>=50?"#f97316222":"#ef444422",
+                                  color: r.confidence>=75?C.green:r.confidence>=50?"#f97316":"#ef4444"}}>
+                                  {r.confidence}
+                                </span>
+                              )}
+                            </td>
+                          )}
+                          {activeView==="accepted"&&(
+                            <td style={{padding:"7px 10px", textAlign:"center", color:C.green, fontWeight:600, fontSize:11}}>
+                              {r.ev_score!=null?`$${r.ev_score}`:"—"}
+                            </td>
+                          )}
+                          {activeView==="accepted"&&(
+                            <td style={{padding:"7px 10px", textAlign:"center", color:"#f97316", fontSize:11}}>
+                              {r.worst_case_profit!=null?`$${r.worst_case_profit}`:"—"}
+                              {r.worst_cut_pct!=null&&<span style={{fontSize:9,color:C.muted,marginLeft:2}}>({r.worst_cut_pct}%↓)</span>}
+                            </td>
+                          )}
+                          {activeView==="accepted"&&(
                             <td style={{padding:"6px 8px", whiteSpace:"nowrap"}}>
                               {[
                                 {label:"AMZ", title:"Amazon",
