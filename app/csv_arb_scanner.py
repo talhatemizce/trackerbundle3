@@ -279,8 +279,9 @@ async def _get_ebay_offers(isbn: str) -> List[Dict]:
             if not isinstance(cond_text, str):
                 cond_text = str(cond_text)
             cond = normalize_condition(cond_text, cond_id)
-            # normalize → "brand_new" | "like_new" | "very_good" | "good" | "acceptable"
-            source_cond = "new" if cond == "brand_new" else "used"
+            # brand_new + like_new → Amazon NEW olarak listelenebilir
+            # very_good / good / acceptable → Amazon USED
+            source_cond = "new" if cond in ("brand_new", "like_new") else "used"
             offers.append({
                 "source": "ebay",
                 "source_condition": source_cond,
