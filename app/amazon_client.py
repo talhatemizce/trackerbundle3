@@ -147,7 +147,19 @@ async def _fetch_offers(
     # SigV4 imzala (sync, ama çok hızlı — CPU-bound değil)
     signed = await asyncio.to_thread(_sign_request, "GET", full_url, base_headers)
 
-    r = await client.get(full_url, headers=signed, timeout=30)
+    # SP-API GetItemOffers: 0.5 req/sn limit — retry with backoff
+    import time as _time
+    for _attempt in range(3):
+        r = await client.get(full_url, headers=signed, timeout=30)
+        if r.status_code == 429:
+            _wait = float(r.headers.get("x-amzn-RateLimit-Limit", "") or 0)
+            _wait = max(_wait, [2, 6, 20][_attempt])
+            logger.warning("SP-API 429 asin=%s cond=%s — %.0fs backoff (attempt %d/3)", asin, condition, _wait, _attempt+1)
+            await asyncio.sleep(_wait)
+            # Re-sign after backoff (token still valid)
+            signed = await asyncio.to_thread(_sign_request, "GET", full_url, base_headers)
+            continue
+        break
     r.raise_for_status()
 
     payload = (r.json() or {}).get("payload") or {}
@@ -183,11 +195,10 @@ async def get_top2_prices(
     async with httpx.AsyncClient(timeout=35) as client:
         access_token = await _get_lwa_token(client)
 
-        import asyncio as _asyncio
-        new_data, used_data = await _asyncio.gather(
-            _fetch_offers(client, asin, "New", mkt, access_token),
-            _fetch_offers(client, asin, "Used", mkt, access_token),
-        )
+        # SP-API rate limit: New + Used paralel atınca 429 — sıralı yap
+        new_data = await _fetch_offers(client, asin, "New", mkt, access_token)
+        await asyncio.sleep(2.0)  # 0.5 req/sn = 2s arası boşluk
+        used_data = await _fetch_offers(client, asin, "Used", mkt, access_token)
 
     return {
         "asin": asin,

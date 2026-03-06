@@ -244,6 +244,8 @@ async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
         return data
     except Exception as e:
         logger.warning("Amazon prices failed asin=%s: %s", asin, e)
+        # 429 gelince cache'e boş değil None koy ki bir sonraki ISBN beklesin
+        await asyncio.sleep(2.0)
         return {}
 
 
