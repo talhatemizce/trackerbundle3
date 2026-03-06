@@ -979,7 +979,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
   const [activeView, setActiveView] = useState("accepted");
 
   // Filters
-  const [strictMode, setStrictMode] = useState(true);
+  const [strictMode, setStrictMode] = useState(false);
   const [minRoi, setMinRoi] = useState("");
   const [maxRoi, setMaxRoi] = useState("");
   const [minProfit, setMinProfit] = useState("");
@@ -990,7 +990,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
   const [maxBuy, setMaxBuy] = useState("");
   const [condFilter, setCondFilter] = useState("all"); // "all"|"new"|"used"
   const [sourceFilter, setSourceFilter] = useState("all"); // "all"|"ebay"|"thriftbooks"|"abebooks"
-  const [concurrency, setConcurrency] = useState(3);
+  const [concurrency, setConcurrency] = useState(1);
 
   // Dynamic limit calculator
   const [calcSell, setCalcSell] = useState("");
@@ -1345,7 +1345,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
           {/* Strict mode */}
           <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
             <input type="checkbox" checked={strictMode} onChange={e=>setStrictMode(e.target.checked)}/>
-            <span>Strict Mode (NEW→NEW, USED→USED)</span>
+            <span>Strict Mode <span style={{fontSize:9,color:C.muted}}>(kapalı = USED eBay → NEW Amazon da olur)</span></span>
           </label>
 
           <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6}}>
@@ -1478,7 +1478,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
             <div>ISBN dosyası yükle veya yapıştır, filtrele, tara</div>
             <div style={{marginTop:6, fontSize:11}}>Amazon anlık buybox fiyatlarıyla kıyaslar</div>
             <div style={{marginTop:4, fontSize:11, color:C.muted}}>
-              Strict mode: NEW kitap → sadece Amazon New Buybox · USED kitap → sadece Amazon Used Buybox
+              Strict mode KAPALI: USED eBay ilanı → Amazon New Buybox'a da eşleşebilir (daha fazla sonuç) | AÇIK: sadece aynı kondisyon
             </div>
           </div>
         )}
