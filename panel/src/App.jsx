@@ -1,5 +1,19 @@
 import { useState, useEffect, useCallback, useRef, Component } from "react";
 
+
+// ISBN-10 → ISBN-13 dönüşümü (eBay GTIN araması için)
+const toIsbn13 = (isbn) => {
+  const s = (isbn||"").replace(/[^0-9X]/gi,"").toUpperCase();
+  if (s.length === 13) return s;
+  if (s.length !== 10) return s;
+  const core = "978" + s.slice(0,9);
+  let total = 0;
+  for (let i = 0; i < core.length; i++)
+    total += parseInt(core[i]) * (i % 2 === 0 ? 1 : 3);
+  const check = (10 - (total % 10)) % 10;
+  return core + check;
+};
+
 const BASE = import.meta.env.PROD ? "" : "/api";
 const req = async (path, opts = {}, timeoutMs = 15000) => {
   const ctrl = new AbortController();
@@ -1590,7 +1604,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
                                   url:`https://www.amazon.com/dp/${r.asin||r.isbn}`,
                                   bg:"#FF9900", color:"#fff"},
                                 {label:"eBay", title:"eBay",
-                                  url:`https://www.ebay.com/sch/i.html?_nkw=${r.isbn}&_sacat=267`,
+                                  url:`https://www.ebay.com/sch/i.html?_nkw=${toIsbn13(r.isbn)}&_sacat=267`,
                                   bg:"#E53238", color:"#fff"},
                                 {label:"ABE", title:"AbeBooks",
                                   url:`https://www.abebooks.com/servlet/SearchResults?isbn=${r.isbn}`,

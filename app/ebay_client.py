@@ -758,7 +758,10 @@ async def browse_search_isbn(
 
     # ── Adım 2: Keyword fallback (GTIN 0 sonuç döndürdüyse) ───────────────────
     if not combined:
-        tasks = [_browse_fetch_one(client, token, v, limit) for v in variants]
+        # ISBN-13 daha unique — önce onu dene, yanlış eşleşme riski düşük
+        # ISBN-10 başında 0 varsa UPC ile karışabilir
+        search_variants = [isbn13] if isbn13 else variants
+        tasks = [_browse_fetch_one(client, token, v, limit) for v in search_variants]
         results_per_query = await asyncio.gather(*tasks, return_exceptions=True)
 
         seen_ids: set[str] = set()
