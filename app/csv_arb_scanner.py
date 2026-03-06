@@ -74,9 +74,9 @@ class ArbResult:
     source: str                  # "ebay" | "thriftbooks" | "abebooks" | ...
     source_condition: str        # "new" | "used"
     buy_price: float             # kaynak alım fiyatı (item + ship)
-    amazon_sell_price: Optional[float]
-    buybox_type: Optional[str]   # "new" | "used"
-    match_type: Optional[str]    # "NEW→NEW" | "USED→USED" | "NEW→USED(fallback)" etc.
+    amazon_sell_price: Optional[float] = None
+    buybox_type: Optional[str] = None    # "new" | "used"
+    match_type: Optional[str] = None     # "NEW→NEW" | "USED→USED" | "NEW→USED(fallback)" etc.
     referral_fee: float = 0.0
     closing_fee: float = 0.0
     fulfillment: float = 0.0
