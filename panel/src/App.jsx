@@ -3151,6 +3151,30 @@ function AppReal() {
   // ── Global scan state — tab değişince kaybolmaz ──────────────────
   const [scanJob, setScanJob] = useState(null);       // {jobId, progress, results, error, scanning}
   const scanPollRef = useRef(null);
+
+  // ── Watchlist Adayları ───────────────────────────────────────────────────
+  const [candidates, setCandidates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("tb_candidates")||"[]"); } catch { return []; }
+  });
+  const saveCandidates = (list) => {
+    setCandidates(list);
+    try { localStorage.setItem("tb_candidates", JSON.stringify(list)); } catch {}
+  };
+  const addCandidate = (row) => {
+    setCandidates(prev => {
+      if (prev.some(c => c.isbn===row.isbn && c.source===row.source && c.source_condition===row.source_condition)) return prev;
+      const next = [{...row, addedAt: Date.now()}, ...prev];
+      try { localStorage.setItem("tb_candidates", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const removeCandidate = (isbn, source, source_condition) => {
+    setCandidates(prev => {
+      const next = prev.filter(c => !(c.isbn===isbn && c.source===source && c.source_condition===source_condition));
+      try { localStorage.setItem("tb_candidates", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
   const { toasts, push } = useToast();
 
   const [isbns, setIsbns] = useState([]);
