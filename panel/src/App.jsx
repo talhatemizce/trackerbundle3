@@ -972,7 +972,7 @@ function ScanHistoryTab({ C }) {
   );
 }
 
-function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
+function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[], addCandidate }) {
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
   const [isbnBuyPrices, setIsbnBuyPrices] = useState({}); // {isbn: buyPrice} — CSV'den gelen opsiyonel fiyatlar
@@ -991,6 +991,16 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
   const pollRef = scanPollRef;
   const [error, setError] = useState("");
   const [activeView, setActiveView] = useState("accepted");
+  const [selectedRows, setSelectedRows] = useState(new Set()); // indices of selected accepted rows
+  const toggleRow = (i) => setSelectedRows(prev => { const s=new Set(prev); s.has(i)?s.delete(i):s.add(i); return s; });
+  const selectAll = () => setSelectedRows(new Set((results?.accepted||[]).map((_,i)=>i)));
+  const deselectAll = () => setSelectedRows(new Set());
+  const isCandidate = (r) => candidates.some(c=>c.isbn===r.isbn&&c.source===r.source&&c.source_condition===r.source_condition);
+  const addSelected = () => {
+    const rows = results?.accepted||[];
+    selectedRows.forEach(i=>{ if(rows[i]) addCandidate(rows[i]); });
+    setSelectedRows(new Set());
+  };
 
   // Filters
   const [strictMode, setStrictMode] = useState(true);
@@ -1517,9 +1527,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
             </div>
 
             {/* View toggle + export */}
-            <div style={{display:"flex", gap:8, marginBottom:12, alignItems:"center"}}>
+            <div style={{display:"flex", gap:8, marginBottom:12, alignItems:"center", flexWrap:"wrap"}}>
               {["accepted","rejected"].map(v => (
-                <button key={v} onClick={()=>setActiveView(v)}
+                <button key={v} onClick={()=>{setActiveView(v);setSelectedRows(new Set());}}
                   style={{padding:"6px 14px", fontSize:11, borderRadius:6, cursor:"pointer",
                     background: activeView===v ? C.accent : C.surface,
                     color: activeView===v ? "#fff" : C.muted,
@@ -1527,6 +1537,21 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
                   {v==="accepted"?`✅ Kabul (${results.accepted.length})`:`❌ Elenen (${results.rejected.length})`}
                 </button>
               ))}
+              {activeView==="accepted"&&(<>
+                <div style={{width:1,height:20,background:C.border,margin:"0 4px"}}/>
+                <button onClick={selectedRows.size===results.accepted.length?deselectAll:selectAll}
+                  style={{padding:"5px 10px",fontSize:10,borderRadius:5,cursor:"pointer",
+                    background:C.surface2,color:C.muted,border:`1px solid ${C.border}`}}>
+                  {selectedRows.size===results.accepted.length?"☐ Tümünü Kaldır":"☑ Tümünü Seç"}
+                </button>
+                {selectedRows.size>0&&(
+                  <button onClick={addSelected}
+                    style={{padding:"5px 10px",fontSize:10,borderRadius:5,cursor:"pointer",
+                      background:"#854d0e22",color:"#f59e0b",border:"1px solid #f59e0b55",fontWeight:600}}>
+                    ⭐ {selectedRows.size} Adayı Ekle
+                  </button>
+                )}
+              </>)}
               <button onClick={exportCsv}
                 style={{marginLeft:"auto", padding:"6px 12px", fontSize:11, borderRadius:6,
                   cursor:"pointer", background:C.surface2, color:C.muted, border:`1px solid ${C.border}`}}>
@@ -1545,14 +1570,20 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:11}}>
                     <thead>
                       <tr style={{background:C.surface2, borderBottom:`1px solid ${C.border}`}}>
-                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Kar $","ROI %","Tier",activeView==="accepted"?"Güven":"",activeView==="accepted"?"EV/mo":"",activeView==="accepted"?"Worst":"",activeView==="accepted"?"Linkler":"",activeView==="rejected"?"Sebep":""].filter(Boolean).map(h=>(
+                        {[activeView==="accepted"?"☑":"","ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Kar $","ROI %","Tier",activeView==="accepted"?"Güven":"",activeView==="accepted"?"EV/mo":"",activeView==="accepted"?"Worst":"",activeView==="accepted"?"Linkler":"",activeView==="rejected"?"Sebep":"",activeView==="rejected"?"Aksiyon":""].filter(Boolean).map(h=>(
                           <th key={h} style={{padding:"8px 10px", textAlign:"left", color:C.muted, fontWeight:600, whiteSpace:"nowrap"}}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {(activeView==="accepted" ? results.accepted : results.rejected).map((r,i)=>(
-                        <tr key={i} style={{borderBottom:`1px solid ${C.border}`, background: i%2===0?C.surface:C.surface2}}>
+                        <tr key={i} style={{borderBottom:`1px solid ${C.border}`, background: selectedRows.has(i)?(C.accent+"18"):i%2===0?C.surface:C.surface2, transition:"background .1s"}}>
+                          {activeView==="accepted"&&(
+                            <td style={{padding:"7px 8px",textAlign:"center",width:32}}>
+                              <input type="checkbox" checked={selectedRows.has(i)} onChange={()=>toggleRow(i)}
+                                style={{accentColor:C.accent,cursor:"pointer",width:13,height:13}}/>
+                            </td>
+                          )}
                           <td style={{padding:"7px 10px", color:C.text, fontFamily:"monospace"}}>{r.isbn}</td>
                           <td style={{padding:"7px 10px", color:C.muted, fontFamily:"monospace", fontSize:10}}>{r.asin||"—"}</td>
                           <td style={{padding:"7px 10px", color:C.accent}}>{r.source}</td>
@@ -1629,10 +1660,35 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef }) {
                               ))}
                             </td>
                           )}
+                          {activeView==="accepted"&&(
+                            <td style={{padding:"6px 8px",textAlign:"center"}}>
+                              <button onClick={()=>isCandidate(r)?null:addCandidate(r)}
+                                title={isCandidate(r)?"Zaten aday listesinde":"Aday listesine ekle"}
+                                style={{background:isCandidate(r)?"#f59e0b33":"transparent",
+                                  border:`1px solid ${isCandidate(r)?"#f59e0b":"#f59e0b55"}`,
+                                  borderRadius:5,padding:"3px 7px",cursor:isCandidate(r)?"default":"pointer",
+                                  fontSize:13,lineHeight:1,transition:"all .15s",
+                                  opacity:isCandidate(r)?1:0.6}}>
+                                {isCandidate(r)?"⭐":"☆"}
+                              </button>
+                            </td>
+                          )}
                           {activeView==="rejected"&&(
                             <td style={{padding:"7px 10px", color:C.muted, fontSize:10, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}
                               title={r.reason}>
                               {r.reason}
+                            </td>
+                          )}
+                          {activeView==="rejected"&&(
+                            <td style={{padding:"6px 8px",textAlign:"center"}}>
+                              <button onClick={()=>addCandidate(r)}
+                                title="Aday listesine ekle (filtreyi atla)"
+                                style={{background:isCandidate(r)?"#f59e0b33":"transparent",
+                                  border:`1px solid ${isCandidate(r)?"#f59e0b":"#f59e0b55"}`,
+                                  borderRadius:5,padding:"3px 7px",cursor:isCandidate(r)?"default":"pointer",
+                                  fontSize:13,lineHeight:1,opacity:isCandidate(r)?1:0.5}}>
+                                {isCandidate(r)?"⭐":"☆"}
+                              </button>
                             </td>
                           )}
                         </tr>
@@ -2896,7 +2952,183 @@ function DetailDrawer({
   );
 }
 
-const TABS = ["dashboard","watchlist","pricing","alerts","discover","history"];
+
+function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, isbns, addIsbn }) {
+  const [filter, setFilter] = useState("");
+  const [sortKey, setSortKey] = useState("addedAt");
+  const [sortDir, setSortDir] = useState("desc");
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const tierColor = (t) => t==="fire"?"#f59e0b":t==="good"?"#22c55e":t==="low"?"#60a5fa":"#6b7280";
+
+  const filtered = candidates
+    .filter(r => !filter || r.isbn.includes(filter) || (r.source||"").includes(filter))
+    .sort((a,b) => {
+      const av = a[sortKey]??0, bv = b[sortKey]??0;
+      return sortDir==="desc" ? (bv>av?1:bv<av?-1:0) : (av>bv?1:av<bv?-1:0);
+    });
+
+  const inWatchlist = (isbn) => isbns.includes(isbn);
+
+  const SortBtn = ({k,label}) => (
+    <button onClick={()=>{if(sortKey===k)setSortDir(d=>d==="desc"?"asc":"desc");else{setSortKey(k);setSortDir("desc");}}}
+      style={{background:"none",border:"none",cursor:"pointer",color:sortKey===k?C.accent:C.muted,
+        fontSize:10,fontWeight:600,padding:"2px 4px",fontFamily:"var(--mono)"}}>
+      {label}{sortKey===k?(sortDir==="desc"?" ↓":" ↑"):""}
+    </button>
+  );
+
+  return (
+    <div style={{padding:"24px 28px",maxWidth:1400}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:20}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:700,color:C.text}}>⭐ Watchlist Adayları</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+            Discover taramasından işaretlediğin kitaplar — Watchlist'e ekleyerek takibe al
+          </div>
+        </div>
+        <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
+          <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="ISBN / kaynak ara..."
+            className="inp" style={{width:200,fontSize:11,padding:"6px 10px"}}/>
+          {candidates.length>0&&(
+            confirmClear
+              ? <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <span style={{fontSize:11,color:C.muted}}>Emin misin?</span>
+                  <button onClick={()=>{saveCandidates([]);setConfirmClear(false);push("Tüm adaylar silindi","info");}}
+                    style={{padding:"5px 10px",fontSize:11,borderRadius:5,cursor:"pointer",background:"#ef444422",color:"#ef4444",border:"1px solid #ef444444"}}>Evet, Temizle</button>
+                  <button onClick={()=>setConfirmClear(false)}
+                    style={{padding:"5px 10px",fontSize:11,borderRadius:5,cursor:"pointer",background:C.surface2,color:C.muted,border:`1px solid ${C.border}`}}>İptal</button>
+                </div>
+              : <button onClick={()=>setConfirmClear(true)}
+                  style={{padding:"5px 10px",fontSize:11,borderRadius:5,cursor:"pointer",background:C.surface2,color:C.muted,border:`1px solid ${C.border}`}}>
+                  🗑 Tümünü Temizle
+                </button>
+          )}
+        </div>
+      </div>
+
+      {/* Stats bar */}
+      {candidates.length>0&&(
+        <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+          {[
+            {label:"Toplam Aday",val:candidates.length,color:C.accent},
+            {label:"Watchlist'te",val:candidates.filter(r=>inWatchlist(r.isbn)).length,color:"#22c55e"},
+            {label:"Bekliyor",val:candidates.filter(r=>!inWatchlist(r.isbn)).length,color:"#f59e0b"},
+            {label:"Ort. Kar",val:candidates.filter(r=>r.profit>0).length>0?"$"+Math.round(candidates.filter(r=>r.profit>0).reduce((s,r)=>s+r.profit,0)/candidates.filter(r=>r.profit>0).length):"—",color:C.green},
+          ].map(({label,val,color})=>(
+            <div key={label} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 14px",minWidth:110}}>
+              <div style={{fontSize:9,color:C.muted,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.05em"}}>{label}</div>
+              <div style={{fontSize:16,fontWeight:700,color,fontFamily:"var(--mono)"}}>{val}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {filtered.length===0?(
+        <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"60px 40px",textAlign:"center"}}>
+          <div style={{fontSize:40,marginBottom:12}}>⭐</div>
+          <div style={{color:C.text,fontSize:14,fontWeight:600,marginBottom:6}}>Henüz aday yok</div>
+          <div style={{color:C.muted,fontSize:12}}>Discover sayfasında tarama yap, sonuçlardaki ☆ butonuna bas</div>
+        </div>
+      ):(
+        <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+              <thead>
+                <tr style={{background:C.surface2,borderBottom:`1px solid ${C.border}`}}>
+                  {[
+                    {k:"isbn",l:"ISBN"},{k:"source",l:"Kaynak"},{k:"source_condition",l:"Cond"},
+                    {k:"buy_price",l:"Alım $"},{k:"amazon_sell_price",l:"Amazon $"},
+                    {k:"profit",l:"Kar $"},{k:"roi_pct",l:"ROI %"},{k:"roi_tier",l:"Tier"},
+                    {k:"confidence",l:"Güven"},{k:"ev_score",l:"EV/mo"},{k:"addedAt",l:"Eklenme"},
+                    {k:"_actions",l:"Aksiyon"},
+                  ].map(({k,l})=>(
+                    <th key={k} style={{padding:"8px 10px",textAlign:"left",color:C.muted,fontWeight:600,whiteSpace:"nowrap"}}>
+                      {k.startsWith("_")?l:<SortBtn k={k} label={l}/>}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r,i)=>{
+                  const inWL = inWatchlist(r.isbn);
+                  return (
+                    <tr key={i} style={{borderBottom:`1px solid ${C.border}`,background:inWL?`${C.green}08`:i%2===0?C.surface:C.surface2,transition:"background .1s"}}>
+                      <td style={{padding:"7px 10px",color:C.text,fontFamily:"monospace"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          {r.isbn}
+                          {inWL&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"#22c55e22",color:"#22c55e",fontWeight:600}}>WL</span>}
+                        </div>
+                      </td>
+                      <td style={{padding:"7px 10px",color:C.accent}}>{r.source||"—"}</td>
+                      <td style={{padding:"7px 10px"}}>
+                        <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:600,
+                          background:r.source_condition==="new"?`${C.green}22`:`${C.accent}22`,
+                          color:r.source_condition==="new"?C.green:C.accent}}>
+                          {(r.source_condition||"—").toUpperCase()}
+                        </span>
+                      </td>
+                      <td style={{padding:"7px 10px",color:C.text,fontFamily:"var(--mono)"}}>{r.buy_price>0?`$${r.buy_price}`:"—"}</td>
+                      <td style={{padding:"7px 10px",color:C.text,fontFamily:"var(--mono)"}}>{r.amazon_sell_price!=null?`$${r.amazon_sell_price}`:"—"}</td>
+                      <td style={{padding:"7px 10px",fontWeight:600,fontFamily:"var(--mono)",
+                        color:r.profit>0?C.green:"#ef4444"}}>{r.profit!=null?`$${r.profit}`:"—"}</td>
+                      <td style={{padding:"7px 10px",fontWeight:600,fontFamily:"var(--mono)",
+                        color:tierColor(r.roi_tier)}}>{r.roi_pct!=null?`${r.roi_pct}%`:"—"}</td>
+                      <td style={{padding:"7px 10px"}}>
+                        {r.roi_tier&&<span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:700,
+                          background:`${tierColor(r.roi_tier)}22`,color:tierColor(r.roi_tier)}}>
+                          {r.roi_tier==="fire"?"🔥":r.roi_tier==="good"?"✅":r.roi_tier==="low"?"🔵":"❌"}
+                        </span>}
+                      </td>
+                      <td style={{padding:"7px 10px",textAlign:"center"}}>
+                        {r.confidence!=null&&(
+                          <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:700,
+                            background:r.confidence>=75?"#22c55e22":r.confidence>=50?"#f9731622":"#ef444422",
+                            color:r.confidence>=75?C.green:r.confidence>=50?"#f97316":"#ef4444"}}>
+                            {r.confidence}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{padding:"7px 10px",textAlign:"center",color:C.green,fontWeight:600,fontFamily:"var(--mono)"}}>
+                        {r.ev_score!=null?`$${r.ev_score}`:"—"}
+                      </td>
+                      <td style={{padding:"7px 10px",color:C.muted,fontSize:10}}>
+                        {r.addedAt?new Date(r.addedAt).toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—"}
+                      </td>
+                      <td style={{padding:"6px 8px",whiteSpace:"nowrap"}}>
+                        <div style={{display:"flex",gap:4}}>
+                          {!inWL?(
+                            <button onClick={()=>addIsbn(r.isbn)}
+                              title="Watchlist'e ekle"
+                              style={{padding:"4px 10px",fontSize:10,borderRadius:5,cursor:"pointer",fontWeight:600,
+                                background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e55"}}>
+                              + WL
+                            </button>
+                          ):(
+                            <span style={{padding:"4px 8px",fontSize:10,color:C.muted}}>✓ WL'de</span>
+                          )}
+                          <button onClick={()=>removeCandidate(r.isbn, r.source, r.source_condition)}
+                            title="Adaylardan kaldır"
+                            style={{padding:"4px 8px",fontSize:10,borderRadius:5,cursor:"pointer",
+                              background:"transparent",color:"#ef444488",border:"1px solid #ef444433"}}>
+                            ✕
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TABS = ["dashboard","watchlist","candidates","pricing","alerts","discover","history"];
 
 export default function App() {
   return <ErrorBoundary><AppReal /></ErrorBoundary>;
@@ -3160,7 +3392,7 @@ function AppReal() {
         <div style={{display:"flex"}}>
           {TABS.map(t=>{
             const isScanning = t==="discover" && scanJob?.scanning;
-            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",discover: isScanning ? `⏳ ${scanJob?.progress?.done||0}/${scanJob?.progress?.total||0}` : "🔍 Discover",history:"📋 Geçmiş"}[t]||t;
+            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",candidates:`⭐ Adaylar${candidates.length>0?" ("+candidates.length+")":""}`,discover: isScanning ? `⏳ ${scanJob?.progress?.done||0}/${scanJob?.progress?.total||0}` : "🔍 Discover",history:"📋 Geçmiş"}[t]||t;
             return <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:12,color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400,letterSpacing:"0.01em"}}>{label}</button>;
           })}
         </div>
@@ -3557,7 +3789,8 @@ function AppReal() {
             )}
 
 {tab==="alerts"&&<AlertsFeedTab C={C} theme={theme} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
-            {tab==="discover"&&<DiscoverTab C={C} theme={theme} scanJob={scanJob} setScanJob={setScanJob} scanPollRef={scanPollRef}/>}
+            {tab==="discover"&&<DiscoverTab C={C} theme={theme} scanJob={scanJob} setScanJob={setScanJob} scanPollRef={scanPollRef} candidates={candidates} addCandidate={addCandidate}/>}
+            {tab==="candidates"&&<CandidatesTab C={C} candidates={candidates} removeCandidate={removeCandidate} saveCandidates={saveCandidates} push={push} isbns={isbns} addIsbn={async(isbn,secs)=>{const res=await req("/isbns",{method:"POST",body:JSON.stringify({isbn})});if(res.added){setIsbns(p=>[...p,isbn]);if(secs){await req(`/rules/${isbn}/interval`,{method:"PUT",body:JSON.stringify({interval_seconds:secs})});}push(isbn+" watchlist'e eklendi","success");}else{push("Zaten watchlist'te","info");}}}/>}
             {tab==="history"&&<ScanHistoryTab C={C}/>}
           </>
         )}
