@@ -2959,6 +2959,25 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
   const [sortDir, setSortDir] = useState("desc");
   const [confirmClear, setConfirmClear] = useState(false);
 
+  // AI Analysis
+  const [aiModal, setAiModal] = useState(null);
+  const [analyzingIsbn, setAnalyzingIsbn] = useState(null);
+  const runAiAnalysis = async (row) => {
+    setAnalyzingIsbn(row.isbn);
+    setAiModal({isbn: row.isbn, status:"loading", data:null, error:null});
+    try {
+      const res = await req("/ai/analyze", {method:"POST", body:JSON.stringify({isbn:row.isbn,candidate:row})}, 90000);
+      setAiModal({isbn:row.isbn, status:"done", data:res, error:null});
+    } catch(e) {
+      setAiModal({isbn:row.isbn, status:"error", data:null, error:e?.message||String(e)});
+    } finally {
+      setAnalyzingIsbn(null);
+    }
+  };
+  const verdictStyle = (v) => ({"BUY":{bg:"#22c55e22",color:"#22c55e",label:"✅ AL"},"PASS":{bg:"#ef444422",color:"#ef4444",label:"❌ GEÇME"},"WATCH":{bg:"#f9731622",color:"#f97316",label:"⏳ BEKLE"},"UNKNOWN":{bg:"#6b728022",color:"#6b7280",label:"❓"}})[v]||{bg:"#6b728022",color:"#6b7280",label:v||"?"};
+  const trendIcon = (t) => ({"RISING":"📈","STABLE":"➡️","DECLINING":"📉"})[t]||"❓";
+  const riskColor = (r) => ({"LOW":C.green,"MEDIUM":"#f97316","HIGH":"#ef4444"})[r]||C.muted;
+
   const tierColor = (t) => t==="fire"?"#f59e0b":t==="good"?"#22c55e":t==="low"?"#60a5fa":"#6b7280";
 
   const filtered = candidates
@@ -2980,6 +2999,105 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
 
   return (
     <div style={{padding:"24px 28px",maxWidth:1400}}>
+      {/* AI Analysis Modal */}
+      {aiModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>{if(e.target===e.currentTarget)setAiModal(null);}}>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:28,width:560,maxWidth:"95vw",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,.5)"}}>
+            {/* Modal header */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:C.text}}>🤖 AI Analizi</div>
+                <div style={{fontSize:11,color:C.muted,fontFamily:"var(--mono)"}}>{aiModal.isbn}</div>
+              </div>
+              <button onClick={()=>setAiModal(null)} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:18,padding:"4px 8px"}}>✕</button>
+            </div>
+
+            {aiModal.status==="loading"&&(
+              <div style={{textAlign:"center",padding:"40px 0"}}>
+                <div style={{fontSize:28,marginBottom:12,animation:"spin 1.5s linear infinite",display:"inline-block"}}>🔍</div>
+                <div style={{color:C.muted,fontSize:12}}>Claude web'de araştırıyor...</div>
+                <div style={{color:C.muted3,fontSize:10,marginTop:6}}>Fiyat geçmişi, rakipler, trend analizi yapılıyor</div>
+              </div>
+            )}
+
+            {aiModal.status==="error"&&(
+              <div style={{background:"#ef444411",border:"1px solid #ef444433",borderRadius:8,padding:16,color:"#ef4444",fontSize:12}}>
+                ❌ Hata: {aiModal.error}
+                {aiModal.error?.includes("ANTHROPIC_API_KEY")&&(
+                  <div style={{marginTop:8,color:C.muted,fontSize:11}}>
+                    Sunucuda: <code style={{background:C.surface2,padding:"2px 6px",borderRadius:3}}>sudo nano /etc/trackerbundle.env</code> → <code>ANTHROPIC_API_KEY=sk-ant-...</code> ekle
+                  </div>
+                )}
+              </div>
+            )}
+
+            {aiModal.status==="done"&&aiModal.data&&(()=>{
+              const d = aiModal.data;
+              const vs = verdictStyle(d.verdict);
+              return (
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                  {/* Verdict */}
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{padding:"6px 16px",borderRadius:8,fontSize:15,fontWeight:700,background:vs.bg,color:vs.color,border:`1px solid ${vs.color}44`}}>{vs.label}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:11,color:C.muted}}>Güven</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{flex:1,height:6,background:C.surface2,borderRadius:3,overflow:"hidden"}}>
+                          <div style={{width:`${d.confidence||0}%`,height:"100%",background:vs.color,borderRadius:3}}/>
+                        </div>
+                        <span style={{fontSize:11,fontWeight:700,color:vs.color,fontFamily:"var(--mono)"}}>{d.confidence||0}%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Summary */}
+                  <div style={{background:C.surface2,borderRadius:8,padding:"10px 14px",fontSize:12,color:C.text,lineHeight:1.6}}>{d.summary}</div>
+
+                  {/* Trend + Risk row */}
+                  <div style={{display:"flex",gap:8}}>
+                    <div style={{flex:1,background:C.surface2,borderRadius:8,padding:"10px 14px"}}>
+                      <div style={{fontSize:9,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Fiyat Trendi</div>
+                      <div style={{fontSize:13,fontWeight:700,color:C.text}}>{trendIcon(d.price_trend)} {d.price_trend||"?"}</div>
+                      <div style={{fontSize:11,color:C.muted,marginTop:4,lineHeight:1.4}}>{d.price_trend_reason}</div>
+                    </div>
+                    <div style={{flex:1,background:C.surface2,borderRadius:8,padding:"10px 14px"}}>
+                      <div style={{fontSize:9,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Risk Seviyesi</div>
+                      <div style={{fontSize:13,fontWeight:700,color:riskColor(d.risk_level)}}>{d.risk_level||"?"}</div>
+                      {(d.risks||[]).map((r,i)=>(
+                        <div key={i} style={{fontSize:10,color:C.muted,marginTop:3}}>• {r}</div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Competitors */}
+                  {d.competitors&&(
+                    <div style={{background:C.surface2,borderRadius:8,padding:"10px 14px"}}>
+                      <div style={{fontSize:9,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>👥 Rakip Satıcılar</div>
+                      <div style={{fontSize:11,color:C.text,lineHeight:1.5}}>{d.competitors}</div>
+                    </div>
+                  )}
+
+                  {/* Buy suggestion */}
+                  {d.buy_suggestion&&(
+                    <div style={{background:`${C.green}11`,border:`1px solid ${C.green}33`,borderRadius:8,padding:"10px 14px"}}>
+                      <div style={{fontSize:9,color:C.green,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em",fontWeight:600}}>💡 Alım Önerisi</div>
+                      <div style={{fontSize:11,color:C.text,lineHeight:1.5}}>{d.buy_suggestion}</div>
+                    </div>
+                  )}
+
+                  {/* Sources */}
+                  {(d.sources_checked||[]).length>0&&(
+                    <div style={{fontSize:10,color:C.muted3}}>
+                      Kontrol edilen kaynaklar: {(d.sources_checked).join(", ")}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:20}}>
         <div>
@@ -3097,7 +3215,15 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                         {r.addedAt?new Date(r.addedAt).toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—"}
                       </td>
                       <td style={{padding:"6px 8px",whiteSpace:"nowrap"}}>
-                        <div style={{display:"flex",gap:4}}>
+                        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                          <button onClick={()=>runAiAnalysis(r)}
+                            disabled={analyzingIsbn===r.isbn}
+                            title="AI ile analiz et"
+                            style={{padding:"4px 8px",fontSize:10,borderRadius:5,cursor:analyzingIsbn===r.isbn?"wait":"pointer",fontWeight:600,
+                              background:"#7c3aed22",color:"#a78bfa",border:"1px solid #7c3aed44",
+                              opacity:analyzingIsbn===r.isbn?0.6:1}}>
+                            {analyzingIsbn===r.isbn?"⏳":"🤖"}
+                          </button>
                           {!inWL?(
                             <button onClick={()=>addIsbn(r.isbn)}
                               title="Watchlist'e ekle"

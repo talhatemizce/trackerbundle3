@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     default_new_limit: float = Field(default=50.0, validation_alias="DEFAULT_NEW_LIMIT")
     default_good_limit: float = Field(default=30.0, validation_alias="DEFAULT_GOOD_LIMIT")
 
+    # Anthropic AI Analysis
+    anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
+
     # Make offer ceiling multiplier
     make_offer_multiplier: float = Field(default=1.30, validation_alias="MAKE_OFFER_MULTIPLIER")
 

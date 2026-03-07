@@ -10,7 +10,7 @@ import os
 from datetime import datetime, timezone
 import csv
 import io
-from typing import List, Optional
+from typing import Dict,  List, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
@@ -1128,6 +1128,24 @@ async def offers_top2(asin: str, marketplace_id: str = "ATVPDKIKX0DER"):
         return r.json()
     except Exception:
         return {"upstream_status": r.status_code, "body": r.text}
+
+
+# ---- AI ISBN Analyst ----
+class AiAnalyzeRequest(BaseModel):
+    isbn: str
+    candidate: Dict[str, Any] = {}
+
+@app.post("/ai/analyze")
+async def ai_analyze(req: AiAnalyzeRequest):
+    from app.ai_analyst import analyze_isbn
+    try:
+        result = await analyze_isbn(req.isbn, req.candidate)
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error("AI analyze error isbn=%s: %s", req.isbn, e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---- Static files: serve React panel build (production) ----
