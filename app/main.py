@@ -1159,5 +1159,11 @@ if _panel_dist.exists():
 
     @app.get("/panel")
     @app.get("/panel/{rest:path}")
+    @app.get("/")
     def serve_panel(rest: str = ""):
-        return FileResponse(str(_panel_dist / "index.html"))
+        from fastapi.responses import Response
+        content = (_panel_dist / "index.html").read_bytes()
+        return Response(content=content, media_type="text/html", headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        })
