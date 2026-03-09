@@ -347,23 +347,44 @@ Reply ONLY with this JSON (no markdown, no extra text):
 def _build_prompt(isbn: str, isbn13: str, c: Dict[str, Any],
                   edition: Dict[str, Any], cond: Dict[str, Any]) -> str:
     import datetime as dt
-    return "\n".join([
+
+    worst = c.get("worst_case_profit")
+    vel = c.get("velocity")
+    vel_note = f"{vel}/mo" if vel else "None — NO BSR DATA, search web for real sales velocity"
+    worst_note = (
+        f"${worst} (⚠ model estimate only — BSR missing, NOT a real price floor)"
+        if worst is not None and not vel
+        else f"${worst} (scenario: price drops {c.get('worst_cut_pct','?')}%)" if worst is not None
+        else "N/A"
+    )
+
+    lines = [
         f"=== BOOK ARBITRAGE: ISBN {isbn} (ISBN-13: {isbn13}) ===",
         f"",
-        f"eBay: '{c.get('ebay_title','?')}' | ${c.get('buy_price','?')} | {c.get('source_condition','?').upper()}",
-        f"Seller: {c.get('ebay_seller_name','?')} ({c.get('ebay_seller_feedback','?')}% positive)",
-        f"Description: {(c.get('ebay_description','') or 'none')[:150]}",
+        f"eBay listing: '{c.get('ebay_title','?')}' | buy=${c.get('buy_price','?')} | cond={c.get('source_condition','?').upper()}",
+        f"eBay seller: {c.get('ebay_seller_name','?')} ({c.get('ebay_seller_feedback','?')}% positive)",
+        f"eBay description: {(c.get('ebay_description','') or 'none')[:150]}",
         f"",
-        f"Amazon: ${c.get('amazon_sell_price','?')} ({c.get('buybox_type','?')}) | Profit: ${c.get('profit','?')} ({c.get('roi_pct','?')}% ROI)",
-        f"Sellers: {c.get('amazon_seller_count','?')} | Amazon in buybox: {'YES' if c.get('amazon_is_sold_by_amazon') else 'No'}",
+        f"Amazon current: ${c.get('amazon_sell_price','?')} ({c.get('buybox_type','?')} buybox)",
+        f"Calculated profit: ${c.get('profit','?')} ({c.get('roi_pct','?')}% ROI) — based on current buybox",
+        f"Amazon sellers: {c.get('amazon_seller_count','?')} | Amazon itself selling: {'YES' if c.get('amazon_is_sold_by_amazon') else 'No'}",
         f"",
-        f"Pre-computed: confidence={c.get('confidence','?')}/100 | velocity={c.get('velocity','?')}/mo | worst=${c.get('worst_case_profit','?')}",
+        f"⚠ IMPORTANT — these are pre-computed MODEL ESTIMATES, NOT real market data:",
+        f"  velocity (estimated): {vel_note}",
+        f"  worst-case scenario: {worst_note}",
+        f"  Do NOT use these to set your buy_suggestion — use real web search data instead.",
+        f"",
         f"Month: {dt.datetime.utcnow().strftime('%B')} | seasonality={c.get('seasonality_mult','?')}x",
-        f"Edition year: {edition.get('edition_year','?')} | Newer edition: {'YES ⚠️' if edition.get('has_newer_edition') else 'No/Unknown'}",
+        f"Edition: {edition.get('edition_year','?')} | Newer edition: {'YES ⚠️' if edition.get('has_newer_edition') else 'No/Unknown'}",
         f"Condition flags: {', '.join(cond['condition_flags']) or 'None'} (score: {cond['condition_score']}/10)",
         f"",
-        f"Search the web for current pricing/demand, then provide your JSON analysis.",
-    ])
+        f"SEARCH TASKS:",
+        f"1. Search '{isbn13} amazon price history' — find the real 90-day price floor",
+        f"2. Search '{(c.get('ebay_title') or isbn)[:40]} amazon sales rank' — confirm demand",
+        f"3. If Amazon price is suspiciously high or low, check if it's a spike",
+        f"4. Base buy_suggestion on REAL historical price data you find, not the model estimate",
+    ]
+    return "\n".join(lines)
 
 
 def _extract_text(data: Dict[str, Any]) -> str:
