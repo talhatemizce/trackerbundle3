@@ -104,6 +104,22 @@ class ArbResult:
     worst_case_profit: Optional[float] = None
     worst_case_roi: Optional[float] = None
     worst_cut_pct: Optional[float] = None
+    # ── eBay listing metadata (AI doğrulama için) ─────────────────────────────
+    ebay_item_id: str = ""
+    ebay_title: str = ""
+    ebay_url: str = ""
+    ebay_image_url: str = ""
+    ebay_description: str = ""  # kısa açıklama / condition notes
+    ebay_seller_name: str = ""
+    ebay_seller_feedback: Optional[float] = None  # % pozitif
+    # ── Amazon seller analizi ─────────────────────────────────────────────────
+    amazon_seller_count: Optional[int] = None  # toplam satıcı sayısı
+    amazon_is_sold_by_amazon: bool = False     # Amazon kendisi satıyor mu?
+    # ── Ek analizler ──────────────────────────────────────────────────────────
+    edition_year: Optional[int] = None         # Google Books'tan yayın yılı
+    has_newer_edition: Optional[bool] = None   # daha yeni baskı var mı?
+    price_volatility: str = ""                 # "LOW"|"MEDIUM"|"HIGH"
+    seasonality_mult: Optional[float] = None   # bu aydaki çarpan
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -284,13 +300,34 @@ async def _get_ebay_offers(isbn: str) -> List[Dict]:
             # brand_new + like_new → Amazon NEW olarak listelenebilir
             # very_good / good / acceptable → Amazon USED
             source_cond = "new" if cond in ("brand_new", "like_new") else "used"
+            # Image URL — Browse API returns thumbnailImages list or image object
+            img = ""
+            thumb = it.get("thumbnailImages") or it.get("image") or {}
+            if isinstance(thumb, list) and thumb:
+                img = thumb[0].get("imageUrl", "")
+            elif isinstance(thumb, dict):
+                img = thumb.get("imageUrl", "")
+
+            # Seller info
+            seller = it.get("seller") or {}
+            seller_name = seller.get("username", "") if isinstance(seller, dict) else ""
+            feedback_pct = None
+            fp = seller.get("feedbackPercentage") if isinstance(seller, dict) else None
+            if fp is not None:
+                try: feedback_pct = float(fp)
+                except: pass
+
             offers.append({
                 "source": "ebay",
                 "source_condition": source_cond,
                 "buy_price": round(total, 2),
                 "item_id": it.get("itemId", ""),
-                "title": (it.get("title") or "")[:60],
+                "title": (it.get("title") or "")[:120],
                 "url": it.get("itemWebUrl", ""),
+                "image_url": img,
+                "description": (it.get("shortDescription") or it.get("condition") or "")[:200],
+                "seller_name": seller_name,
+                "seller_feedback": feedback_pct,
             })
         # En ucuz new + en ucuz used döndür
         best: Dict[str, Dict] = {}
@@ -450,6 +487,13 @@ async def _scan_one(
             source_condition=o["source_condition"],
             buy_price=o["buy_price"],
             amazon_sell_price=None, buybox_type=None, match_type=None,
+            ebay_item_id=o.get("item_id",""),
+            ebay_title=o.get("title",""),
+            ebay_url=o.get("url",""),
+            ebay_image_url=o.get("image_url",""),
+            ebay_description=o.get("description",""),
+            ebay_seller_name=o.get("seller_name",""),
+            ebay_seller_feedback=o.get("seller_feedback"),
         )
 
         sell_price, bb_type, match_type, reason = _calc_profit_strict(

@@ -3114,6 +3114,51 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                     </div>
                   )}
 
+                  {/* Image verification */}
+                  {d.image_verdict&&d.image_verdict!=="NO_IMAGE"&&(
+                    <div style={{background:d.image_verdict==="MATCH"?"#22c55e11":d.image_verdict==="MISMATCH"?"#ef444411":"#f9731611",
+                      border:`1px solid ${d.image_verdict==="MATCH"?"#22c55e33":d.image_verdict==="MISMATCH"?"#ef444433":"#f9731633"}`,
+                      borderRadius:8,padding:"10px 14px"}}>
+                      <div style={{fontSize:9,fontWeight:600,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em",
+                        color:d.image_verdict==="MATCH"?C.green:d.image_verdict==="MISMATCH"?"#ef4444":"#f97316"}}>
+                        📷 Görsel Doğrulama: {d.image_verdict}
+                      </div>
+                      <div style={{fontSize:11,color:C.text}}>{d.image_notes}</div>
+                    </div>
+                  )}
+
+                  {/* Edition warning */}
+                  {d.has_newer_edition&&(
+                    <div style={{background:"#f9731611",border:"1px solid #f9731633",borderRadius:8,padding:"10px 14px"}}>
+                      <div style={{fontSize:9,fontWeight:600,color:"#f97316",marginBottom:2,textTransform:"uppercase"}}>⚠️ Yeni Baskı Riski</div>
+                      <div style={{fontSize:11,color:C.text}}>
+                        {d.edition_year&&`Mevcut baskı: ${d.edition_year} · `}Daha yeni baskı tespit edildi — talep bu baskıya kayabilir.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Condition flags */}
+                  {(d.condition_flags||[]).length>0&&(
+                    <div style={{background:"#ef444411",border:"1px solid #ef444433",borderRadius:8,padding:"10px 14px"}}>
+                      <div style={{fontSize:9,fontWeight:600,color:"#ef4444",marginBottom:4,textTransform:"uppercase"}}>🚩 Kondisyon Uyarıları</div>
+                      {d.condition_flags.map((f,i)=>(
+                        <div key={i} style={{fontSize:11,color:C.text,marginTop:2}}>• {f}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Amazon seller info */}
+                  {(d.amazon_is_sold_by_amazon||d.amazon_seller_count!=null)&&(
+                    <div style={{background:C.surface2,borderRadius:8,padding:"10px 14px"}}>
+                      <div style={{fontSize:9,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>🏪 Amazon Rakip Durum</div>
+                      <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+                        {d.amazon_seller_count!=null&&<span style={{fontSize:11,color:C.text}}>Toplam satıcı: <b style={{color:C.accent}}>{d.amazon_seller_count}</b></span>}
+                        {d.amazon_is_sold_by_amazon&&<span style={{fontSize:11,color:"#ef4444",fontWeight:600}}>🚫 Amazon kendisi satıyor</span>}
+                        {d.seasonality_mult!=null&&<span style={{fontSize:11,color:C.muted}}>Mevsimsellik: <b style={{color:d.seasonality_mult>=1.1?C.green:d.seasonality_mult<=0.9?"#ef4444":C.text}}>{d.seasonality_mult}x</b></span>}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Sources */}
                   {(d.sources_checked||[]).length>0&&(
                     <div style={{fontSize:10,color:C.muted3}}>
