@@ -817,7 +817,7 @@ function Thumb({ imageUrl, isbn, href, C, size = 72 }) {
 // ═══════════════════════════════════════════════════════════════════
 // SCAN HISTORY TAB
 // ═══════════════════════════════════════════════════════════════════
-function ScanHistoryTab({ C }) {
+function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
@@ -929,7 +929,7 @@ function ScanHistoryTab({ C }) {
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                     <thead>
                       <tr style={{background:C.surface2,borderBottom:`1px solid ${C.border}`}}>
-                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Eşleşme","Kar $","ROI %","Tier"].map(h=>(
+                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Eşleşme","Kar $","ROI %","Tier","Linkler",""].map(h=>(
                           <th key={h} style={{padding:"8px 10px",textAlign:"left",color:C.muted,fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>
                         ))}
                       </tr>
@@ -957,6 +957,35 @@ function ScanHistoryTab({ C }) {
                               background:`${tierColor(r.roi_tier)}22`,color:tierColor(r.roi_tier)}}>
                               {r.roi_tier==="fire"?"🔥":r.roi_tier==="good"?"✅":r.roi_tier==="low"?"🔵":"❌"}
                             </span>}
+                          </td>
+                          <td style={{padding:"6px 8px",whiteSpace:"nowrap"}}>
+                            {[
+                              {label:"AMZ",url:`https://www.amazon.com/dp/${r.asin||r.isbn}`,bg:"#FF9900"},
+                              {label:"eBay",url:`https://www.ebay.com/sch/i.html?_nkw=${toIsbn13(r.isbn)}&_sacat=267`,bg:"#E53238"},
+                              {label:"ABE",url:`https://www.abebooks.com/servlet/SearchResults?isbn=${r.isbn}`,bg:"#990000"},
+                              {label:"TB",url:`https://www.thriftbooks.com/browse/?b.search=${r.isbn}`,bg:"#2E7D32"},
+                              {label:"BF",url:`https://www.bookfinder.com/search/?isbn=${r.isbn}&new=1&used=1`,bg:"#1565C0"},
+                              {label:"KP",url:`https://keepa.com/#!product/1-${r.asin||r.isbn}`,bg:"#7B1FA2"},
+                            ].map(({label,url,bg})=>(
+                              <a key={label} href={url} target="_blank" rel="noreferrer"
+                                style={{display:"inline-block",padding:"2px 5px",borderRadius:3,fontSize:9,
+                                  fontWeight:700,background:bg,color:"#fff",textDecoration:"none",marginRight:2}}>
+                                {label}
+                              </a>
+                            ))}
+                          </td>
+                          <td style={{padding:"6px 8px",textAlign:"center"}}>
+                            {(()=>{
+                              const inCand = candidates.some(cx=>cx.isbn===r.isbn&&cx.source===r.source&&cx.source_condition===r.source_condition);
+                              return <button onClick={()=>!inCand&&addCandidate&&addCandidate(r)}
+                                title={inCand?"Zaten aday listesinde":"Aday listesine ekle"}
+                                style={{background:inCand?"#f59e0b33":"transparent",
+                                  border:`1px solid ${inCand?"#f59e0b":"#f59e0b55"}`,
+                                  borderRadius:5,padding:"3px 7px",cursor:inCand?"default":"pointer",
+                                  fontSize:13,opacity:inCand?1:0.6}}>
+                                {inCand?"⭐":"☆"}
+                              </button>;
+                            })()}
                           </td>
                         </tr>
                       ))}
@@ -3941,7 +3970,7 @@ function AppReal() {
 {tab==="alerts"&&<AlertsFeedTab C={C} theme={theme} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
             {tab==="discover"&&<DiscoverTab C={C} theme={theme} scanJob={scanJob} setScanJob={setScanJob} scanPollRef={scanPollRef} candidates={candidates} addCandidate={addCandidate}/>}
             {tab==="candidates"&&<CandidatesTab C={C} candidates={candidates} removeCandidate={removeCandidate} saveCandidates={saveCandidates} push={push} isbns={isbns} addIsbn={async(isbn,secs)=>{const res=await req("/isbns",{method:"POST",body:JSON.stringify({isbn})});if(res.added){setIsbns(p=>[...p,isbn]);if(secs){await req(`/rules/${isbn}/interval`,{method:"PUT",body:JSON.stringify({interval_seconds:secs})});}push(isbn+" watchlist'e eklendi","success");}else{push("Zaten watchlist'te","info");}}}/>}
-            {tab==="history"&&<ScanHistoryTab C={C}/>}
+            {tab==="history"&&<ScanHistoryTab C={C} addCandidate={addCandidate} candidates={candidates}/>}
           </>
         )}
       </div>
