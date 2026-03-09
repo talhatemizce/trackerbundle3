@@ -184,16 +184,27 @@ def isbn10_to_isbn13(isbn10: str) -> Optional[str]:
     s = isbn10.replace("-", "").replace(" ", "").upper().strip()
     if len(s) != 10:
         return None
+    # Checksum doğrula
+    try:
+        total = sum((10 - i) * (10 if c == "X" else int(c)) for i, c in enumerate(s))
+        if total % 11 != 0:
+            return None
+    except (ValueError, TypeError):
+        return None
     raw = "978" + s[:9]
-    total = sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(raw))
-    check = (10 - (total % 10)) % 10
+    total13 = sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(raw))
+    check = (10 - (total13 % 10)) % 10
     return raw + str(check)
 
 
 def isbn13_to_isbn10(isbn13: str) -> Optional[str]:
     """978-prefix'li ISBN-13'ü ISBN-10'a çevir. Checksum doğrulanır."""
     s = isbn13.replace("-", "").replace(" ", "").strip()
-    if len(s) != 13 or not s.startswith("978"):
+    if len(s) != 13 or not s.isdigit() or not s.startswith("978"):
+        return None
+    # ISBN-13 checksum doğrula
+    total13 = sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(s))
+    if total13 % 10 != 0:
         return None
     body = s[3:12]
     total = sum(int(c) * (10 - i) for i, c in enumerate(body))

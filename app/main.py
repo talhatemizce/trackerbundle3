@@ -1003,7 +1003,7 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
         max_buy_ratio_pct=req.max_buy_ratio_pct,
         condition_in=req.condition_in,
         source_in=req.source_in,
-        only_viable=False,   # BUG FIX: filtre sonradan uygula, önce hepsini topla
+        only_viable=req.only_viable,   # Kullanıcının filtre seçimi korunuyor
         strict_mode=req.strict_mode,
         isbn_match_policy=IsbnMatchPolicy(req.isbn_match_policy),
         invalid_isbn_policy=InvalidIsbnPolicy(req.invalid_isbn_policy),

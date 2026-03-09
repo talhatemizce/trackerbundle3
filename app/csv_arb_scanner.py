@@ -51,9 +51,20 @@ logger = logging.getLogger("trackerbundle.csv_arb_scanner")
 # ── ISBN dönüşüm ──────────────────────────────────────────────────────────────
 
 def _isbn13_to_asin(isbn: str) -> Optional[str]:
-    """ISBN-13 → ISBN-10 (= Amazon ASIN for books). 978 prefix only."""
-    s = isbn.replace("-", "").replace(" ", "").strip()
+    """ISBN-13 → ISBN-10 (= Amazon ASIN for books). 978 prefix only.
+    Non-ISBN input (ASIN like B00xxx, random text) → None."""
+    s = isbn.replace("-", "").replace(" ", "").strip().upper()
+    # Sadece rakam + X (ISBN-10 check digit) kabul et
+    if not all(c.isdigit() or (c == "X" and i == 9) for i, c in enumerate(s)):
+        return None
     if len(s) == 10:
+        # ISBN-10 checksum doğrula
+        try:
+            total = sum((10 - i) * (10 if c == "X" else int(c)) for i, c in enumerate(s))
+            if total % 11 != 0:
+                return None
+        except (ValueError, TypeError):
+            return None
         return s
     if len(s) == 13 and s.startswith("978"):
         core = s[3:12]

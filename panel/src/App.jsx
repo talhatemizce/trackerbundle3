@@ -1491,7 +1491,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           </div>
           <div>
             <span style={labelStyle}>Paralel tarama (1-8)</span>
-            <input style={inpStyle} type="number" min={1} max={8} value={concurrency} onChange={e=>setConcurrency(Math.min(8,Math.max(1,parseInt(e.target.value)||3)))}/>
+            <input style={inpStyle} type="number" min={1} max={5} value={concurrency} onChange={e=>setConcurrency(Math.min(5,Math.max(1,parseInt(e.target.value)||1)))}/>
           </div>
         </div>
 

@@ -403,20 +403,38 @@ def _parse_json(text: str) -> Dict[str, Any]:
             t = parts[1] if len(parts) >= 3 else t.replace(fence, "")
     t = t.strip()
     s, e = t.find("{"), t.rfind("}") + 1
+    result = None
     if s >= 0 and e > s:
         try:
-            return json.loads(t[s:e])
+            result = json.loads(t[s:e])
         except:
             pass
-    return {"verdict": "UNKNOWN", "summary": t[:300], "parse_error": True}
+    if result is None:
+        result = {"verdict": "UNKNOWN", "summary": t[:300], "parse_error": True}
+    # Schema normalization — eksik alanlar default değerle doldur
+    _DEFAULTS = {
+        "verdict": "UNKNOWN", "summary": "", "price_trend": "UNKNOWN",
+        "price_trend_reason": "", "risk_level": "HIGH",
+        "risk_factors": [], "recommendation": "",
+    }
+    for k, v in _DEFAULTS.items():
+        if k not in result:
+            result[k] = v
+    return result
 
 
 def _to_isbn13(isbn: str) -> Optional[str]:
     s = isbn.replace("-", "").replace(" ", "").upper().strip()
-    if len(s) == 13:
+    if len(s) == 13 and s.isdigit():
         return s
     if len(s) != 10:
         return None
-    core = "978" + s[:9]
-    total = sum(int(ch) * (1 if i % 2 == 0 else 3) for i, ch in enumerate(core))
-    return core + str((10 - (total % 10)) % 10)
+    # ISBN-10 sadece rakam+X kabul et
+    if not all(c.isdigit() or (c == "X" and i == 9) for i, c in enumerate(s)):
+        return None
+    try:
+        core = "978" + s[:9]
+        total = sum(int(ch) * (1 if i % 2 == 0 else 3) for i, ch in enumerate(core))
+        return core + str((10 - (total % 10)) % 10)
+    except (ValueError, TypeError):
+        return None

@@ -60,18 +60,27 @@ def compute_confidence(result: dict) -> int:
     Bileşen dağılımı (toplam 100):
       20  buybox kalitesi (buybox > top1/2 fallback)
       15  sub-condition bilgisi (specific > generic)
-      15  spike yok
-      15  Amazon self-seller değil
+      15  spike yok (SADECE veri varsa — yoksa 0)
+      15  Amazon self-seller değil (SADECE veri varsa — yoksa 0)
       10  cross-condition fallback yok
       10  rakip sayısı az
        7  seller feedback % yüksek
        5  seller feedback hacmi yeterli (scam önleme)
        3  BSR mevcut (likidite sinyali var)
+
+    ÖNEMLİ: Eksik veri = 0 puan (güven sinyali yok).
+    Sadece pozitif sinyal varsa puan verilir.
     """
     score = 0
 
-    # Buybox kalitesi
+    # ── Veri yeterliliği kontrolü ──────────────────────────────
+    # sell_source olmadan bu bir hayalet kayıt — güven 0
     sell_src = (result.get("sell_source") or "").lower()
+    has_price_data = bool(sell_src)
+    if not has_price_data:
+        return 0
+
+    # Buybox kalitesi
     if "buybox" in sell_src:
         score += 20
     elif "top" in sell_src:
@@ -84,30 +93,37 @@ def compute_confidence(result: dict) -> int:
     elif sub == "used_all":
         score += 6  # genel "used" — kısmi bilgi
 
-    # Spike yok
-    if not result.get("spike_warning", False):
-        score += 15
+    # Spike yok — SADECE spike_warning alanı explicitly set edilmişse puan ver.
+    # Default False (veri yokluğu) ile gerçek "spike yok" ayrımı.
+    if "spike_warning" in result and result["spike_warning"] is not None:
+        if not result["spike_warning"]:
+            score += 15
 
-    # Amazon self-seller değil
-    if not result.get("is_amazon_selling", False):
-        score += 15
+    # Amazon self-seller değil — SADECE veri varsa.
+    # is_amazon_selling hiç set edilmemişse → bilinmiyor, puan yok.
+    if "is_amazon_selling" in result and result["is_amazon_selling"] is not None:
+        if not result["is_amazon_selling"]:
+            score += 15
 
     # Cross-condition fallback yok
-    if "FALLBACK" not in (result.get("match_type") or "").upper():
-        score += 10
+    mt = result.get("match_type") or ""
+    if mt:  # match_type varsa (boş string = veri yok)
+        if "FALLBACK" not in mt.upper():
+            score += 10
 
     # Rakip sayısı (ilgili kondisyon)
     cond = result.get("source_condition", "used")
     cnt_key = "amazon_used_count" if cond == "used" else "amazon_new_count"
-    cnt = result.get(cnt_key) or 0
-    if cnt == 0:
-        score += 10
-    elif cnt <= 3:
-        score += 7
-    elif cnt <= 5:
-        score += 4
-    elif cnt <= 10:
-        score += 1
+    cnt = result.get(cnt_key)
+    if cnt is not None:  # None = bilinmiyor, 0 = gerçekten rakip yok
+        if cnt == 0:
+            score += 10
+        elif cnt <= 3:
+            score += 7
+        elif cnt <= 5:
+            score += 4
+        elif cnt <= 10:
+            score += 1
 
     # Seller feedback %
     fb_pct = result.get("ebay_seller_feedback")
