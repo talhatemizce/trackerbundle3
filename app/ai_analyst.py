@@ -249,6 +249,15 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
     gemini_result = _apply_deterministic_adjustments(gemini_result, candidate, edition_data, cond_analysis)
 
     # Tüm verileri birleştir
+    # ISBN conflict → auto HIGH risk
+    if gemini_result.get("isbn_conflict"):
+        if gemini_result.get("risk_level") not in ("HIGH",):
+            gemini_result["risk_level"] = "HIGH"
+        risks = gemini_result.get("risks") or []
+        conflict_note = gemini_result.get("isbn_conflict_note", "")
+        risks.insert(0, f"🚨 ISBN çakışması: {conflict_note}" if conflict_note else "🚨 Bu ISBN birden fazla farklı kitaba ait — doğrulanamadı")
+        gemini_result["risks"] = risks
+
     gemini_result.update({
         "isbn": isbn,
         "edition_year": edition_data.get("edition_year"),
@@ -299,21 +308,38 @@ Analyze the provided eBay listing image:
 - Add "image_notes": brief observation
 """ if has_image else '- Set "image_verdict": "NO_IMAGE", "image_notes": ""'
 
-    return f"""You are a book arbitrage expert. Search the web to verify current Amazon/eBay prices, BSR, and demand.
+    return f"""You are a book arbitrage expert. Your job: verify the eBay listing matches the intended book, then assess profitability.
+
+CRITICAL — ISBN CONFLICT DETECTION:
+If your web search finds multiple different books sharing this ISBN (data error, misprint, or ISBN reuse):
+- Use the eBay listing title and image to determine WHICH book is actually being sold
+- Set image_verdict = "MISMATCH" if the listing appears to be a different book than the Amazon data
+- Set risk_level = "HIGH" and verdict = "PASS" if you cannot confirm which book it is
+- Explain the conflict clearly in "summary"
+
 {img_part}
+
+STEP 1: Search the web for this ISBN — confirm exact title, author, edition.
+STEP 2: Check if multiple different books share this ISBN (conflict = high risk).
+STEP 3: Verify eBay listing title/image matches the confirmed book identity.
+STEP 4: Check current Amazon price, BSR, seller count, demand.
+STEP 5: Give your verdict.
+
 Reply ONLY with this JSON (no markdown, no extra text):
 {{
   "verdict": "BUY or PASS or WATCH",
   "confidence": 0-100,
-  "summary": "2-3 sentence analysis",
+  "summary": "2-3 sentence analysis. If ISBN conflict found, explain it here.",
   "price_trend": "RISING or STABLE or DECLINING or UNKNOWN",
   "price_trend_reason": "brief explanation",
   "risk_level": "LOW or MEDIUM or HIGH",
   "risks": [],
   "competitors": "comment on competing sellers on Amazon/eBay",
-  "buy_suggestion": "max price and preferred condition",
+  "buy_suggestion": "max price and preferred condition, or SKIP if ISBN conflict",
   "image_verdict": "MATCH or MISMATCH or UNCERTAIN or NO_IMAGE",
-  "image_notes": "",
+  "image_notes": "what you see in the image, or explain ISBN conflict if relevant",
+  "isbn_conflict": false,
+  "isbn_conflict_note": "explain if multiple books share this ISBN",
   "sources_checked": []
 }}"""
 

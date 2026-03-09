@@ -3181,6 +3181,15 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                     </div>
                   )}
 
+                  {/* ISBN Conflict warning */}
+                  {d.isbn_conflict&&(
+                    <div style={{background:"#ef444411",border:"2px solid #ef444433",borderRadius:8,padding:"12px 14px"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"#ef4444",marginBottom:6}}>🚨 ISBN ÇAKIŞMASI TESPİT EDİLDİ</div>
+                      <div style={{fontSize:11,color:C.text}}>{d.isbn_conflict_note||"Bu ISBN birden fazla farklı kitaba ait olabilir."}</div>
+                      <div style={{fontSize:10,color:C.muted,marginTop:6}}>eBay ilanının başlığını ve kapak resmini Amazon'daki kitapla manuel olarak karşılaştır.</div>
+                    </div>
+                  )}
+
                   {/* Image verification */}
                   {d.image_verdict&&d.image_verdict!=="NO_IMAGE"&&(
                     <div style={{background:d.image_verdict==="MATCH"?"#22c55e11":d.image_verdict==="MISMATCH"?"#ef444411":"#f9731611",
