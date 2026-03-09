@@ -950,7 +950,7 @@ async def ebay_debug_search(isbn: str, limit: int = 5, strict: bool = False):
 
 
 # ── CSV Arbitrage Scanner ─────────────────────────────────────────────────────
-from app.csv_arb_scanner import ScanFilters, scan_isbn_list, suggest_max_buy
+from app.csv_arb_scanner import ScanFilters, scan_isbn_list, suggest_max_buy, IsbnMatchPolicy, InvalidIsbnPolicy
 from app.profit_calc import FeeConfig
 
 class CsvArbRequest(BaseModel):
@@ -970,6 +970,9 @@ class CsvArbRequest(BaseModel):
     source_in: Optional[List[str]] = None      # ["ebay","thriftbooks","abebooks",...]
     only_viable: bool = True
     concurrency: int = Field(default=1, ge=1, le=5)
+    # ISBN match reliability policies
+    isbn_match_policy: str = Field(default="balanced", description="precision|balanced|recall")
+    invalid_isbn_policy: str = Field(default="best_effort", description="reject|best_effort")
     # Fee overrides (opsiyonel)
     fee_referral_pct: Optional[float] = None
     fee_closing: Optional[float] = None
@@ -1002,6 +1005,8 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
         source_in=req.source_in,
         only_viable=False,   # BUG FIX: filtre sonradan uygula, önce hepsini topla
         strict_mode=req.strict_mode,
+        isbn_match_policy=IsbnMatchPolicy(req.isbn_match_policy),
+        invalid_isbn_policy=InvalidIsbnPolicy(req.invalid_isbn_policy),
     )
 
     fees = FeeConfig(

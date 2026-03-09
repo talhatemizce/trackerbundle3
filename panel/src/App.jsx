@@ -1033,6 +1033,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
 
   // Filters
   const [strictMode, setStrictMode] = useState(true);
+  const [isbnMatchPolicy, setIsbnMatchPolicy] = useState("balanced");
+  const [invalidIsbnPolicy, setInvalidIsbnPolicy] = useState("best_effort");
+  const [verifiedOnlyFilter, setVerifiedOnlyFilter] = useState(false);
   const [minRoi, setMinRoi] = useState("");
   const [maxRoi, setMaxRoi] = useState("");
   const [minProfit, setMinProfit] = useState("");
@@ -1238,6 +1241,8 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
       ...(condFilter !== "all" ? {condition_in: [condFilter]} : {}),
       ...(sourceFilter !== "all" ? {source_in: [sourceFilter]} : {}),
       ...(maxBuyRatio ? {max_buy_ratio_pct: parseFloat(maxBuyRatio)} : {}),
+      isbn_match_policy: isbnMatchPolicy,
+      invalid_isbn_policy: invalidIsbnPolicy,
     };
 
     try {
@@ -1401,6 +1406,33 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
             <span>Strict Mode <span style={{fontSize:9,color:C.muted}}>(NEW/Like New→AMZ New · Used→AMZ Used)</span></span>
           </label>
 
+          {/* ISBN Match Policy */}
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:8}}>
+            <div>
+              <span style={{fontSize:9,color:C.muted,display:"block",marginBottom:2}}>ISBN Eşleşme Politikası</span>
+              <select value={isbnMatchPolicy} onChange={e=>setIsbnMatchPolicy(e.target.value)}
+                style={{width:"100%",fontSize:11,padding:"4px 6px",borderRadius:5,border:`1px solid ${C.border}`,background:C.surface2,color:C.text}}>
+                <option value="balanced">⚖️ Balanced (önerilen)</option>
+                <option value="precision">🎯 Precision (sadece doğrulanmış)</option>
+                <option value="recall">🕸 Recall (hepsi)</option>
+              </select>
+            </div>
+            <div>
+              <span style={{fontSize:9,color:C.muted,display:"block",marginBottom:2}}>Geçersiz ISBN</span>
+              <select value={invalidIsbnPolicy} onChange={e=>setInvalidIsbnPolicy(e.target.value)}
+                style={{width:"100%",fontSize:11,padding:"4px 6px",borderRadius:5,border:`1px solid ${C.border}`,background:C.surface2,color:C.text}}>
+                <option value="best_effort">🔍 Best Effort (dene, işaretle)</option>
+                <option value="reject">🚫 Reject (reddet)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Verified only filter */}
+          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
+            <input type="checkbox" checked={verifiedOnlyFilter} onChange={e=>setVerifiedOnlyFilter(e.target.checked)}/>
+            <span>Sadece Doğrulanmış <span style={{fontSize:9,color:C.muted}}>(CONFIRMED eşleşmeler)</span></span>
+          </label>
+
           <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6}}>
             <div>
               <span style={labelStyle}>Min ROI %</span>
@@ -1545,7 +1577,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                 {label:"✅ Kabul", val:results.stats?.accepted_count||0, color:C.green},
                 {label:"❌ Elenen", val:results.stats?.rejected_count||0, color:C.muted},
                 {label:"⏱ Süre", val:(results.stats?.duration_s||"?")+"s", color:C.blue},
-                {label:"Mod", val:results.stats?.strict_mode?"Strict":"Fallback", color:C.accent},
+                {label:"✓ GTIN", val:results.stats?.confirmed_count||0, color:"#22c55e"},
+                {label:"⚠ Unverified", val:results.stats?.unverified_count||0, color:"#f97316"},
+                ...(results.stats?.invalid_input_count > 0 ? [{label:"⚠ Geçersiz ISBN", val:results.stats.invalid_input_count, color:"#ef4444"}] : []),
               ].map(s => (
                 <div key={s.label} style={{background:C.surface, border:`1px solid ${C.border}`,
                   borderRadius:8, padding:"8px 14px", minWidth:80}}>
@@ -1554,6 +1588,23 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                 </div>
               ))}
             </div>
+
+            {/* Unverified warning banner */}
+            {(results.stats?.unverified_count > 0 || results.stats?.invalid_input_count > 0) && (
+              <div style={{background:"#f9731611", border:"1px solid #f9731633", borderRadius:8,
+                padding:"8px 14px", marginBottom:10, fontSize:11, color:"#f97316",
+                display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                <span>
+                  ⚠️ Bu taramada {results.stats?.unverified_count||0} doğrulanamayan{results.stats?.invalid_input_count > 0 ? ` + ${results.stats.invalid_input_count} geçersiz ISBN` : ""} var.
+                  {" "}<b>Doğrulanmış sonuçlar için "Sadece Doğrulanmış" filtresi açın.</b>
+                </span>
+                <button onClick={()=>setVerifiedOnlyFilter(true)}
+                  style={{padding:"3px 10px", fontSize:10, borderRadius:5, cursor:"pointer",
+                    background:"#f97316", color:"#fff", border:"none", marginLeft:8}}>
+                  Sadece ✓GTIN Göster
+                </button>
+              </div>
+            )}
 
             {/* View toggle + export */}
             <div style={{display:"flex", gap:8, marginBottom:12, alignItems:"center", flexWrap:"wrap"}}>
@@ -1605,7 +1656,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                       </tr>
                     </thead>
                     <tbody>
-                      {(activeView==="accepted" ? results.accepted : results.rejected).map((r,i)=>(
+                      {(activeView==="accepted" ? results.accepted : results.rejected)
+                        .filter(r => !verifiedOnlyFilter || r.match_quality === "CONFIRMED")
+                        .map((r,i)=>(
                         <tr key={i} style={{borderBottom:`1px solid ${C.border}`, background: selectedRows.has(i)?(C.accent+"18"):i%2===0?C.surface:C.surface2, transition:"background .1s"}}>
                           {activeView==="accepted"&&(
                             <td style={{padding:"7px 8px",textAlign:"center",width:32}}>
@@ -1613,7 +1666,21 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                                 style={{accentColor:C.accent,cursor:"pointer",width:13,height:13}}/>
                             </td>
                           )}
-                          <td style={{padding:"7px 10px", color:C.text, fontFamily:"monospace"}}>{r.isbn}</td>
+                          <td style={{padding:"7px 10px", color:C.text, fontFamily:"monospace"}}>
+                            {r.isbn}
+                            {r.match_quality==="CONFIRMED"&&(
+                              <span title="GTIN doğrulandı — kesin eşleşme" style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#22c55e22",color:"#22c55e",fontFamily:"sans-serif"}}>✓GTIN</span>
+                            )}
+                            {r.match_quality==="UNVERIFIED_SUPER_DEAL"&&(
+                              <span title="Doğrulanamadı — super deal" style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#f9731622",color:"#f97316",fontFamily:"sans-serif"}}>⚠DEAL</span>
+                            )}
+                            {r.match_quality==="UNVERIFIED_INPUT"&&(
+                              <span title="Geçersiz ISBN girişi" style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#ef444422",color:"#ef4444",fontFamily:"sans-serif"}}>⚠ISBN?</span>
+                            )}
+                            {r.match_quality==="UNVERIFIED_KEYWORD"&&(
+                              <span title="Keyword araması — doğrulanmadı" style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#6b728022",color:"#6b7280",fontFamily:"sans-serif"}}>KW</span>
+                            )}
+                          </td>
                           <td style={{padding:"7px 10px", color:C.muted, fontFamily:"monospace", fontSize:10}}>{r.asin||"—"}</td>
                           <td style={{padding:"7px 10px", color:C.accent}}>{r.source}</td>
                           <td style={{padding:"7px 10px"}}>

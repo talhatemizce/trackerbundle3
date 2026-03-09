@@ -15,6 +15,7 @@ Sonuç satırı şeması:
   profit, roi_pct, viable, roi_tier, reason
 """
 from __future__ import annotations
+from enum import Enum
 
 import asyncio
 import logging
@@ -191,6 +192,17 @@ def _apply_profit(
 
 # ── Filtre ────────────────────────────────────────────────────────────────────
 
+class IsbnMatchPolicy(str, Enum):
+    PRECISION = "precision"   # sadece CONFIRMED (GTIN eşleşmesi)
+    BALANCED  = "balanced"    # CONFIRMED + UNVERIFIED_SUPER_DEAL (default)
+    RECALL    = "recall"      # her şeyi dahil et
+
+
+class InvalidIsbnPolicy(str, Enum):
+    REJECT      = "reject"      # geçersiz ISBN'i reddet
+    BEST_EFFORT = "best_effort" # keyword ara ama UNVERIFIED_INPUT işaretle
+
+
 @dataclass
 class ScanFilters:
     min_roi_pct: Optional[float] = None
@@ -205,6 +217,8 @@ class ScanFilters:
     source_in: Optional[List[str]] = None      # ["ebay","thriftbooks","abebooks",...]
     only_viable: bool = True
     strict_mode: bool = True
+    isbn_match_policy: IsbnMatchPolicy = IsbnMatchPolicy.BALANCED
+    invalid_isbn_policy: InvalidIsbnPolicy = InvalidIsbnPolicy.BEST_EFFORT
 
 
 def _filter_result(r: ArbResult, f: ScanFilters) -> str:
@@ -267,8 +281,8 @@ async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
 
 # ── eBay fiyat çekimi (mevcut Finding API'yi kullan) ─────────────────────────
 
-async def _get_ebay_offers(isbn: str) -> List[Dict]:
-    """eBay'den ISBN için aktif listingleri çek (Browse API)."""
+async def _get_ebay_offers(isbn: str, filters: "ScanFilters | None" = None) -> List[Dict]:
+    """eBay'den ISBN için aktif listingleri çek (Browse API). ISBN doğrulaması + policy uygulaması."""
     try:
         from app.ebay_client import browse_search_isbn, item_total_price, normalize_condition
         from app.core.config import get_settings
@@ -277,7 +291,30 @@ async def _get_ebay_offers(isbn: str) -> List[Dict]:
         calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else 3.99
 
         async with httpx.AsyncClient(timeout=20) as client:
-            items = await browse_search_isbn(client, isbn)
+            from app.isbn_utils import parse_isbn, IsbnValidationReason
+            from app.ebay_client import hybrid_verify_items
+
+            # ── ISBN doğrulama ────────────────────────────────────────────────
+            isbn_info = parse_isbn(isbn)
+            match_policy = (filters.isbn_match_policy if filters else "balanced")
+            invalid_policy = (filters.invalid_isbn_policy if filters else "best_effort")
+
+            if not isbn_info.valid:
+                logger.info(
+                    "ISBN geçersiz isbn=%s reason=%s policy=%s",
+                    isbn, isbn_info.reason.value, invalid_policy,
+                )
+                if str(invalid_policy) == "reject":
+                    return [{"_error": f"invalid_isbn:{isbn_info.reason.value}",
+                             "isbn_valid": False,
+                             "isbn_validation_reason": isbn_info.reason.value,
+                             "match_quality": "UNVERIFIED_INPUT"}]
+                # best_effort: devam et ama sonuçlara UNVERIFIED_INPUT işaretle
+
+            items = await browse_search_isbn(
+                client, isbn,
+                isbn_match_policy=str(match_policy),
+            )
         # eBay rate limit koruması: istekler arası min 1s bekle
         await asyncio.sleep(1.0)
 
@@ -317,6 +354,25 @@ async def _get_ebay_offers(isbn: str) -> List[Dict]:
                 try: feedback_pct = float(fp)
                 except: pass
 
+            # match_quality from hybrid verify (may be set on item)
+            mq = it.get("_match_quality", "UNVERIFIED_KEYWORD")
+            mr = it.get("_verification_reason", "")
+            qm = it.get("_query_mode", "keyword_fallback")
+            # If ISBN was invalid, override to UNVERIFIED_INPUT
+            if not isbn_info.valid:
+                mq = "UNVERIFIED_INPUT"
+                mr = isbn_info.reason.value
+
+            # Policy filter: drop items that don't meet match policy
+            policy_str = str(match_policy)
+            if policy_str == "precision" and mq != "CONFIRMED":
+                logger.debug("isbn=%s item=%s DROPPED (precision policy, mq=%s)", isbn, it.get("itemId","?"), mq)
+                continue
+            elif policy_str == "balanced" and mq not in ("CONFIRMED", "UNVERIFIED_SUPER_DEAL"):
+                logger.debug("isbn=%s item=%s DROPPED (balanced policy, mq=%s)", isbn, it.get("itemId","?"), mq)
+                continue
+            # recall: keep everything
+
             offers.append({
                 "source": "ebay",
                 "source_condition": source_cond,
@@ -328,6 +384,12 @@ async def _get_ebay_offers(isbn: str) -> List[Dict]:
                 "description": (it.get("shortDescription") or it.get("condition") or "")[:200],
                 "seller_name": seller_name,
                 "seller_feedback": feedback_pct,
+                "match_quality": mq,
+                "match_reason": mr,
+                "query_mode": qm,
+                "isbn_normalized": isbn_info.normalized or isbn,
+                "isbn_valid": isbn_info.valid,
+                "isbn_validation_reason": isbn_info.reason.value,
             })
         # En ucuz new + en ucuz used döndür
         best: Dict[str, Dict] = {}
@@ -409,7 +471,7 @@ async def _scan_one(
     # Paralel: Amazon + eBay + BookFinder
     amazon_data, ebay_offers, bf_offers = await asyncio.gather(
         _get_amazon_prices(asin),
-        _get_ebay_offers(isbn),
+        _get_ebay_offers(isbn, filters=filters),
         _get_bookfinder_offers(isbn),
         return_exceptions=True,
     )
@@ -604,6 +666,20 @@ async def scan_isbn_list(
     logger.info("csv_arb scan done: %d ISBN, %d accepted, %d rejected, %.1fs",
                 total, len(accepted), len(rejected), duration)
 
+    # ── Observability counters ────────────────────────────────────────────────
+    all_results = accepted + rejected
+    gtin_hits            = sum(1 for r in all_results if r.get("query_mode") == "gtin")
+    keyword_fallback_hits= sum(1 for r in all_results if r.get("query_mode") == "keyword_fallback")
+    confirmed_count      = sum(1 for r in all_results if r.get("match_quality") == "CONFIRMED")
+    unverified_count     = sum(1 for r in all_results if r.get("match_quality") in ("UNVERIFIED_SUPER_DEAL","UNVERIFIED_KEYWORD"))
+    invalid_input_count  = sum(1 for r in all_results if r.get("match_quality") == "UNVERIFIED_INPUT")
+
+    # Count amazon_unavailable
+    amazon_unavailable = sum(
+        1 for r in rejected
+        if "amazon_unavailable" in (r.get("reason") or "")
+    )
+
     return {
         "accepted": accepted,
         "rejected": rejected,
@@ -613,6 +689,14 @@ async def scan_isbn_list(
             "rejected_count": len(rejected),
             "duration_s": duration,
             "strict_mode": filters.strict_mode,
+            "isbn_match_policy": filters.isbn_match_policy.value,
+            "invalid_isbn_policy": filters.invalid_isbn_policy.value,
+            "gtin_hits": gtin_hits,
+            "keyword_fallback_hits": keyword_fallback_hits,
+            "confirmed_count": confirmed_count,
+            "unverified_count": unverified_count,
+            "invalid_input_count": invalid_input_count,
+            "amazon_unavailable": amazon_unavailable,
         },
     }
 

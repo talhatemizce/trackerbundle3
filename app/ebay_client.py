@@ -203,18 +203,21 @@ def isbn13_to_isbn10(isbn13: str) -> Optional[str]:
 
 
 def isbn_variants(isbn: str) -> List[str]:
-    """ISBN için tüm normalize formları döndür (13 varsa 10'unu da ekle, vs.)."""
-    s = isbn.replace("-", "").replace(" ", "").upper().strip()
-    variants = {s}
-    if len(s) == 13:
-        alt = isbn13_to_isbn10(s)
-        if alt:
-            variants.add(alt)
-    elif len(s) == 10:
-        alt = isbn10_to_isbn13(s)
-        if alt:
-            variants.add(alt)
-    return list(variants)
+    """ISBN için tüm normalize formları döndür. isbn_utils'ten delegated."""
+    try:
+        from app.isbn_utils import isbn_variants as _uv
+        return _uv(isbn)
+    except Exception:
+        # fallback: eski davranış
+        s = isbn.replace("-", "").replace(" ", "").upper().strip()
+        variants = {s}
+        if len(s) == 13:
+            alt = isbn13_to_isbn10(s)
+            if alt: variants.add(alt)
+        elif len(s) == 10:
+            alt = isbn10_to_isbn13(s)
+            if alt: variants.add(alt)
+        return list(variants)
 
 
 # ── Shipping-aware total price ────────────────────────────────────────────────
@@ -719,6 +722,7 @@ async def browse_search_isbn(
     isbn: str,
     limit: int = 50,
     strict: bool = False,
+    isbn_match_policy: str = "balanced",
 ) -> List[Dict[str, Any]]:
     """
     ISBN için eBay Browse API araması (GTIN-first, keyword fallback).
@@ -751,6 +755,11 @@ async def browse_search_isbn(
             gtin_items = await _browse_gtin_search(client, token, isbn13, limit)
             if gtin_items:
                 gtin_hit = True
+                # Tag items as GTIN-sourced (CONFIRMED quality)
+                for it in gtin_items:
+                    it["_query_mode"] = "gtin"
+                    it["_match_quality"] = "CONFIRMED"
+                    it["_verification_reason"] = "gtin_match"
                 combined = gtin_items
                 logger.info("isbn=%s GTIN search: %d items", isbn_clean, len(combined))
         except Exception as e:
@@ -775,6 +784,12 @@ async def browse_search_isbn(
                     seen_ids.add(item_id)
                     combined.append(item)
 
+        # Tag keyword fallback items (not yet verified)
+        for it in combined:
+            if "_query_mode" not in it:
+                it["_query_mode"] = "keyword_fallback"
+                it["_match_quality"] = "UNVERIFIED_KEYWORD"
+                it["_verification_reason"] = "keyword_only"
         logger.info("isbn=%s keyword fallback: %d items (GTIN=0)", isbn_clean, len(combined))
 
     # ── Adım 3: Strict verify (yalnızca keyword sonuçlarına) ──────────────────
