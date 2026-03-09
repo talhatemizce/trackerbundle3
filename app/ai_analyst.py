@@ -14,7 +14,7 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent"
 
 SYSTEM_PROMPT = """You are a book arbitrage expert. The user will give you an ISBN and current price/market data.
 
