@@ -254,7 +254,22 @@ def _apply_verdict_override(result: dict, candidate: dict, cond_score: int) -> d
             result["verdict"] = "PASS"
             override_reason = f"Negatif kâr (${profit})"
 
-    # ── BUY override: rakamlar çok iyi + risk düşük ──
+    # ── BUY override: rakamlar çok iyi ──
+    # İki seviye:
+    #   Tier 1 (EXTREME): ROI >= %100 + profit >= $20 → HIGH risk bile override et
+    #           (Gemini'nin "veri bulamadım" HIGH'ı gerçek risk değil)
+    #           Sadece isbn_conflict ve cond_score >= 6 engeller.
+    #   Tier 2 (STRONG):  ROI >= %30 + profit >= $5 → HIGH risk hariç override et
+    elif (roi >= 100 and profit >= 20
+          and cond_score < 6
+          and not isbn_conflict):
+        if gemini_verdict != "BUY":
+            result["verdict"] = "BUY"
+            override_reason = f"ROI {roi}%, kâr ${profit} — rakamlar tartışmasız"
+            # Gemini'nin data-uncertainty HIGH'ını MEDIUM'a düşür
+            if risk == "HIGH":
+                result["risk_level"] = "MEDIUM"
+
     elif (roi >= 30 and profit >= 5
           and risk != "HIGH"
           and cond_score < 6
@@ -305,10 +320,25 @@ def _apply_verdict_override(result: dict, candidate: dict, cond_score: int) -> d
 
 # ─── Ana analiz ────────────────────────────────────────────────────────────────
 
+# ── AI Result Cache (Gemini kota koruması) ────────────────────────────────────
+# Aynı ISBN için tekrar Gemini çağırmaz — günlük kota 10-15 sorgu ile dolar.
+import time as _time
+_ai_cache: Dict[str, Dict[str, Any]] = {}
+_AI_CACHE_TTL = 3600 * 6  # 6 saat
+
+
 async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
     s = get_settings()
     if not s.gemini_api_key:
         raise RuntimeError("GEMINI_API_KEY ayarlanmamış — /etc/trackerbundle.env → GEMINI_API_KEY=AIza...")
+
+    # ── Cache kontrolü ────────────────────────────────────────
+    cache_key = isbn.replace("-", "").replace(" ", "").strip()
+    if cache_key in _ai_cache:
+        cached = _ai_cache[cache_key]
+        if _time.time() - cached.get("_cached_at", 0) < _AI_CACHE_TTL:
+            logger.info("AI cache HIT isbn=%s", cache_key)
+            return {**cached, "_from_cache": True}
 
     isbn13 = _to_isbn13(isbn) or isbn
 
@@ -355,8 +385,11 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
         "amazon_seller_count": candidate.get("amazon_seller_count"),
         "amazon_is_sold_by_amazon": candidate.get("amazon_is_sold_by_amazon", False),
         "seasonality_mult": candidate.get("seasonality_mult"),
+        "_cached_at": _time.time(),
     })
 
+    # Cache'e kaydet
+    _ai_cache[cache_key] = gemini_result
     return gemini_result
 
 
@@ -376,6 +409,19 @@ async def _call_gemini(key: str, prompt: str, image_b64: Optional[str]) -> Dict[
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+        if resp.status_code == 429:
+            logger.warning("Gemini API 429 (kota doldu) — rule-based fallback kullanılacak")
+            return {
+                "verdict": "UNKNOWN",
+                "summary": "Gemini API günlük kotası doldu. Sayısal override sistemi karar verecek.",
+                "price_trend": "UNKNOWN",
+                "price_trend_reason": "Gemini kotası doldu — veri alınamadı",
+                "risk_level": "MEDIUM",  # MEDIUM (HIGH değil — override'ı engellemesin)
+                "risk_factors": ["Gemini API kotası doldu — AI analizi yapılamadı"],
+                "recommendation": "",
+                "confidence": 30,
+                "gemini_quota_exceeded": True,
+            }
         if resp.status_code != 200:
             raise RuntimeError(f"Gemini API {resp.status_code}: {resp.text[:200]}")
 
