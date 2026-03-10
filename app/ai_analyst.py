@@ -279,6 +279,27 @@ def _apply_verdict_override(result: dict, candidate: dict, cond_score: int) -> d
                      gemini_verdict, result["verdict"], override_reason,
                      candidate.get("isbn", "?"))
 
+        # ── Override yapınca güven, risk ve öneriyi de hizala ──────────
+        # Gemini %40 güven + "SKIP" deyip BUY override etmek çelişkili.
+        # Sayısal kanıt güçlüyse tüm sinyaller tutarlı olmalı.
+        if result["verdict"] == "BUY":
+            # Confidence: sayısal kesinliğe göre hesapla
+            # ROI ne kadar yüksekse güven o kadar yüksek
+            numeric_conf = min(95, 60 + int(roi / 10))  # ROI%30→63, %100→70, %287→88
+            result["confidence"] = max(result.get("confidence", 0), numeric_conf)
+            # Risk: rakamlar iyi + condition temiz → LOW
+            if risk in ("MEDIUM", "UNKNOWN") and cond_score < 3:
+                result["risk_level"] = "LOW"
+            # Recommendation: Gemini'nin "SKIP" önerisi override
+            buy_price = candidate.get("buy_price", 0)
+            result["recommendation"] = (
+                f"Max ${round(buy_price * 1.15, 2)} — mevcut fiyat (${buy_price}) "
+                f"ROI %{roi} ve kâr ${profit} ile güçlü fırsat."
+            )
+        elif result["verdict"] == "PASS":
+            result["confidence"] = max(result.get("confidence", 0), 80)
+            result["recommendation"] = f"Kâr negatif (${profit}) — bu fiyattan almayın."
+
     return result
 
 
