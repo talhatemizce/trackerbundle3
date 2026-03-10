@@ -402,7 +402,8 @@ async def _call_gemini(key: str, prompt: str, image_b64: Optional[str]) -> Dict[
 
     payload = {
         "contents": [{"role": "user", "parts": parts}],
-        "tools": [{"google_search": {}}],
+        # Google Search tool KALDIRILDI — her search ayrı istek sayılıyor,
+        # 10 analizde 100+ istek = kota doldu. Gerekli veri prompt'ta.
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1200},
         "system_instruction": {"parts": [{"text": _system_prompt(bool(image_b64))}]},
     }
@@ -438,39 +439,39 @@ Analyze the provided eBay listing image:
 - Add "image_notes": brief observation
 """ if has_image else '- Set "image_verdict": "NO_IMAGE", "image_notes": ""'
 
-    return f"""You are a book arbitrage expert. Your job: verify the eBay listing matches the intended book, then assess profitability.
-
-CRITICAL — ISBN CONFLICT DETECTION:
-If your web search finds multiple different books sharing this ISBN (data error, misprint, or ISBN reuse):
-- Use the eBay listing title and image to determine WHICH book is actually being sold
-- Set image_verdict = "MISMATCH" if the listing appears to be a different book than the Amazon data
-- Set risk_level = "HIGH" and verdict = "PASS" if you cannot confirm which book it is
-- Explain the conflict clearly in "summary"
+    return f"""You are a book arbitrage expert. Analyze the provided listing data and assess profitability.
+ALL RELEVANT DATA IS PROVIDED BELOW — do NOT claim data is missing if it's in the prompt.
 
 {img_part}
 
-STEP 1: Search the web for this ISBN — confirm exact title, author, edition.
-STEP 2: Check if multiple different books share this ISBN (conflict = high risk).
-STEP 3: Verify eBay listing title/image matches the confirmed book identity.
-STEP 4: Check current Amazon price, BSR, seller count, demand.
-STEP 5: Give your verdict.
+STEP 1: Verify the eBay listing matches the book (using title, ISBN, condition, image if provided).
+STEP 2: Assess profit potential using the provided Amazon price, ROI, and seller data.
+STEP 3: Evaluate risks (condition issues, competition, edition age).
+STEP 4: Give your verdict based on the numbers provided.
+
+IMPORTANT RULES:
+- If ROI >= 30% and profit >= $5, this is likely a GOOD deal — say BUY unless there's a specific red flag.
+- If ROI >= 100% and profit >= $20, this is an EXCELLENT deal — strong BUY.
+- Do NOT say "insufficient data" when Amazon price, ROI, profit, and seller count are provided.
+- Do NOT recommend "SKIP" for profitable deals unless there's a concrete risk (ISBN conflict, severe condition, Amazon is selling).
+- Base buy_suggestion on the provided buy price with a small margin (10-15% above current).
 
 Reply ONLY with this JSON (no markdown, no extra text):
 {{
   "verdict": "BUY or PASS or WATCH",
   "confidence": 0-100,
-  "summary": "2-3 sentence analysis. If ISBN conflict found, explain it here.",
+  "summary": "2-3 sentence analysis.",
   "price_trend": "RISING or STABLE or DECLINING or UNKNOWN",
-  "price_trend_reason": "brief explanation",
+  "price_trend_reason": "brief explanation based on provided data",
   "risk_level": "LOW or MEDIUM or HIGH",
   "risks": [],
-  "competitors": "comment on competing sellers on Amazon/eBay",
-  "buy_suggestion": "max price and preferred condition, or SKIP if ISBN conflict",
+  "competitors": "comment on competing sellers",
+  "buy_suggestion": "max price and preferred condition",
   "image_verdict": "MATCH or MISMATCH or UNCERTAIN or NO_IMAGE",
-  "image_notes": "what you see in the image, or explain ISBN conflict if relevant",
+  "image_notes": "what you see in the image",
   "isbn_conflict": false,
-  "isbn_conflict_note": "explain if multiple books share this ISBN",
-  "sources_checked": []
+  "isbn_conflict_note": "",
+  "sources_checked": ["provided_data"]
 }}"""
 
 
@@ -491,28 +492,28 @@ def _build_prompt(isbn: str, isbn13: str, c: Dict[str, Any],
     lines = [
         f"=== BOOK ARBITRAGE: ISBN {isbn} (ISBN-13: {isbn13}) ===",
         f"",
-        f"eBay listing: '{c.get('ebay_title','?')}' | buy=${c.get('buy_price','?')} | cond={c.get('source_condition','?').upper()}",
-        f"eBay seller: {c.get('ebay_seller_name','?')} ({c.get('ebay_seller_feedback','?')}% positive)",
+        f"── SOURCE LISTING ──",
+        f"eBay listing: '{c.get('ebay_title','N/A')}' | buy=${c.get('buy_price','?')} | cond={c.get('source_condition','?').upper()}",
+        f"eBay seller: {c.get('ebay_seller_name','N/A')} ({c.get('ebay_seller_feedback','?')}% positive)",
         f"eBay description: {(c.get('ebay_description','') or 'none')[:150]}",
         f"",
-        f"Amazon current: ${c.get('amazon_sell_price','?')} ({c.get('buybox_type','?')} buybox)",
-        f"Calculated profit: ${c.get('profit','?')} ({c.get('roi_pct','?')}% ROI) — based on current buybox",
-        f"Amazon sellers: {c.get('amazon_seller_count','?')} | Amazon itself selling: {'YES' if c.get('amazon_is_sold_by_amazon') else 'No'}",
+        f"── AMAZON DATA (VERIFIED FROM SP-API) ──",
+        f"Amazon buybox price: ${c.get('amazon_sell_price','?')} ({c.get('buybox_type','?')} buybox)",
+        f"Amazon seller count: {c.get('amazon_seller_count','?')}",
+        f"Amazon itself selling: {'YES ⚠️' if c.get('amazon_is_sold_by_amazon') else 'No'}",
         f"",
-        f"⚠ IMPORTANT — these are pre-computed MODEL ESTIMATES, NOT real market data:",
-        f"  velocity (estimated): {vel_note}",
-        f"  worst-case scenario: {worst_note}",
-        f"  Do NOT use these to set your buy_suggestion — use real web search data instead.",
+        f"── CALCULATED METRICS (PRE-COMPUTED) ──",
+        f"Profit: ${c.get('profit','?')}",
+        f"ROI: {c.get('roi_pct','?')}%",
+        f"Estimated velocity: {vel_note}",
+        f"Worst-case scenario: {worst_note}",
         f"",
+        f"── BOOK IDENTITY ──",
+        f"Google/OL title: {edition.get('google_title','N/A')}",
+        f"Edition year: {edition.get('edition_year','?')}",
+        f"Newer edition exists: {'YES ⚠️' if edition.get('has_newer_edition') else 'No/Unknown'}",
         f"Month: {dt.datetime.utcnow().strftime('%B')} | seasonality={c.get('seasonality_mult','?')}x",
-        f"Edition: {edition.get('edition_year','?')} | Newer edition: {'YES ⚠️' if edition.get('has_newer_edition') else 'No/Unknown'}",
         f"Condition flags: {', '.join(cond['condition_flags']) or 'None'} (score: {cond['condition_score']}/10)",
-        f"",
-        f"SEARCH TASKS:",
-        f"1. Search '{isbn13} amazon price history' — find the real 90-day price floor",
-        f"2. Search '{(c.get('ebay_title') or isbn)[:40]} amazon sales rank' — confirm demand",
-        f"3. If Amazon price is suspiciously high or low, check if it's a spike",
-        f"4. Base buy_suggestion on REAL historical price data you find, not the model estimate",
     ]
     return "\n".join(lines)
 
