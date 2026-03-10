@@ -3135,6 +3135,7 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                   {/* Verdict */}
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
                     <span style={{padding:"6px 16px",borderRadius:8,fontSize:15,fontWeight:700,background:vs.bg,color:vs.color,border:`1px solid ${vs.color}44`}}>{vs.label}</span>
+                    {d.verdict_override&&<span style={{padding:"3px 8px",borderRadius:4,fontSize:9,fontWeight:600,background:"#8b5cf622",color:"#8b5cf6",border:"1px solid #8b5cf644"}} title={d.verdict_override_reason||""}>⚡ Sayısal Override</span>}
                     <div style={{flex:1}}>
                       <div style={{fontSize:11,color:C.muted}}>Güven</div>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>

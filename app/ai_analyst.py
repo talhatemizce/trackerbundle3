@@ -216,6 +216,69 @@ def _apply_deterministic_adjustments(result: Dict[str, Any], candidate: Dict[str
     if edition.get("has_newer_edition") and result.get("risk_level") == "LOW":
         result["risk_level"] = "MEDIUM"
 
+    # ── VERDICT OVERRIDE: Sayılar konuştuğunda Gemini'yi dinleme ────────
+    # Gemini non-deterministic (farklı web araması → farklı karar).
+    # Rakamlar net olduğunda rule-based verdict Gemini'yi override eder.
+    result = _apply_verdict_override(result, candidate, cond_score)
+
+    return result
+
+
+def _apply_verdict_override(result: dict, candidate: dict, cond_score: int) -> dict:
+    """
+    Rakamlar net olduğunda Gemini verdict'ini override eder.
+
+    BUY override koşulları (hepsi AND):
+      - ROI >= 30% (fire tier)
+      - Profit >= $5
+      - Risk level != HIGH
+      - Condition score < 6 (ağır hasar yok)
+      - ISBN conflict yok
+
+    PASS override koşulları (herhangi biri OR):
+      - Profit <= 0
+      - ROI < 0
+      - Risk level == HIGH AND cond_score >= 6
+    """
+    roi = candidate.get("roi_pct", 0) or 0
+    profit = candidate.get("profit", 0) or 0
+    risk = result.get("risk_level", "UNKNOWN")
+    isbn_conflict = result.get("isbn_conflict", False)
+    gemini_verdict = result.get("verdict", "UNKNOWN")
+
+    override_reason = None
+
+    # ── PASS override: rakamlar kötü ──
+    if profit <= 0 or roi < 0:
+        if gemini_verdict not in ("PASS",):
+            result["verdict"] = "PASS"
+            override_reason = f"Negatif kâr (${profit})"
+
+    # ── BUY override: rakamlar çok iyi + risk düşük ──
+    elif (roi >= 30 and profit >= 5
+          and risk != "HIGH"
+          and cond_score < 6
+          and not isbn_conflict):
+        if gemini_verdict != "BUY":
+            result["verdict"] = "BUY"
+            override_reason = f"ROI {roi}%, kâr ${profit} — sayılar net"
+
+    # ── WATCH override: orta bölge, Gemini PASS demiş ama rakamlar fena değil ──
+    elif (roi >= 15 and profit >= 3
+          and risk != "HIGH"
+          and cond_score < 6
+          and not isbn_conflict
+          and gemini_verdict == "PASS"):
+        result["verdict"] = "WATCH"
+        override_reason = f"ROI {roi}% makul ama Gemini tereddütlü"
+
+    if override_reason:
+        result["verdict_override"] = True
+        result["verdict_override_reason"] = override_reason
+        logger.info("Verdict override: %s → %s (%s) isbn=%s",
+                     gemini_verdict, result["verdict"], override_reason,
+                     candidate.get("isbn", "?"))
+
     return result
 
 
