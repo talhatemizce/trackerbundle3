@@ -3055,20 +3055,60 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
   const [sortDir, setSortDir] = useState("desc");
   const [confirmClear, setConfirmClear] = useState(false);
 
-  // AI Analysis
+  // AI Analysis (single)
   const [aiModal, setAiModal] = useState(null);
   const [analyzingIsbn, setAnalyzingIsbn] = useState(null);
+
+  // Bulk AI Analysis
+  const [selected, setSelected] = useState(new Set());
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({done:0, total:0, current:""});
+  const [aiResults, setAiResults] = useState({});  // {isbn: {verdict, confidence, ...}}
+
+  const toggleSelect = (isbn) => setSelected(prev => {
+    const next = new Set(prev);
+    next.has(isbn) ? next.delete(isbn) : next.add(isbn);
+    return next;
+  });
+  const toggleAll = () => {
+    if (selected.size === filtered.length) setSelected(new Set());
+    else setSelected(new Set(filtered.map(r => r.isbn)));
+  };
+
   const runAiAnalysis = async (row) => {
     setAnalyzingIsbn(row.isbn);
     setAiModal({isbn: row.isbn, status:"loading", data:null, error:null});
     try {
       const res = await req("/ai/analyze", {method:"POST", body:JSON.stringify({isbn:row.isbn,candidate:row})}, 90000);
       setAiModal({isbn:row.isbn, status:"done", data:res, error:null});
+      setAiResults(prev => ({...prev, [row.isbn]: res}));
     } catch(e) {
       setAiModal({isbn:row.isbn, status:"error", data:null, error:e?.message||String(e)});
     } finally {
       setAnalyzingIsbn(null);
     }
+  };
+
+  const runBulkAnalysis = async () => {
+    const rows = filtered.filter(r => selected.has(r.isbn));
+    if (!rows.length) { push("Önce satır seç","info"); return; }
+    setBulkRunning(true);
+    setBulkProgress({done:0, total:rows.length, current:""});
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      setBulkProgress({done:i, total:rows.length, current:r.isbn});
+      try {
+        const res = await req("/ai/analyze", {method:"POST", body:JSON.stringify({isbn:r.isbn,candidate:r})}, 90000);
+        setAiResults(prev => ({...prev, [r.isbn]: res}));
+      } catch(e) {
+        setAiResults(prev => ({...prev, [r.isbn]: {verdict:"ERROR", summary:e?.message||String(e), error:true}}));
+      }
+      // Rate limit: istekler arası 2s bekle
+      if (i < rows.length - 1) await new Promise(ok => setTimeout(ok, 2000));
+    }
+    setBulkProgress({done:rows.length, total:rows.length, current:"Tamamlandı"});
+    setBulkRunning(false);
+    push(`${rows.length} aday analiz edildi`, "success");
   };
   const verdictStyle = (v) => ({"BUY":{bg:"#22c55e22",color:"#22c55e",label:"✅ AL"},"PASS":{bg:"#ef444422",color:"#ef4444",label:"❌ GEÇME"},"WATCH":{bg:"#f9731622",color:"#f97316",label:"⏳ BEKLE"},"UNKNOWN":{bg:"#6b728022",color:"#6b7280",label:"❓"}})[v]||{bg:"#6b728022",color:"#6b7280",label:v||"?"};
   const trendIcon = (t) => ({"RISING":"📈","STABLE":"➡️","DECLINING":"📉"})[t]||"❓";
@@ -3269,10 +3309,21 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                   <button onClick={()=>setConfirmClear(false)}
                     style={{padding:"5px 10px",fontSize:11,borderRadius:5,cursor:"pointer",background:C.surface2,color:C.muted,border:`1px solid ${C.border}`}}>İptal</button>
                 </div>
-              : <button onClick={()=>setConfirmClear(true)}
-                  style={{padding:"5px 10px",fontSize:11,borderRadius:5,cursor:"pointer",background:C.surface2,color:C.muted,border:`1px solid ${C.border}`}}>
-                  🗑 Tümünü Temizle
-                </button>
+              : <>
+                  <button onClick={runBulkAnalysis}
+                    disabled={bulkRunning || selected.size===0}
+                    style={{padding:"5px 12px",fontSize:11,borderRadius:5,cursor:bulkRunning?"wait":"pointer",fontWeight:600,
+                      background:selected.size>0?"#7c3aed22":"transparent",
+                      color:selected.size>0?"#a78bfa":C.muted,
+                      border:`1px solid ${selected.size>0?"#7c3aed44":C.border}`,
+                      opacity:bulkRunning?0.6:1}}>
+                    {bulkRunning?`⏳ ${bulkProgress.done}/${bulkProgress.total}`:`🤖 Toplu AI (${selected.size})`}
+                  </button>
+                  <button onClick={()=>setConfirmClear(true)}
+                    style={{padding:"5px 10px",fontSize:11,borderRadius:5,cursor:"pointer",background:C.surface2,color:C.muted,border:`1px solid ${C.border}`}}>
+                    🗑 Tümünü Temizle
+                  </button>
+                </>
           )}
         </div>
       </div>
@@ -3294,6 +3345,20 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
         </div>
       )}
 
+      {/* Bulk AI progress */}
+      {bulkRunning&&(
+        <div style={{background:C.surface,border:`1px solid #7c3aed44`,borderRadius:8,padding:"10px 14px",marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+            <span style={{fontSize:11,fontWeight:600,color:"#a78bfa"}}>🤖 Toplu AI Analizi</span>
+            <span style={{fontSize:11,color:C.muted}}>{bulkProgress.done}/{bulkProgress.total}</span>
+            <span style={{fontSize:10,color:C.muted3,fontFamily:"var(--mono)"}}>{bulkProgress.current}</span>
+          </div>
+          <div style={{height:4,background:C.surface2,borderRadius:2,overflow:"hidden"}}>
+            <div style={{width:`${bulkProgress.total>0?bulkProgress.done/bulkProgress.total*100:0}%`,height:"100%",background:"#7c3aed",borderRadius:2,transition:"width .3s"}}/>
+          </div>
+        </div>
+      )}
+
       {filtered.length===0?(
         <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"60px 40px",textAlign:"center"}}>
           <div style={{fontSize:40,marginBottom:12}}>⭐</div>
@@ -3306,11 +3371,17 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
               <thead>
                 <tr style={{background:C.surface2,borderBottom:`1px solid ${C.border}`}}>
+                  <th style={{padding:"8px 6px",width:30}}>
+                    <input type="checkbox" checked={selected.size===filtered.length && filtered.length>0}
+                      onChange={toggleAll} style={{cursor:"pointer"}}/>
+                  </th>
                   {[
                     {k:"isbn",l:"ISBN"},{k:"source",l:"Kaynak"},{k:"source_condition",l:"Cond"},
                     {k:"buy_price",l:"Alım $"},{k:"amazon_sell_price",l:"Amazon $"},
                     {k:"profit",l:"Kar $"},{k:"roi_pct",l:"ROI %"},{k:"roi_tier",l:"Tier"},
-                    {k:"confidence",l:"Güven"},{k:"ev_score",l:"EV/mo"},{k:"addedAt",l:"Eklenme"},
+                    {k:"confidence",l:"Güven"},{k:"ev_score",l:"EV/mo"},
+                    {k:"_ai",l:"AI Sonuç"},
+                    {k:"addedAt",l:"Eklenme"},
                     {k:"_actions",l:"Aksiyon"},
                   ].map(({k,l})=>(
                     <th key={k} style={{padding:"8px 10px",textAlign:"left",color:C.muted,fontWeight:600,whiteSpace:"nowrap"}}>
@@ -3324,6 +3395,9 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                   const inWL = inWatchlist(r.isbn);
                   return (
                     <tr key={i} style={{borderBottom:`1px solid ${C.border}`,background:inWL?`${C.green}08`:i%2===0?C.surface:C.surface2,transition:"background .1s"}}>
+                      <td style={{padding:"7px 6px",textAlign:"center"}}>
+                        <input type="checkbox" checked={selected.has(r.isbn)} onChange={()=>toggleSelect(r.isbn)} style={{cursor:"pointer"}}/>
+                      </td>
                       <td style={{padding:"7px 10px",color:C.text,fontFamily:"monospace"}}>
                         <div style={{display:"flex",alignItems:"center",gap:6}}>
                           {r.isbn}
@@ -3361,6 +3435,24 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                       </td>
                       <td style={{padding:"7px 10px",textAlign:"center",color:C.green,fontWeight:600,fontFamily:"var(--mono)"}}>
                         {r.ev_score!=null?`$${r.ev_score}`:"—"}
+                      </td>
+                      <td style={{padding:"7px 10px",textAlign:"center"}}>
+                        {(()=>{
+                          const ai = aiResults[r.isbn];
+                          if (!ai) return <span style={{fontSize:9,color:C.muted3}}>—</span>;
+                          if (ai.error) return <span style={{fontSize:9,color:"#ef4444"}}>❌</span>;
+                          const vs = verdictStyle(ai.verdict);
+                          return (
+                            <button onClick={()=>setAiModal({isbn:r.isbn,status:"done",data:ai,error:null})}
+                              title={`${ai.verdict}: ${(ai.summary||"").slice(0,60)}`}
+                              style={{padding:"2px 8px",borderRadius:4,fontSize:9,fontWeight:700,
+                                background:vs.bg,color:vs.color,border:`1px solid ${vs.color}33`,
+                                cursor:"pointer"}}>
+                              {vs.label}{ai.verdict_override?" ⚡":""}
+                              {ai.confidence!=null&&<span style={{marginLeft:3,opacity:0.7}}>{ai.confidence}%</span>}
+                            </button>
+                          );
+                        })()}
                       </td>
                       <td style={{padding:"7px 10px",color:C.muted,fontSize:10}}>
                         {r.addedAt?new Date(r.addedAt).toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—"}
