@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     groq_api_key:        str | None = Field(default=None, validation_alias="GROQ_API_KEY")
     cerebras_api_key:    str | None = Field(default=None, validation_alias="CEREBRAS_API_KEY")
     openrouter_api_key:  str | None = Field(default=None, validation_alias="OPENROUTER_API_KEY")
-    perplexity_api_key:  str | None = Field(default=None, validation_alias="PERPLEXITY_API_KEY")
+    # perplexity_api_key kaldırıldı — ay başı $5 kredi, kart riski, değmez
     # sambanova_api_key kaldırıldı — sadece $5 expiring credit, gerçek free tier değil
 
     # Make offer ceiling multiplier

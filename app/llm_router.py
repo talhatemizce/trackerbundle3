@@ -119,16 +119,7 @@ PROVIDERS: List[ProviderDef] = [
         priority=6,
         extra_headers={"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"},
     ),
-    # Perplexity Sonar — web araması için ($5 kredi = ~5k istek)
-    ProviderDef(
-        name="perplexity",
-        base_url="https://api.perplexity.ai",
-        model="sonar",
-        tasks=["web_search"],
-        rpm=50, rpd=None,
-        auth_env_key="perplexity_api_key",
-        priority=7,
-    ),
+    # Perplexity kaldırıldı — free tier yok, Pro aboneliği ($20/ay) şart
     # SambaNova kaldırıldı — $5 expiring credit, gerçek free tier değil
 ]
 

@@ -3634,7 +3634,7 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
   );
 }
 
-const TABS = ["dashboard","watchlist","candidates","pricing","alerts","discover","history"];
+const TABS = ["dashboard","watchlist","candidates","pricing","alerts","discover","history","settings"];
 
 export default function App() {
   return <ErrorBoundary><AppReal /></ErrorBoundary>;
@@ -3922,7 +3922,7 @@ function AppReal() {
         <div style={{display:"flex"}}>
           {TABS.map(t=>{
             const isScanning = t==="discover" && scanJob?.scanning;
-            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",candidates:`⭐ Adaylar${candidates.length>0?" ("+candidates.length+")":""}`,discover: isScanning ? `⏳ ${scanJob?.progress?.done||0}/${scanJob?.progress?.total||0}` : "🔍 Discover",history:"📋 Geçmiş"}[t]||t;
+            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",candidates:`⭐ Adaylar${candidates.length>0?" ("+candidates.length+")":""}`,discover: isScanning ? `⏳ ${scanJob?.progress?.done||0}/${scanJob?.progress?.total||0}` : "🔍 Discover",history:"📋 Geçmiş",settings:"⚙️ Ayarlar"}[t]||t;
             return <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:12,color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400,letterSpacing:"0.01em"}}>{label}</button>;
           })}
         </div>
@@ -4322,6 +4322,7 @@ function AppReal() {
             {tab==="discover"&&<DiscoverTab C={C} theme={theme} scanJob={scanJob} setScanJob={setScanJob} scanPollRef={scanPollRef} candidates={candidates} addCandidate={addCandidate}/>}
             {tab==="candidates"&&<CandidatesTab C={C} candidates={candidates} removeCandidate={removeCandidate} saveCandidates={saveCandidates} push={push} isbns={isbns} addIsbn={async(isbn,secs)=>{const res=await req("/isbns",{method:"POST",body:JSON.stringify({isbn})});if(res.added){setIsbns(p=>[...p,isbn]);if(secs){await req(`/rules/${isbn}/interval`,{method:"PUT",body:JSON.stringify({interval_seconds:secs})});}push(isbn+" watchlist'e eklendi","success");}else{push("Zaten watchlist'te","info");}}}/>}
             {tab==="history"&&<ScanHistoryTab C={C} addCandidate={addCandidate} candidates={candidates}/>}
+            {tab==="settings"&&<SettingsTab C={C}/>}
           </>
         )}
       </div>
