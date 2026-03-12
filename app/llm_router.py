@@ -53,10 +53,21 @@ PROVIDERS: List[ProviderDef] = [
         tasks=["vision", "web_search", "reasoning"],
         rpm=15, rpd=1500,
         auth_env_key="gemini_api_key",
-        priority=10,
+        priority=9,
         supports_vision=True,
     ),
-    # Reasoning öncelikli — Groq (hızlı, 14.4k/gün)
+    # Groq — Llama 4 Scout (vision + reasoning, ücretsiz)
+    ProviderDef(
+        name="groq_vision",
+        base_url="https://api.groq.com/openai/v1",
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        tasks=["vision", "reasoning"],
+        rpm=30, rpd=14400,
+        auth_env_key="groq_api_key",
+        priority=1,
+        supports_vision=True,
+    ),
+    # Groq — Llama 3.3 70B (reasoning, hızlı, 14.4k/gün)
     ProviderDef(
         name="groq",
         base_url="https://api.groq.com/openai/v1",
@@ -64,7 +75,17 @@ PROVIDERS: List[ProviderDef] = [
         tasks=["reasoning"],
         rpm=30, rpd=14400,
         auth_env_key="groq_api_key",
-        priority=1,
+        priority=2,
+    ),
+    # Groq — GPT OSS 120B (daha büyük, reasoning fallback)
+    ProviderDef(
+        name="groq_120b",
+        base_url="https://api.groq.com/openai/v1",
+        model="moonshotai/kimi-k2-instruct",
+        tasks=["reasoning"],
+        rpm=30, rpd=14400,
+        auth_env_key="groq_api_key",
+        priority=3,
     ),
     # Cerebras (sınırsız, 30 RPM)
     ProviderDef(
@@ -74,7 +95,7 @@ PROVIDERS: List[ProviderDef] = [
         tasks=["reasoning"],
         rpm=30, rpd=None,
         auth_env_key="cerebras_api_key",
-        priority=2,
+        priority=4,
     ),
     # OpenRouter DeepSeek-V3:free (sınırsız ücretsiz)
     ProviderDef(
@@ -84,7 +105,7 @@ PROVIDERS: List[ProviderDef] = [
         tasks=["reasoning", "web_search"],
         rpm=20, rpd=None,
         auth_env_key="openrouter_api_key",
-        priority=3,
+        priority=5,
         extra_headers={"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"},
     ),
     # OpenRouter Qwen3-235B:free (en akıllı ücretsiz)
@@ -95,7 +116,7 @@ PROVIDERS: List[ProviderDef] = [
         tasks=["reasoning"],
         rpm=20, rpd=None,
         auth_env_key="openrouter_api_key",
-        priority=4,
+        priority=6,
         extra_headers={"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"},
     ),
     # Perplexity Sonar — web araması için ($5 kredi = ~5k istek)
@@ -106,7 +127,7 @@ PROVIDERS: List[ProviderDef] = [
         tasks=["web_search"],
         rpm=50, rpd=None,
         auth_env_key="perplexity_api_key",
-        priority=5,
+        priority=7,
     ),
     # SambaNova — DeepSeek V3 (1000/gün ücretsiz)
     ProviderDef(
@@ -116,7 +137,7 @@ PROVIDERS: List[ProviderDef] = [
         tasks=["reasoning"],
         rpm=20, rpd=1000,
         auth_env_key="sambanova_api_key",
-        priority=6,
+        priority=8,
     ),
 ]
 
@@ -192,8 +213,26 @@ async def _call_openai_compat(
     messages: List[Dict[str, Any]],
     max_tokens: int = 1200,
     temperature: float = 0.1,
+    image_b64: Optional[str] = None,
 ) -> str:
-    """OpenAI-uyumlu /chat/completions endpoint'i çağır, ham text döndür."""
+    """OpenAI-uyumlu /chat/completions endpoint'i çağır, ham text döndür.
+    image_b64 varsa son user mesajına vision content ekler (Llama 4 Scout destekler).
+    """
+    # Vision: son user mesajını multimodal content'e çevir
+    if image_b64 and messages:
+        msgs = list(messages)
+        last = msgs[-1]
+        if last.get("role") == "user":
+            text_content = last.get("content", "")
+            msgs[-1] = {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                    {"type": "text", "text": text_content},
+                ],
+            }
+        messages = msgs
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -323,7 +362,9 @@ async def route(
                     {"role": "system", "content": system_prompt},
                     {"role": "user",   "content": user_prompt},
                 ]
-                text = await _call_openai_compat(defn, api_key, messages, max_tokens=max_tokens)
+                # Vision-capable non-Gemini providers (Llama 4 Scout on Groq)
+                img = image_b64 if (task == "vision" and defn.supports_vision) else None
+                text = await _call_openai_compat(defn, api_key, messages, max_tokens=max_tokens, image_b64=img)
 
             state.record_success()
             return {"text": text, "provider": defn.name, "model": defn.model}
