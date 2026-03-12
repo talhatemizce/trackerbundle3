@@ -171,8 +171,15 @@ class ProviderState:
             self.backoff_until = time.time() + min(30 * self.consecutive_errors, 300)
 
 
-_states: Dict[str, ProviderState] = {p.name: ProviderState() for p in PROVIDERS}
+_states: Dict[str, ProviderState] = {}
 _state_lock = asyncio.Lock()
+
+
+def _get_state(name: str) -> ProviderState:
+    """Lazy state init — provider eklense bile çalışır."""
+    if name not in _states:
+        _states[name] = ProviderState()
+    return _states[name]
 
 
 # ─── API key erişimi ──────────────────────────────────────────────────────────
@@ -320,7 +327,7 @@ async def route(
     last_error: Optional[Exception] = None
 
     for defn in candidates:
-        state = _states[defn.name]
+        state = _get_state(defn.name)
         if not state.is_available(defn):
             logger.info("router: %s skip (kota/backoff)", defn.name)
             continue
@@ -375,7 +382,7 @@ def get_status() -> Dict[str, Any]:
     """Tüm providerların kota durumunu döndür (/llm/status endpoint için)."""
     result = {}
     for defn in PROVIDERS:
-        state = _states[defn.name]
+        state = _get_state(defn.name)
         state.reset_if_needed()
         api_key = _get_api_key(defn)
         result[defn.name] = {

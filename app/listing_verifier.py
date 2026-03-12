@@ -182,7 +182,9 @@ async def _verify_abebooks_price(
     try:
         from app.bookfinder_client import fetch_bookfinder
 
-        result = await fetch_bookfinder(isbn, condition="all", force=True)
+        # force=False → cache kullan (bulk verify'da scraper aşırı yüklenmesin)
+        # Cache TTL bookfinder_client'ta 2 saat — yeterli
+        result = await fetch_bookfinder(isbn, condition="all", force=False)
         if not result.get("ok"):
             return {"status": "ERROR", "reason": "bookfinder_failed"}
 
@@ -482,7 +484,14 @@ async def verify_batch(
 
     async def _run(item: Dict[str, Any]) -> Dict[str, Any]:
         async with sem:
-            result = await verify_listing(item["candidate"], item["isbn"])
+            try:
+                result = await asyncio.wait_for(
+                    verify_listing(item["candidate"], item["isbn"]),
+                    timeout=45.0,  # tek item max 45s (vision dahil)
+                )
+            except asyncio.TimeoutError:
+                result = {"status": "ERROR", "reason": "timeout_45s",
+                          "summary": "⏱ 45 saniye içinde tamamlanamadı"}
             result["_index"] = item.get("_index", 0)
             return result
 

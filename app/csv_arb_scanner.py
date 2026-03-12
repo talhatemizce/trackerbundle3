@@ -294,6 +294,11 @@ async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
 
 async def _get_ebay_offers(isbn: str, filters: "ScanFilters | None" = None) -> List[Dict]:
     """eBay'den ISBN için aktif listingleri çek (Browse API). ISBN doğrulaması + policy uygulaması."""
+    # isbn_info try dışında tanımla — scoping bug'ını önler
+    from app.isbn_utils import parse_isbn as _pi, IsbnValidationReason as _ivr
+    isbn_info = _pi(isbn)
+    match_policy = (filters.isbn_match_policy if filters else "balanced")
+    invalid_policy = (filters.invalid_isbn_policy if filters else "best_effort")
     try:
         from app.ebay_client import browse_search_isbn, item_total_price, normalize_condition
         from app.core.config import get_settings
@@ -302,13 +307,7 @@ async def _get_ebay_offers(isbn: str, filters: "ScanFilters | None" = None) -> L
         calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else 3.99
 
         async with httpx.AsyncClient(timeout=20) as client:
-            from app.isbn_utils import parse_isbn, IsbnValidationReason
             from app.ebay_client import hybrid_verify_items
-
-            # ── ISBN doğrulama ────────────────────────────────────────────────
-            isbn_info = parse_isbn(isbn)
-            match_policy = (filters.isbn_match_policy if filters else "balanced")
-            invalid_policy = (filters.invalid_isbn_policy if filters else "best_effort")
 
             if not isbn_info.valid:
                 logger.info(

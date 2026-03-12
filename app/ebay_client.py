@@ -753,9 +753,12 @@ async def browse_search_isbn(
       Top 20 ucuz item'a uygulanır; ötesi DROP edilir.
     """
     token = await get_app_token(client)
-    isbn_clean = isbn.replace("-", "").replace(" ", "").upper().strip()
-    variants = isbn_variants(isbn_clean)
-    isbn13 = isbn_clean if len(isbn_clean) == 13 else isbn10_to_isbn13(isbn_clean)
+    # Use validated isbn_utils for correct checksum handling
+    from app.isbn_utils import parse_isbn as _parse_isbn
+    _isbn_info = _parse_isbn(isbn)
+    isbn_clean = _isbn_info.normalized or isbn.replace("-","").replace(" ","").upper().strip()
+    variants = _isbn_info.variants() if _isbn_info.valid else [isbn_clean]
+    isbn13 = _isbn_info.isbn13 if _isbn_info.valid else (isbn_clean if len(isbn_clean)==13 else isbn10_to_isbn13(isbn_clean))
 
     # ── Adım 1: GTIN search (en kesin) ────────────────────────────────────────
     combined: List[Dict[str, Any]] = []
