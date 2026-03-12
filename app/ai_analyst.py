@@ -137,7 +137,7 @@ async def _check_edition(isbn: str, client: httpx.AsyncClient) -> Dict[str, Any]
                     if 1900 < y < 2030:
                         year = y
                         break
-                except:
+                except (ValueError, TypeError):
                     pass
             return {"edition_year": year, "has_newer_edition": None,
                     "google_title": book.get("title",""), "source": "open_library"}
@@ -324,7 +324,10 @@ def _apply_verdict_override(result: dict, candidate: dict, cond_score: int) -> d
 # Aynı ISBN için tekrar Gemini çağırmaz — günlük kota 10-15 sorgu ile dolar.
 import time as _time
 _ai_cache: Dict[str, Dict[str, Any]] = {}
+_ai_cache_lock = asyncio.Lock()
 _AI_CACHE_TTL = 3600 * 6  # 6 saat
+# In-flight set: aynı ISBN için paralel duplicate çağrı önle
+_ai_inflight: set = set()
 
 
 async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
@@ -392,8 +395,9 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
         "_cached_at": _time.time(),
     })
 
-    # Cache'e kaydet
-    _ai_cache[cache_key] = gemini_result
+    # Cache'e kaydet (lock ile race condition önle)
+    async with _ai_cache_lock:
+        _ai_cache[cache_key] = gemini_result
     return gemini_result
 
 
@@ -546,7 +550,7 @@ def _parse_json(text: str) -> Dict[str, Any]:
     if s >= 0 and e > s:
         try:
             result = json.loads(t[s:e])
-        except:
+        except (json.JSONDecodeError, ValueError):
             pass
     if result is None:
         result = {"verdict": "UNKNOWN", "summary": t[:300], "parse_error": True}

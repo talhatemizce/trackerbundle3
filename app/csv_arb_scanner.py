@@ -362,7 +362,7 @@ async def _get_ebay_offers(isbn: str, filters: "ScanFilters | None" = None) -> L
             fp = seller.get("feedbackPercentage") if isinstance(seller, dict) else None
             if fp is not None:
                 try: feedback_pct = float(fp)
-                except: pass
+                except Exception: pass
 
             # match_quality from hybrid verify (may be set on item)
             mq = it.get("_match_quality", "UNVERIFIED_KEYWORD")
@@ -471,6 +471,8 @@ async def _scan_one(
     isbn_amazon_prices: Dict[str, float] = {},
 ) -> List[ArbResult]:
     """Tek ISBN için tüm kaynakları tara, ArbResult listesi döndür."""
+    isbn_buy_prices = isbn_buy_prices or {}
+    isbn_amazon_prices = isbn_amazon_prices or {}
     asin = _isbn13_to_asin(isbn)
     if not asin:
         r = ArbResult(isbn=isbn, asin=None, source="", source_condition="",
@@ -643,6 +645,8 @@ async def scan_isbn_list(
     ISBN listesini paralel tara (max `concurrency` aynı anda).
     Returns {accepted, rejected, stats, duration_s}
     """
+    isbn_buy_prices = isbn_buy_prices or {}
+    isbn_amazon_prices = isbn_amazon_prices or {}
     t0 = time.time()
     sem = asyncio.Semaphore(concurrency)
     done_count = 0

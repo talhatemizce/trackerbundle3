@@ -1140,11 +1140,30 @@ class AiAnalyzeRequest(BaseModel):
     isbn: str
     candidate: Dict[str, Any] = {}
 
+# ── Simple in-process rate limiter ──────────────────────────────────────────
+import time as _time
+_ai_requests: list = []          # timestamps of recent /ai/analyze calls
+_AI_RATE_WINDOW = 60             # seconds
+_AI_RATE_MAX = 20                # max calls per window
+
+def _ai_rate_check() -> bool:
+    """True = allowed, False = rate limited."""
+    now = _time.time()
+    # Evict old
+    while _ai_requests and _ai_requests[0] < now - _AI_RATE_WINDOW:
+        _ai_requests.pop(0)
+    if len(_ai_requests) >= _AI_RATE_MAX:
+        return False
+    _ai_requests.append(now)
+    return True
+
 @app.post("/ai/analyze")
 async def ai_analyze(req: AiAnalyzeRequest):
+    if not _ai_rate_check():
+        raise HTTPException(status_code=429, detail=f"Rate limit: max {_AI_RATE_MAX} AI calls per {_AI_RATE_WINDOW}s")
     from app.ai_analyst import analyze_isbn
     try:
-        result = await analyze_isbn(req.isbn, req.candidate)
+        result = await asyncio.wait_for(analyze_isbn(req.isbn, req.candidate), timeout=90.0)
         return result
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
