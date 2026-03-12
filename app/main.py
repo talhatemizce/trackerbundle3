@@ -1153,6 +1153,68 @@ async def ai_analyze(req: AiAnalyzeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─── LLM Status ──────────────────────────────────────────────────────────────
+
+@app.get("/llm/status")
+async def llm_status():
+    """Tüm LLM providerların kota ve durum bilgisi."""
+    from app.llm_router import get_status
+    return get_status()
+
+
+# ─── Listing Verify endpoints ─────────────────────────────────────────────────
+
+class VerifyRequest(BaseModel):
+    isbn: str
+    candidate: Dict[str, Any]
+
+
+class VerifyBatchRequest(BaseModel):
+    items: List[Dict[str, Any]]  # [{"isbn": str, "candidate": {...}, "_index": int}, ...]
+    concurrency: int = Field(default=4, ge=1, le=8)
+
+
+@app.post("/verify/listing")
+async def verify_listing_endpoint(req: VerifyRequest):
+    """
+    Tek bir arbitraj ilanını doğrula (AI yok, saf API).
+    eBay item hâlâ var mı? Fiyat değişti mi? ISBN uyuşuyor mu?
+    """
+    from app.listing_verifier import verify_listing
+    try:
+        result = await verify_listing(req.candidate, req.isbn)
+        return result
+    except Exception as e:
+        logger.error("verify_listing error isbn=%s: %s", req.isbn, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/verify/batch")
+async def verify_batch_endpoint(req: VerifyBatchRequest):
+    """
+    Birden fazla ilanı toplu doğrula (paralel, AI yok).
+    items: [{"isbn": str, "candidate": {...}, "_index": int}, ...]
+    """
+    from app.listing_verifier import verify_batch
+    if len(req.items) > 50:
+        raise HTTPException(status_code=422, detail="Max 50 item per batch")
+    try:
+        results = await verify_batch(req.items, concurrency=req.concurrency)
+        summary = {
+            "verified": sum(1 for r in results if r.get("status") == "VERIFIED"),
+            "gone": sum(1 for r in results if r.get("status") == "GONE"),
+            "price_up": sum(1 for r in results if r.get("status") == "PRICE_UP"),
+            "price_down": sum(1 for r in results if r.get("status") == "PRICE_DOWN"),
+            "mismatch": sum(1 for r in results if r.get("status") == "MISMATCH"),
+            "error": sum(1 for r in results if r.get("status") == "ERROR"),
+            "total": len(results),
+        }
+        return {"results": results, "summary": summary}
+    except Exception as e:
+        logger.error("verify_batch error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---- Static files: serve React panel build (production) ----
 from pathlib import Path as _Path
 from fastapi.staticfiles import StaticFiles

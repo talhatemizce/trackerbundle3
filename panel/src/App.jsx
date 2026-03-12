@@ -1036,6 +1036,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   const [isbnMatchPolicy, setIsbnMatchPolicy] = useState("balanced");
   const [invalidIsbnPolicy, setInvalidIsbnPolicy] = useState("best_effort");
   const [verifiedOnlyFilter, setVerifiedOnlyFilter] = useState(false);
+  const [verifyResults, setVerifyResults] = useState({}); // {rowIndex: {status, summary, ...}}
+  const [verifying, setVerifying] = useState(new Set()); // indices being verified
+  const [bulkVerifying, setBulkVerifying] = useState(false);
   const [minRoi, setMinRoi] = useState("");
   const [maxRoi, setMaxRoi] = useState("");
   const [minProfit, setMinProfit] = useState("");
@@ -1298,6 +1301,56 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   };
 
   // ── Export CSV ───────────────────────────────────────────────────
+  // ─── Listing verify ────────────────────────────────────────────────────────
+  const verifyOne = async (rowIdx, row) => {
+    setVerifying(prev => new Set([...prev, rowIdx]));
+    try {
+      const res = await fetch("/verify/listing", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({isbn: row.isbn, candidate: row}),
+      });
+      const data = await res.json();
+      setVerifyResults(prev => ({...prev, [rowIdx]: data}));
+    } catch(e) {
+      setVerifyResults(prev => ({...prev, [rowIdx]: {status: "ERROR", summary: e.message}}));
+    } finally {
+      setVerifying(prev => { const s=new Set(prev); s.delete(rowIdx); return s; });
+    }
+  };
+
+  const verifySelected = async () => {
+    const rows = results?.accepted || [];
+    const toVerify = selectedRows.size > 0
+      ? [...selectedRows].map(i => ({_index: i, isbn: rows[i]?.isbn, candidate: rows[i]}))
+      : rows.slice(0, 20).map((r,i) => ({_index: i, isbn: r.isbn, candidate: r}));
+    if (!toVerify.length) return;
+    setBulkVerifying(true);
+    try {
+      const res = await fetch("/verify/batch", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({items: toVerify, concurrency: 4}),
+      });
+      const data = await res.json();
+      const newResults = {};
+      (data.results || []).forEach(r => { if(r._index != null) newResults[r._index] = r; });
+      setVerifyResults(prev => ({...prev, ...newResults}));
+    } catch(e) { console.error("Bulk verify error:", e); }
+    finally { setBulkVerifying(false); }
+  };
+
+  const verifyStatusColor = (status) => {
+    const m = {VERIFIED:"#22c55e", GONE:"#ef4444", PRICE_UP:"#f97316",
+                PRICE_DOWN:"#3b82f6", MISMATCH:"#ef4444", ERROR:"#6b7280"};
+    return m[status] || "#6b7280";
+  };
+
+  const verifyStatusEmoji = (status) => {
+    const m = {VERIFIED:"✅", GONE:"💀", PRICE_UP:"📈", PRICE_DOWN:"📉", MISMATCH:"⚠️", ERROR:"❓"};
+    return m[status] || "❓";
+  };
+
   const exportCsv = () => {
     if (!results) return;
     const rows = activeView === "accepted" ? results.accepted : results.rejected;
@@ -1606,6 +1659,31 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
               </div>
             )}
 
+            {/* Verify results summary */}
+            {Object.keys(verifyResults).length > 0 && (
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,
+                padding:"8px 14px",marginBottom:10,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,fontWeight:600,color:C.text}}>🔍 Doğrulama:</span>
+                {[
+                  {s:"VERIFIED",  e:"✅", col:"#22c55e"},
+                  {s:"GONE",      e:"💀", col:"#ef4444"},
+                  {s:"PRICE_UP",  e:"📈", col:"#f97316"},
+                  {s:"PRICE_DOWN",e:"📉", col:"#3b82f6"},
+                  {s:"MISMATCH",  e:"⚠️", col:"#ef4444"},
+                ].map(({s,e,col}) => {
+                  const n = Object.values(verifyResults).filter(r=>r.status===s).length;
+                  return n > 0 ? (
+                    <span key={s} style={{fontSize:11,color:col,fontWeight:600}}>{e} {n} {s}</span>
+                  ) : null;
+                })}
+                <button onClick={()=>setVerifyResults({})}
+                  style={{marginLeft:"auto",fontSize:10,padding:"2px 8px",borderRadius:4,
+                    background:C.surface2,color:C.muted,border:`1px solid ${C.border}`,cursor:"pointer"}}>
+                  Temizle
+                </button>
+              </div>
+            )}
+
             {/* View toggle + export */}
             <div style={{display:"flex", gap:8, marginBottom:12, alignItems:"center", flexWrap:"wrap"}}>
               {["accepted","rejected"].map(v => (
@@ -1631,6 +1709,17 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                     ⭐ {selectedRows.size} Adayı Ekle
                   </button>
                 )}
+                <div style={{width:1,height:20,background:C.border,margin:"0 4px"}}/>
+                <button
+                  onClick={verifySelected}
+                  disabled={bulkVerifying}
+                  style={{padding:"5px 10px",fontSize:10,borderRadius:5,cursor:"pointer",
+                    background: bulkVerifying?"#1e293b":"#0ea5e922",
+                    color: bulkVerifying?C.muted:"#0ea5e9",
+                    border:"1px solid #0ea5e955",fontWeight:600,
+                    opacity: bulkVerifying?0.7:1}}>
+                  {bulkVerifying ? "⏳ Doğrulanıyor..." : `🔍 ${selectedRows.size>0?selectedRows.size:"Tümünü"} Doğrula`}
+                </button>
               </>)}
               <button onClick={exportCsv}
                 style={{marginLeft:"auto", padding:"6px 12px", fontSize:11, borderRadius:6,
@@ -1650,7 +1739,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:11}}>
                     <thead>
                       <tr style={{background:C.surface2, borderBottom:`1px solid ${C.border}`}}>
-                        {[activeView==="accepted"?"☑":"","ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Kar $","ROI %","Tier",activeView==="accepted"?"Güven":"",activeView==="accepted"?"EV/mo":"",activeView==="accepted"?"Worst":"",activeView==="accepted"?"Linkler":"",activeView==="rejected"?"Sebep":"",activeView==="rejected"?"Aksiyon":""].filter(Boolean).map(h=>(
+                        {[activeView==="accepted"?"☑":"","ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Kar $","ROI %","Tier",activeView==="accepted"?"Güven":"",activeView==="accepted"?"EV/mo":"",activeView==="accepted"?"Worst":"",activeView==="accepted"?"Linkler":"",activeView==="accepted"?"Doğrula":"",activeView==="rejected"?"Sebep":"",activeView==="rejected"?"Aksiyon":""].filter(Boolean).map(h=>(
                           <th key={h} style={{padding:"8px 10px", textAlign:"left", color:C.muted, fontWeight:600, whiteSpace:"nowrap"}}>{h}</th>
                         ))}
                       </tr>
@@ -1681,6 +1770,30 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                               <span title="Keyword araması — doğrulanmadı" style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#6b728022",color:"#6b7280",fontFamily:"sans-serif"}}>KW</span>
                             )}
                           </td>
+                          {/* Verify cell — sadece accepted view'da */}
+                          {activeView==="accepted"&&(
+                            <td style={{padding:"7px 8px", textAlign:"center", minWidth:72}}>
+                              {verifying.has(i) ? (
+                                <span style={{fontSize:10,color:C.muted}}>⏳</span>
+                              ) : verifyResults[i] ? (
+                                <span
+                                  title={verifyResults[i].summary}
+                                  style={{fontSize:10,fontWeight:700,
+                                    color: verifyStatusColor(verifyResults[i].status),
+                                    cursor:"help"}}>
+                                  {verifyStatusEmoji(verifyResults[i].status)} {verifyResults[i].status}
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={()=>verifyOne(i, r)}
+                                  title="İlanı API ile doğrula (AI yok)"
+                                  style={{padding:"2px 7px",fontSize:9,borderRadius:4,cursor:"pointer",
+                                    background:"#0ea5e911",color:"#0ea5e9",border:"1px solid #0ea5e944"}}>
+                                  🔍
+                                </button>
+                              )}
+                            </td>
+                          )}
                           <td style={{padding:"7px 10px", color:C.muted, fontFamily:"monospace", fontSize:10}}>{r.asin||"—"}</td>
                           <td style={{padding:"7px 10px", color:C.accent}}>{r.source}</td>
                           <td style={{padding:"7px 10px"}}>

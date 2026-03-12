@@ -48,8 +48,13 @@ class Settings(BaseSettings):
     default_new_limit: float = Field(default=50.0, validation_alias="DEFAULT_NEW_LIMIT")
     default_good_limit: float = Field(default=30.0, validation_alias="DEFAULT_GOOD_LIMIT")
 
-    # AI Analysis (Gemini)
-    gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
+    # AI Analysis — Multi-LLM
+    gemini_api_key:      str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
+    groq_api_key:        str | None = Field(default=None, validation_alias="GROQ_API_KEY")
+    cerebras_api_key:    str | None = Field(default=None, validation_alias="CEREBRAS_API_KEY")
+    openrouter_api_key:  str | None = Field(default=None, validation_alias="OPENROUTER_API_KEY")
+    perplexity_api_key:  str | None = Field(default=None, validation_alias="PERPLEXITY_API_KEY")
+    sambanova_api_key:   str | None = Field(default=None, validation_alias="SAMBANOVA_API_KEY")
 
     # Make offer ceiling multiplier
     make_offer_multiplier: float = Field(default=1.30, validation_alias="MAKE_OFFER_MULTIPLIER")

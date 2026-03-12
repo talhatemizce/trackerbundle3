@@ -329,8 +329,12 @@ _AI_CACHE_TTL = 3600 * 6  # 6 saat
 
 async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
     s = get_settings()
-    if not s.gemini_api_key:
-        raise RuntimeError("GEMINI_API_KEY ayarlanmamış — /etc/trackerbundle.env → GEMINI_API_KEY=AIza...")
+    # Router birden fazla provider dener — en az birinin key'i olmalı
+    from app.llm_router import get_status as _llm_status
+    _status = _llm_status()
+    _configured = [name for name, st in _status.items() if st.get("configured")]
+    if not _configured:
+        raise RuntimeError("Hiçbir LLM API key'i yapılandırılmamış — GEMINI_API_KEY, GROQ_API_KEY veya OPENROUTER_API_KEY gerekli")
 
     # ── Cache kontrolü ────────────────────────────────────────
     cache_key = isbn.replace("-", "").replace(" ", "").strip()
@@ -357,7 +361,7 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
 
     # AI: Gemini Vision + Google Search
     prompt = _build_prompt(isbn, isbn13, candidate, edition_data, cond_analysis)
-    gemini_result = await _call_gemini(s.gemini_api_key, prompt, image_b64)
+    gemini_result = await _call_llm(prompt, image_b64)
 
     # Deterministic ayarlamalar (verdict değiştirmeden confidence/risk)
     gemini_result = _apply_deterministic_adjustments(gemini_result, candidate, edition_data, cond_analysis)
@@ -393,41 +397,45 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
     return gemini_result
 
 
-async def _call_gemini(key: str, prompt: str, image_b64: Optional[str]) -> Dict[str, Any]:
-    url = f"{GEMINI_API_BASE}/{MODEL}:generateContent?key={key}"
-    parts = []
-    if image_b64:
-        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64}})
-    parts.append({"text": prompt})
+async def _call_llm(prompt: str, image_b64: Optional[str]) -> Dict[str, Any]:
+    """
+    Multi-LLM router ile analiz:
+    - image_b64 varsa → vision task (Gemini)
+    - image yoksa → reasoning task (Groq > Cerebras > OpenRouter > Gemini)
+    429 / kota dolunca otomatik sonraki provider'a geçer.
+    """
+    from app.llm_router import route as llm_route
 
-    payload = {
-        "contents": [{"role": "user", "parts": parts}],
-        # Google Search tool KALDIRILDI — her search ayrı istek sayılıyor,
-        # 10 analizde 100+ istek = kota doldu. Gerekli veri prompt'ta.
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1200},
-        "system_instruction": {"parts": [{"text": _system_prompt(bool(image_b64))}]},
-    }
+    sys_prompt = _system_prompt(bool(image_b64))
+    task = "vision" if image_b64 else "reasoning"
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
-        if resp.status_code == 429:
-            logger.warning("Gemini API 429 (kota doldu) — rule-based fallback kullanılacak")
-            return {
-                "verdict": "UNKNOWN",
-                "summary": "Gemini API günlük kotası doldu. Sayısal override sistemi karar verecek.",
-                "price_trend": "UNKNOWN",
-                "price_trend_reason": "Gemini kotası doldu — veri alınamadı",
-                "risk_level": "MEDIUM",  # MEDIUM (HIGH değil — override'ı engellemesin)
-                "risk_factors": ["Gemini API kotası doldu — AI analizi yapılamadı"],
-                "recommendation": "",
-                "confidence": 30,
-                "gemini_quota_exceeded": True,
-            }
-        if resp.status_code != 200:
-            raise RuntimeError(f"Gemini API {resp.status_code}: {resp.text[:200]}")
+    try:
+        result = await llm_route(
+            task=task,
+            system_prompt=sys_prompt,
+            user_prompt=prompt,
+            image_b64=image_b64,
+            max_tokens=1200,
+        )
+        text = result["text"]
+        parsed = _parse_json(text)
+        parsed["_provider"] = result.get("provider", "unknown")
+        parsed["_model"] = result.get("model", "unknown")
+        logger.info("AI analiz tamamlandı — provider=%s model=%s", result.get("provider"), result.get("model"))
+        return parsed
 
-    text = _extract_text(resp.json())
-    return _parse_json(text)
+    except Exception as e:
+        logger.error("LLM router tamamen başarısız: %s", e)
+        return {
+            "verdict": "UNKNOWN",
+            "summary": f"Tüm LLM providerlar başarısız: {str(e)[:120]}",
+            "price_trend": "UNKNOWN",
+            "price_trend_reason": "LLM erişilemiyor",
+            "risk_level": "MEDIUM",
+            "risks": ["Tüm LLM kotaları doldu veya yapılandırılmamış"],
+            "confidence": 20,
+            "all_providers_failed": True,
+        }
 
 
 def _system_prompt(has_image: bool) -> str:
