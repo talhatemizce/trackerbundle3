@@ -129,16 +129,7 @@ PROVIDERS: List[ProviderDef] = [
         auth_env_key="perplexity_api_key",
         priority=7,
     ),
-    # SambaNova — DeepSeek V3 (1000/gün ücretsiz)
-    ProviderDef(
-        name="sambanova_deepseek",
-        base_url="https://api.sambanova.ai/v1",
-        model="DeepSeek-V3-0324",
-        tasks=["reasoning"],
-        rpm=20, rpd=1000,
-        auth_env_key="sambanova_api_key",
-        priority=8,
-    ),
+    # SambaNova kaldırıldı — $5 expiring credit, gerçek free tier değil
 ]
 
 
