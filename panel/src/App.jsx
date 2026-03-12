@@ -1341,14 +1341,37 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   };
 
   const verifyStatusColor = (status) => {
-    const m = {VERIFIED:"#22c55e", GONE:"#ef4444", PRICE_UP:"#f97316",
+    const m = {VERIFIED:"#22c55e", VERIFIED_STOCK_PHOTO:"#f97316",
+                GONE:"#ef4444", PRICE_UP:"#f97316",
                 PRICE_DOWN:"#3b82f6", MISMATCH:"#ef4444", ERROR:"#6b7280"};
     return m[status] || "#6b7280";
   };
 
   const verifyStatusEmoji = (status) => {
-    const m = {VERIFIED:"✅", GONE:"💀", PRICE_UP:"📈", PRICE_DOWN:"📉", MISMATCH:"⚠️", ERROR:"❓"};
+    const m = {VERIFIED:"✅", VERIFIED_STOCK_PHOTO:"📷⚠️",
+                GONE:"💀", PRICE_UP:"📈", PRICE_DOWN:"📉", MISMATCH:"⚠️", ERROR:"❓"};
     return m[status] || "❓";
+  };
+
+  // Vision verdict badge
+  const visionBadge = (vr) => {
+    if (!vr || !vr.verdict || vr.verdict === "NO_IMAGE" || vr.status === "SKIP") return null;
+    const map = {
+      MATCH:        {col:"#22c55e", bg:"#22c55e18", icon:"📷✓", label:"Kapak eşleşiyor"},
+      MISMATCH:     {col:"#ef4444", bg:"#ef444418", icon:"📷✗", label:"FARKLI KİTAP"},
+      UNCERTAIN:    {col:"#f97316", bg:"#f9731618", icon:"📷?", label:"Belirsiz"},
+      STOCK_PHOTO:  {col:"#f97316", bg:"#f9731618", icon:"📷🏭", label:"Stock fotoğraf"},
+    };
+    const s = map[vr.verdict] || {col:"#6b7280", bg:"#6b728018", icon:"📷", label:vr.verdict};
+    return (
+      <span title={vr.notes || ""} style={{
+        display:"inline-block", marginLeft:4, fontSize:9, padding:"1px 4px",
+        borderRadius:3, background:s.bg, color:s.col, fontWeight:700, cursor:"help"
+      }}>
+        {s.icon} {s.label}
+        {vr.confidence ? ` ${vr.confidence}%` : ""}
+      </span>
+    );
   };
 
   const exportCsv = () => {
@@ -1665,11 +1688,12 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                 padding:"8px 14px",marginBottom:10,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
                 <span style={{fontSize:11,fontWeight:600,color:C.text}}>🔍 Doğrulama:</span>
                 {[
-                  {s:"VERIFIED",  e:"✅", col:"#22c55e"},
-                  {s:"GONE",      e:"💀", col:"#ef4444"},
-                  {s:"PRICE_UP",  e:"📈", col:"#f97316"},
-                  {s:"PRICE_DOWN",e:"📉", col:"#3b82f6"},
-                  {s:"MISMATCH",  e:"⚠️", col:"#ef4444"},
+                  {s:"VERIFIED",             e:"✅", col:"#22c55e"},
+                  {s:"VERIFIED_STOCK_PHOTO", e:"📷⚠️",col:"#f97316"},
+                  {s:"GONE",                 e:"💀", col:"#ef4444"},
+                  {s:"PRICE_UP",             e:"📈", col:"#f97316"},
+                  {s:"PRICE_DOWN",           e:"📉", col:"#3b82f6"},
+                  {s:"MISMATCH",             e:"⚠️", col:"#ef4444"},
                 ].map(({s,e,col}) => {
                   const n = Object.values(verifyResults).filter(r=>r.status===s).length;
                   return n > 0 ? (

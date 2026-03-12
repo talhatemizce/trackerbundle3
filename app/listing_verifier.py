@@ -231,6 +231,104 @@ async def _verify_abebooks_price(
         return {"status": "ERROR", "reason": str(e)[:100]}
 
 
+
+# ─── Görsel doğrulama (Gemini Vision) ────────────────────────────────────────
+
+async def _verify_image_vision(
+    image_url: str,
+    isbn: str,
+    expected_title: str,
+    candidate: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Gemini Vision ile kapak fotoğrafını doğrula.
+    Soru: Bu fotoğraf gerçekten beklenen kitabın kapağı mı?
+    Kota yoksa skip (vision task → sadece Gemini yapabilir).
+    """
+    if not image_url:
+        return {"status": "NO_IMAGE", "verdict": "NO_IMAGE", "notes": "Görsel URL yok"}
+
+    try:
+        from app.ai_analyst import _fetch_image_b64
+        from app.llm_router import route as llm_route
+
+        # Görüntüyü indir
+        async with httpx.AsyncClient(timeout=15) as client:
+            image_b64 = await _fetch_image_b64(image_url, client)
+
+        if not image_b64:
+            return {"status": "NO_IMAGE", "verdict": "NO_IMAGE", "notes": "Görsel indirilemedi"}
+
+        isbn13 = isbn
+        try:
+            from app.isbn_utils import to_isbn13
+            isbn13 = to_isbn13(isbn) or isbn
+        except Exception:
+            pass
+
+        sys_prompt = """You are a book cover verification expert.
+Your job: examine the image and determine if it matches the expected book.
+Reply ONLY with this JSON (no markdown):
+{
+  "verdict": "MATCH or MISMATCH or UNCERTAIN or STOCK_PHOTO",
+  "confidence": 0-100,
+  "notes": "1-2 sentences about what you see",
+  "title_visible": true/false,
+  "author_visible": true/false,
+  "is_stock_photo": true/false,
+  "condition_notes": "visible damage, wear, or condition observations"
+}
+
+MATCH: cover title/author clearly matches the expected book
+MISMATCH: clearly a different book
+UNCERTAIN: can't determine (blurry, wrong angle, partial view)
+STOCK_PHOTO: plain white background with no imperfections = publisher stock photo (used condition should show real item)
+"""
+
+        user_prompt = f"""Expected book:
+Title: {expected_title[:100]}
+ISBN: {isbn13}
+Declared condition: {candidate.get('source_condition', '?')}
+
+Does the eBay listing image show THIS specific book?"""
+
+        result = await llm_route(
+            task="vision",
+            system_prompt=sys_prompt,
+            user_prompt=user_prompt,
+            image_b64=image_b64,
+            max_tokens=400,
+        )
+
+        import json as _json
+        text = result["text"].strip()
+        # Strip markdown fences
+        for fence in ["```json", "```"]:
+            if fence in text:
+                parts = text.split(fence)
+                text = parts[1] if len(parts) >= 3 else text.replace(fence, "")
+        text = text.strip()
+        s, e = text.find("{"), text.rfind("}") + 1
+        if s >= 0 and e > s:
+            parsed = _json.loads(text[s:e])
+        else:
+            parsed = {"verdict": "UNCERTAIN", "notes": text[:200]}
+
+        parsed["provider"] = result.get("provider", "unknown")
+        parsed["status"] = parsed.get("verdict", "UNCERTAIN")
+
+        # Stock photo + used condition = risky
+        if parsed.get("is_stock_photo") and candidate.get("source_condition") == "used":
+            parsed["stock_photo_risk"] = True
+            parsed["notes"] = (parsed.get("notes") or "") + " ⚠️ Stock fotoğraf + used kondisyon: gerçek durum gizlenmiş olabilir."
+
+        return parsed
+
+    except Exception as e:
+        logger.warning("_verify_image_vision isbn=%s error: %s", isbn, e)
+        return {"status": "ERROR", "verdict": "UNCERTAIN", "notes": f"Vision hatası: {str(e)[:80]}"}
+
+
 # ─── Ana verify fonksiyonu ────────────────────────────────────────────────────
 
 async def verify_listing(
@@ -256,6 +354,8 @@ async def verify_listing(
     source = candidate.get("source", "")
     buy_price = float(candidate.get("buy_price") or 0)
     item_id = candidate.get("item_id") or candidate.get("ebay_item_id") or ""
+    image_url = candidate.get("image_url") or candidate.get("ebay_image_url") or ""
+    expected_title = candidate.get("title") or candidate.get("ebay_title") or ""
 
     async with httpx.AsyncClient(timeout=20) as client:
         tasks = []
@@ -274,14 +374,27 @@ async def verify_listing(
     ebay_result = results[0] if not isinstance(results[0], Exception) else {"status": "ERROR", "reason": str(results[0])[:100]}
     market_result = results[1] if not isinstance(results[1], Exception) else {"status": "ERROR", "reason": str(results[1])[:100]}
 
+    # Adım 3: Vision — eBay sonucu GONE/MISMATCH değilse kapağa bak
+    vision_result: Dict[str, Any] = {"status": "SKIP", "verdict": "NO_IMAGE", "notes": ""}
+    ebay_ok = ebay_result.get("status") not in ("GONE", "MISMATCH")
+    if image_url and ebay_ok:
+        try:
+            vision_result = await _verify_image_vision(image_url, isbn, expected_title, candidate)
+            logger.info("vision verify isbn=%s verdict=%s provider=%s",
+                        isbn, vision_result.get("verdict"), vision_result.get("provider"))
+        except Exception as ve:
+            logger.warning("vision verify failed isbn=%s: %s", isbn, ve)
+            vision_result = {"status": "ERROR", "verdict": "UNCERTAIN", "notes": str(ve)[:80]}
+
     # Nihai durum kararı
-    final_status = _decide_final_status(ebay_result, market_result, source)
-    summary = _build_summary(final_status, ebay_result, market_result, buy_price)
+    final_status = _decide_final_status(ebay_result, market_result, source, vision_result)
+    summary = _build_summary(final_status, ebay_result, market_result, buy_price, vision_result)
 
     return {
         "status": final_status,
         "ebay": ebay_result,
         "market": market_result,
+        "vision": vision_result,
         "summary": summary,
         "checked_at": time.time(),
         "isbn": isbn,
@@ -294,8 +407,13 @@ def _decide_final_status(
     ebay: Dict[str, Any],
     market: Dict[str, Any],
     source: str,
+    vision: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """eBay ve piyasa sonuçlarını birleştirerek nihai karar ver."""
+    """eBay, piyasa ve vision sonuçlarını birleştirerek nihai karar ver."""
+    # Vision MISMATCH → en kritik, hemen döndür
+    if vision and vision.get("verdict") == "MISMATCH":
+        return "MISMATCH"
+
     if source == "ebay":
         ebay_status = ebay.get("status", "ERROR")
         if ebay_status in ("GONE", "MISMATCH"):
@@ -305,9 +423,12 @@ def _decide_final_status(
         if ebay_status == "PRICE_DOWN":
             return "PRICE_DOWN"
         if ebay_status == "VERIFIED":
+            # Vision STOCK_PHOTO ile VERIFIED → özel durum
+            if vision and vision.get("verdict") == "STOCK_PHOTO":
+                return "VERIFIED_STOCK_PHOTO"
             return "VERIFIED"
 
-    # eBay dışı kaynak veya eBay check atlandıysa
+    # eBay dışı kaynak
     market_status = market.get("status", "ERROR")
     if market_status in ("PRICE_UP", "PRICE_DOWN", "VERIFIED"):
         return market_status
@@ -320,9 +441,17 @@ def _build_summary(
     ebay: Dict[str, Any],
     market: Dict[str, Any],
     expected: float,
+    vision: Optional[Dict[str, Any]] = None,
 ) -> str:
     if status == "VERIFIED":
-        return f"✅ İlan doğrulandı — fiyat ${expected:.2f} (değişmemiş)"
+        vision_note = ""
+        if vision and vision.get("verdict") == "MATCH":
+            vision_note = f" · 📷 Kapak doğru ({vision.get('confidence',0)}% güven)"
+        elif vision and vision.get("verdict") == "UNCERTAIN":
+            vision_note = " · 📷 Kapak belirsiz"
+        return f"✅ İlan doğrulandı — fiyat ${expected:.2f}{vision_note}"
+    if status == "VERIFIED_STOCK_PHOTO":
+        return f"⚠️ İlan mevcut ama kapak stock fotoğraf — gerçek kondisyon gizli olabilir"
     if status == "GONE":
         return f"❌ İlan yok — satılmış veya kaldırılmış"
     if status == "MISMATCH":
