@@ -539,45 +539,89 @@ def _extract_text(data: Dict[str, Any]) -> str:
 
 
 def _parse_json(text: str) -> Dict[str, Any]:
+    """
+    LLM çıktısını JSON'a parse et — 7 yaygın hata modunu dengele:
+    1) ```json ... ``` sarması
+    2) ``` ... ``` sarması
+    3) JSON öncesi/sonrası metin
+    4) Trailing comma (basit temizleme)
+    5) Kısmi çıktı (en son } bul)
+    6) Tamamen metin çıktısı → UNKNOWN fallback
+    7) Tek tırnak yerine çift tırnak sorunu
+    """
     t = text.strip()
+
+    # Adım 1: Markdown fence temizle
     for fence in ["```json", "```"]:
         if fence in t:
             parts = t.split(fence)
-            t = parts[1] if len(parts) >= 3 else t.replace(fence, "")
-    t = t.strip()
-    s, e = t.find("{"), t.rfind("}") + 1
+            if len(parts) >= 3:
+                t = parts[1].strip()
+                break
+            else:
+                t = t.replace(fence, "").strip()
+
+    # Adım 2: İlk { ... son } arasını al
+    s = t.find("{")
+    e = t.rfind("}") + 1
     result = None
+
     if s >= 0 and e > s:
+        candidate = t[s:e]
+
+        # Adım 3: Trailing comma temizle (basit regex-free yaklaşım)
+        # ",}" ve ",]" pattern'larını temizle
+        import re
+        candidate = re.sub(r",\s*}", "}", candidate)
+        candidate = re.sub(r",\s*]", "]", candidate)
+
+        # Adım 4: Önce direkt parse dene
         try:
-            result = json.loads(t[s:e])
+            result = json.loads(candidate)
         except (json.JSONDecodeError, ValueError):
-            pass
-    if result is None:
-        result = {"verdict": "UNKNOWN", "summary": t[:300], "parse_error": True}
-    # Schema normalization — eksik alanlar default değerle doldur
-    _DEFAULTS = {
-        "verdict": "UNKNOWN", "summary": "", "price_trend": "UNKNOWN",
-        "price_trend_reason": "", "risk_level": "HIGH",
-        "risk_factors": [], "recommendation": "",
+            # Adım 5: Kısmi parse — son geçerli } konumunu bul
+            for end in range(len(candidate), 0, -1):
+                try:
+                    result = json.loads(candidate[:end])
+                    if isinstance(result, dict):
+                        result["_partial_parse"] = True
+                        break
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+    if result is None or not isinstance(result, dict):
+        result = {"verdict": "UNKNOWN", "summary": text[:300], "parse_error": True}
+
+    # Adım 6: Tam schema normalizasyonu — UI hiçbir zaman eksik key görmez
+    _DEFAULTS: Dict[str, Any] = {
+        "verdict":            "UNKNOWN",
+        "confidence":         0,
+        "summary":            "",
+        "price_trend":        "UNKNOWN",
+        "price_trend_reason": "",
+        "risk_level":         "HIGH",
+        "risk_factors":       [],
+        "recommendation":     "",
+        "buy_suggestion":     "",
+        "image_verdict":      "UNKNOWN",
+        "image_notes":        "",
+        "sources_checked":    [],
+        "competitors":        [],
     }
     for k, v in _DEFAULTS.items():
         if k not in result:
             result[k] = v
+
     return result
 
 
 def _to_isbn13(isbn: str) -> Optional[str]:
-    s = isbn.replace("-", "").replace(" ", "").upper().strip()
-    if len(s) == 13 and s.isdigit():
-        return s
-    if len(s) != 10:
-        return None
-    # ISBN-10 sadece rakam+X kabul et
-    if not all(c.isdigit() or (c == "X" and i == 9) for i, c in enumerate(s)):
-        return None
+    """isbn_utils.to_isbn13'e delegate et — checksum dogrulama dahil."""
     try:
-        core = "978" + s[:9]
-        total = sum(int(ch) * (1 if i % 2 == 0 else 3) for i, ch in enumerate(core))
-        return core + str((10 - (total % 10)) % 10)
-    except (ValueError, TypeError):
+        from app.isbn_utils import to_isbn13
+        return to_isbn13(isbn)
+    except Exception:
+        s = isbn.replace("-", "").replace(" ", "").upper().strip()
+        if len(s) == 13 and s.isdigit():
+            return s
         return None

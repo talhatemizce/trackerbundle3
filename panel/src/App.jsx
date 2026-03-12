@@ -3634,6 +3634,107 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
   );
 }
 
+
+// ─── Settings Tab ─────────────────────────────────────────────────────────────
+function SettingsTab({ C, theme, setTheme, blueFilter, setBlueFilter }) {
+  const safeTheme = theme || "dark";
+  const safeSetTheme = setTheme || (() => {});
+  const safeBlue = blueFilter || false;
+  const safeSetBlue = setBlueFilter || (() => {});
+
+  const row = { display:"flex", alignItems:"center", justifyContent:"space-between",
+    padding:"12px 16px", borderBottom:`1px solid ${C.border}`, gap:12 };
+  const label = { fontFamily:"var(--mono)", fontSize:13, color:C.text };
+  const sub   = { fontFamily:"var(--mono)", fontSize:11, color:C.muted, marginTop:2 };
+  const card  = { background:C.card, border:`1px solid ${C.border}`, borderRadius:8,
+    marginBottom:16, overflow:"hidden" };
+  const sectionTitle = { fontFamily:"var(--mono)", fontSize:11, fontWeight:600,
+    color:C.accent, letterSpacing:"0.08em", padding:"10px 16px 6px",
+    textTransform:"uppercase", borderBottom:`1px solid ${C.border}` };
+
+  const ThemeBtn = ({ id, label: lbl }) => (
+    <button
+      onClick={() => safeSetTheme(id)}
+      style={{
+        padding:"6px 14px", borderRadius:6, cursor:"pointer",
+        fontFamily:"var(--mono)", fontSize:12,
+        background: safeTheme === id ? C.accent : C.bg,
+        color:       safeTheme === id ? "#fff"   : C.muted,
+        border:`1px solid ${safeTheme === id ? C.accent : C.border}`,
+        fontWeight:  safeTheme === id ? 600 : 400,
+        transition:"all .15s",
+      }}
+    >{lbl}</button>
+  );
+
+  return (
+    <div style={{ maxWidth:640, margin:"0 auto", padding:"24px 16px" }}>
+      <div style={{ fontFamily:"var(--mono)", fontSize:20, fontWeight:700,
+        color:C.text, marginBottom:24 }}>⚙️ Settings</div>
+
+      {/* Theme */}
+      <div style={card}>
+        <div style={sectionTitle}>Appearance</div>
+        <div style={row}>
+          <div>
+            <div style={label}>Theme</div>
+            <div style={sub}>Choose your preferred color scheme</div>
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <ThemeBtn id="dark"  label="Dark" />
+            <ThemeBtn id="soft"  label="Soft" />
+            <ThemeBtn id="light" label="Light" />
+          </div>
+        </div>
+        <div style={row}>
+          <div>
+            <div style={label}>Blue-light filter</div>
+            <div style={sub}>Warm tint to reduce eye strain</div>
+          </div>
+          <button
+            onClick={() => safeSetBlue(!safeBlue)}
+            style={{
+              padding:"6px 14px", borderRadius:6, cursor:"pointer",
+              fontFamily:"var(--mono)", fontSize:12,
+              background: safeBlue ? C.accent : C.bg,
+              color:       safeBlue ? "#fff"   : C.muted,
+              border:`1px solid ${safeBlue ? C.accent : C.border}`,
+              transition:"all .15s",
+            }}
+          >{safeBlue ? "ON" : "OFF"}</button>
+        </div>
+      </div>
+
+      {/* Build info */}
+      <div style={card}>
+        <div style={sectionTitle}>Build Info</div>
+        <div style={row}>
+          <div style={label}>Version</div>
+          <div style={{ fontFamily:"var(--mono)", fontSize:12, color:C.muted }}>{BUILD_ID}</div>
+        </div>
+        <div style={row}>
+          <div style={label}>API Base</div>
+          <div style={{ fontFamily:"var(--mono)", fontSize:12, color:C.muted }}>{BASE || "(same origin)"}</div>
+        </div>
+      </div>
+
+      {/* LLM quota shortcut */}
+      <div style={card}>
+        <div style={sectionTitle}>AI / LLM</div>
+        <div style={{ ...row, flexDirection:"column", alignItems:"flex-start" }}>
+          <div style={label}>Provider quota status</div>
+          <div style={sub}>Check /llm/status for live RPM / RPD counters</div>
+          <a href="/llm/status" target="_blank" rel="noopener"
+            style={{ marginTop:8, fontFamily:"var(--mono)", fontSize:12,
+              color:C.accent, textDecoration:"none" }}>
+            Open /llm/status →
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const TABS = ["dashboard","watchlist","candidates","pricing","alerts","discover","history","settings"];
 
 export default function App() {
@@ -4322,7 +4423,7 @@ function AppReal() {
             {tab==="discover"&&<DiscoverTab C={C} theme={theme} scanJob={scanJob} setScanJob={setScanJob} scanPollRef={scanPollRef} candidates={candidates} addCandidate={addCandidate}/>}
             {tab==="candidates"&&<CandidatesTab C={C} candidates={candidates} removeCandidate={removeCandidate} saveCandidates={saveCandidates} push={push} isbns={isbns} addIsbn={async(isbn,secs)=>{const res=await req("/isbns",{method:"POST",body:JSON.stringify({isbn})});if(res.added){setIsbns(p=>[...p,isbn]);if(secs){await req(`/rules/${isbn}/interval`,{method:"PUT",body:JSON.stringify({interval_seconds:secs})});}push(isbn+" watchlist'e eklendi","success");}else{push("Zaten watchlist'te","info");}}}/>}
             {tab==="history"&&<ScanHistoryTab C={C} addCandidate={addCandidate} candidates={candidates}/>}
-            {tab==="settings"&&<SettingsTab C={C}/>}
+            {tab==="settings"&&<SettingsTab C={C} theme={theme} setTheme={setTheme} blueFilter={blueFilter} setBlueFilter={setBlueFilter}/>}
           </>
         )}
       </div>
