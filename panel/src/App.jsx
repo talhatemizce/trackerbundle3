@@ -1448,9 +1448,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   const tierColor = (tier) => tier==="fire"?"#f97316":tier==="good"?C.green:tier==="low"?C.blue:C.red||"#ef4444";
 
   return (
-    <div style={{display:"flex", gap:16}}>
-      {/* Left panel */}
-      <div style={{width:220, flexShrink:0}}>
+    <div style={{display:"flex", gap:16, alignItems:"flex-start"}}>
+      {/* Left panel — fixed narrow sidebar */}
+      <div style={{width:210, flexShrink:0}}>
 
         {/* Upload */}
         <div style={{background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:16, marginBottom:12}}>
@@ -1682,8 +1682,8 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           background:C.surface2, borderRadius:6}}>{error}</div>}
       </div>
 
-      {/* Right panel — results */}
-      <div style={{flex:1, minWidth:0}}>
+      {/* Right panel — results, fills all remaining space */}
+      <div style={{flex:1, minWidth:0, overflow:"hidden"}}>
         {!results && !scanning && (
           <div style={{textAlign:"center", paddingTop:80, color:C.muted3, fontSize:13}}>
             <div style={{fontSize:32, marginBottom:12}}>🔍</div>
@@ -2166,7 +2166,11 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
               </span>
             }/>
           )}
-          {ebay.isbn_check  && <R label="ISBN" val={<Pill s={ebay.isbn_check}/>}/>}
+          {ebay.isbn_check && (
+            ebay.isbn_check === "UNKNOWN"
+              ? <R label="ISBN" val={<span style={{fontSize:10,color:"#94a3b8"}}>— eşleşme verisi yok (normal)</span>}/>
+              : <R label="ISBN" val={<Pill s={ebay.isbn_check}/>}/>
+          )}
           {ebay.condition   && <R label="Kondisyon"  val={ebay.condition}/>}
           {ebay.reason && ebay.status!=="VERIFIED" && <R label="Neden" val={ebay.reason} danger/>}
         </Section>
@@ -2180,7 +2184,21 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
           skipMsg={market.status==="SKIP"?"Piyasa verisi atlandı":null}
         >
           {market.status==="ERROR"
-            ? <R label="Hata" val={market.reason||"no_prices_found"} danger/>
+            ? <>
+                <R label="Durum" val={
+                  market.reason==="ip_blocked"
+                    ? <span style={{color:"#f97316",fontWeight:600}}>⚠️ IP engellendi</span>
+                    : <span style={{color:"#94a3b8"}}>{market.reason||"no_prices_found"}</span>
+                }/>
+                {market.hint && <R label="Açıklama" val={market.hint}/>}
+                {market.reason==="ip_blocked" && (
+                  <div style={{margin:"4px 16px 6px",padding:"6px 10px",borderRadius:6,
+                    borderLeft:"3px solid #f97316",background:"#f9731610",
+                    fontSize:10,color:"#f97316",lineHeight:1.5}}>
+                    BookFinder/AbeBooks sunucu IP'nizi engelliyor. Piyasa fiyatı doğrulaması yapılamıyor.
+                  </div>
+                )}
+              </>
             : <>
                 {market.cheapest_found!=null && (
                   <R label="En ucuz" val={
@@ -4392,7 +4410,7 @@ function AppReal() {
       </div>
 
       {/* Content */}
-      <div style={{padding:"28px 32px",maxWidth:1100,margin:"0 auto"}}>
+      <div style={{padding:"20px 24px"}}>
         {loading ? <div style={{color:C.muted3,textAlign:"center",paddingTop:80,fontSize:13}}>Yükleniyor…</div> : (
           <>
             {tab==="dashboard"&&(

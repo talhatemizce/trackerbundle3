@@ -223,21 +223,28 @@ async def _verify_abebooks_price(
                 source = (result.get("sources") or [""])[0]
 
         # Adım 2: cache'de fiyat çıkmadıysa live fetch yap
+        live_result = None
         if cheapest is None:
             logger.info("bookfinder isbn=%s cache miss/empty — live fetch", isbn)
-            result = await fetch_bookfinder(isbn, condition="all", force=True)
+            live_result = await fetch_bookfinder(isbn, condition="all", force=True)
             from_cache = False
             cache_age_s = 0
-            if result.get("ok"):
-                cheapest, source = _extract_cheapest(result)
-                if cheapest is None and result.get("cheapest"):
-                    cheapest = float(result["cheapest"])
-                    source = (result.get("sources") or [""])[0]
+            if live_result.get("ok"):
+                cheapest, source = _extract_cheapest(live_result)
+                if cheapest is None and live_result.get("cheapest"):
+                    cheapest = float(live_result["cheapest"])
+                    source = (live_result.get("sources") or [""])[0]
 
         if cheapest is None:
+            # Surface blocked/hint info if available
+            err_result = live_result or result
+            hint = err_result.get("hint", "")
+            is_blocked = "engel" in hint.lower() or "403" in str(err_result.get("error", ""))
+            reason = "ip_blocked" if is_blocked else "no_prices_found"
             return {
                 "status": "ERROR",
-                "reason": "no_prices_found",
+                "reason": reason,
+                "hint": hint or ("Sunucu IP'si BookFinder tarafından engelleniyor (403)" if is_blocked else "Fiyat verisi bulunamadı"),
                 "from_cache": from_cache,
                 "data_source": "BookFinder/AbeBooks",
             }
