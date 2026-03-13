@@ -226,6 +226,9 @@ async def _verify_abebooks_price(
             "price_delta": delta,
             "price_delta_pct": delta_pct,
             "cheapest_source": source,
+            "from_cache": result.get("cached", False),
+            "cache_age_s": result.get("cache_age_s", 0),
+            "data_source": "BookFinder/AbeBooks",
         }
 
     except Exception as e:

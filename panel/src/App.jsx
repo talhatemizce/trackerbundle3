@@ -1039,6 +1039,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   const [verifyResults, setVerifyResults] = useState({}); // {rowIndex: {status, summary, ...}}
   const [verifying, setVerifying] = useState(new Set()); // indices being verified
   const [bulkVerifying, setBulkVerifying] = useState(false);
+  const [verifyDrawer, setVerifyDrawer] = useState(null); // {rowIdx, row} — detail panel open
   const [minRoi, setMinRoi] = useState("");
   const [maxRoi, setMaxRoi] = useState("");
   const [minProfit, setMinProfit] = useState("");
@@ -1796,24 +1797,35 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                           </td>
                           {/* Verify cell — sadece accepted view'da */}
                           {activeView==="accepted"&&(
-                            <td style={{padding:"7px 8px", textAlign:"center", minWidth:72}}>
+                            <td style={{padding:"7px 8px", textAlign:"center", minWidth:90}}>
                               {verifying.has(i) ? (
                                 <span style={{fontSize:10,color:C.muted}}>⏳</span>
                               ) : verifyResults[i] ? (
-                                <span
-                                  title={verifyResults[i].summary}
-                                  style={{fontSize:10,fontWeight:700,
-                                    color: verifyStatusColor(verifyResults[i].status),
-                                    cursor:"help"}}>
-                                  {verifyStatusEmoji(verifyResults[i].status)} {verifyResults[i].status}
-                                </span>
+                                <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                                  <span
+                                    style={{fontSize:9,fontWeight:700,
+                                      color: verifyStatusColor(verifyResults[i].status),
+                                      cursor:"pointer", letterSpacing:"0.02em"}}
+                                    onClick={()=>verifyOne(i, r)}
+                                    title="Yeniden doğrula">
+                                    {verifyStatusEmoji(verifyResults[i].status)} {verifyResults[i].status}
+                                  </span>
+                                  <button
+                                    onClick={()=>setVerifyDrawer({rowIdx:i,row:r})}
+                                    style={{padding:"1px 7px",fontSize:9,borderRadius:4,cursor:"pointer",
+                                      background:"#a855f711",color:"#a855f7",
+                                      border:"1px solid #a855f744", fontFamily:"var(--mono)"}}>
+                                    🧠 Detay
+                                  </button>
+                                </div>
                               ) : (
                                 <button
                                   onClick={()=>verifyOne(i, r)}
-                                  title="İlanı API ile doğrula (AI yok)"
+                                  title="İlanı 3 adımda doğrula (eBay API → Piyasa → Vision AI)"
                                   style={{padding:"2px 7px",fontSize:9,borderRadius:4,cursor:"pointer",
-                                    background:"#0ea5e911",color:"#0ea5e9",border:"1px solid #0ea5e944"}}>
-                                  🔍
+                                    background:"#0ea5e911",color:"#0ea5e9",border:"1px solid #0ea5e944",
+                                    fontFamily:"var(--mono)"}}>
+                                  🔍 Doğrula
                                 </button>
                               )}
                             </td>
@@ -1934,9 +1946,318 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           </>
         )}
       </div>
+
+      {/* Verify Detail Drawer */}
+      {verifyDrawer && verifyResults[verifyDrawer.rowIdx] && (
+        <VerifyDetailDrawer
+          C={C}
+          data={verifyResults[verifyDrawer.rowIdx]}
+          row={verifyDrawer.row}
+          onClose={()=>setVerifyDrawer(null)}
+        />
+      )}
     </div>
   );
 }
+
+// ─── Verify Detail Drawer ──────────────────────────────────────────────────
+function VerifyDetailDrawer({ C, data, onClose, row }) {
+  if (!data) return null;
+
+  const { ebay = {}, market = {}, vision = {}, status, summary, checked_at } = data;
+
+  const overlay = {
+    position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:900,
+    display:"flex", justifyContent:"flex-end",
+  };
+  const drawer = {
+    width: 420, maxWidth:"96vw", height:"100vh", background:C.card,
+    borderLeft:`1px solid ${C.border}`, overflowY:"auto",
+    display:"flex", flexDirection:"column",
+    fontFamily:"var(--mono)", fontSize:12,
+  };
+  const hdr = {
+    padding:"14px 16px", borderBottom:`1px solid ${C.border}`,
+    display:"flex", alignItems:"center", justifyContent:"space-between",
+    position:"sticky", top:0, background:C.card, zIndex:1,
+  };
+  const section = {
+    margin:"12px 14px 0", background:C.bg,
+    border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden",
+  };
+  const sHdr = (color) => ({
+    padding:"8px 12px", background:`${color}18`,
+    borderBottom:`1px solid ${C.border}`,
+    display:"flex", alignItems:"center", gap:8,
+    fontWeight:700, fontSize:11, color,
+  });
+  const rowStyle = {
+    display:"flex", justifyContent:"space-between", alignItems:"flex-start",
+    padding:"6px 12px", borderBottom:`1px solid ${C.border}18`, gap:8,
+  };
+  const key = { color:C.muted, fontSize:10, flexShrink:0, paddingTop:1 };
+  const val = { color:C.text, fontSize:11, textAlign:"right", wordBreak:"break-word" };
+
+  const statusColor = {
+    VERIFIED:"#22c55e", VERIFIED_STOCK_PHOTO:"#f97316",
+    GONE:"#ef4444", PRICE_UP:"#f97316", PRICE_DOWN:"#3b82f6",
+    MISMATCH:"#ef4444", ERROR:"#6b7280", SKIP:"#6b7280",
+    MATCH:"#22c55e", UNCERTAIN:"#eab308", STOCK_PHOTO:"#f97316",
+    NO_IMAGE:"#6b7280",
+  };
+
+  const Badge = ({ text, color, bg }) => (
+    <span style={{
+      padding:"1px 7px", borderRadius:10, fontSize:10, fontWeight:700,
+      color: color || "#fff",
+      background: bg || (statusColor[text] ? `${statusColor[text]}33` : "#ffffff22"),
+      border:`1px solid ${statusColor[text] || C.border}44`,
+    }}>{text}</span>
+  );
+
+  const ProviderBadge = ({ provider, model }) => {
+    if (!provider || provider === "unknown") return null;
+    const colors = {
+      groq:"#f55036", cerebras:"#6366f1", openrouter:"#10b981",
+      gemini:"#4285f4", google:"#4285f4",
+    };
+    const key = Object.keys(colors).find(k => provider.toLowerCase().includes(k));
+    const col = colors[key] || C.accent;
+    return (
+      <span style={{
+        padding:"1px 7px", borderRadius:10, fontSize:9, fontWeight:600,
+        background:`${col}22`, color:col, border:`1px solid ${col}44`,
+      }}>
+        🤖 {provider}{model ? ` / ${model.split("/").pop().slice(0,20)}` : ""}
+      </span>
+    );
+  };
+
+  const CacheTag = ({ fromCache, ageS }) => {
+    if (!fromCache) return <span style={{fontSize:9,color:C.muted}}>🌐 Live</span>;
+    const mins = Math.round((ageS||0)/60);
+    return (
+      <span style={{fontSize:9, color:"#a855f7",
+        background:"#a855f722", padding:"1px 6px", borderRadius:8,
+        border:"1px solid #a855f744"}}>
+        ⚡ Cache ({mins}dk önce)
+      </span>
+    );
+  };
+
+  const checkedDate = checked_at
+    ? new Date(checked_at * 1000).toLocaleTimeString("tr-TR")
+    : null;
+
+  return (
+    <div style={overlay} onClick={onClose}>
+      <div style={drawer} onClick={e=>e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={hdr}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:C.text}}>
+              🔍 Doğrulama Detayı
+            </div>
+            {row?.isbn && (
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>
+                ISBN {row.isbn} · {checkedDate}
+              </div>
+            )}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <Badge text={status} />
+            <button onClick={onClose} style={{
+              background:"none",border:"none",cursor:"pointer",
+              color:C.muted,fontSize:16,padding:"2px 6px",
+            }}>✕</button>
+          </div>
+        </div>
+
+        {/* Summary */}
+        <div style={{padding:"10px 14px",
+          background: statusColor[status] ? `${statusColor[status]}12` : C.bg,
+          borderBottom:`1px solid ${C.border}`,
+          fontSize:11, color:C.text, lineHeight:1.5}}>
+          {summary || "Doğrulama tamamlandı."}
+        </div>
+
+        {/* Step 1 — eBay */}
+        <div style={section}>
+          <div style={sHdr(ebay.status==="GONE"?"#ef4444":ebay.status?.includes("PRICE")?"#f97316":"#22c55e")}>
+            <span>Adım 1 — eBay API</span>
+            <Badge text={ebay.status||"SKIP"} />
+            <span style={{marginLeft:"auto",fontSize:9,color:C.muted}}>🌐 Live</span>
+          </div>
+          {ebay.item_title && (
+            <div style={rowStyle}>
+              <span style={key}>İlan başlığı</span>
+              <span style={{...val,maxWidth:240}}>{ebay.item_title}</span>
+            </div>
+          )}
+          {ebay.current_price != null && (
+            <div style={rowStyle}>
+              <span style={key}>Anlık fiyat</span>
+              <span style={val}>${ebay.current_price?.toFixed(2)}
+                {ebay.price_delta != null && (
+                  <span style={{color: ebay.price_delta > 0 ? "#f97316":"#22c55e", marginLeft:5}}>
+                    ({ebay.price_delta > 0 ? "+" : ""}{ebay.price_delta?.toFixed(2)} / {ebay.price_delta_pct?.toFixed(1)}%)
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+          {ebay.isbn_check && (
+            <div style={rowStyle}>
+              <span style={key}>ISBN eşleşmesi</span>
+              <Badge text={ebay.isbn_check} />
+            </div>
+          )}
+          {ebay.condition && (
+            <div style={rowStyle}>
+              <span style={key}>Kondisyon</span>
+              <span style={val}>{ebay.condition}</span>
+            </div>
+          )}
+          {ebay.reason && ebay.status !== "VERIFIED" && (
+            <div style={rowStyle}>
+              <span style={key}>Sebep</span>
+              <span style={{...val,color:"#ef4444"}}>{ebay.reason}</span>
+            </div>
+          )}
+          {(ebay.status === "SKIP" || ebay.reason === "not_ebay") && (
+            <div style={{padding:"8px 12px",color:C.muted,fontSize:10}}>
+              eBay ilanı değil — adım atlandı
+            </div>
+          )}
+        </div>
+
+        {/* Step 2 — Market (BookFinder/AbeBooks) */}
+        <div style={section}>
+          <div style={sHdr(market.status==="PRICE_UP"?"#f97316":market.status==="PRICE_DOWN"?"#3b82f6":"#a855f7")}>
+            <span>Adım 2 — Piyasa Fiyatı</span>
+            <Badge text={market.status||"SKIP"} />
+            <span style={{marginLeft:"auto"}}>
+              <CacheTag fromCache={market.from_cache} ageS={market.cache_age_s} />
+            </span>
+          </div>
+          {market.cheapest_found != null && (
+            <div style={rowStyle}>
+              <span style={key}>En ucuz bulduğu</span>
+              <span style={val}>${market.cheapest_found?.toFixed(2)}
+                {market.cheapest_source && (
+                  <span style={{color:C.muted,marginLeft:5}}>@ {market.cheapest_source}</span>
+                )}
+              </span>
+            </div>
+          )}
+          {market.expected_price != null && (
+            <div style={rowStyle}>
+              <span style={key}>Beklenen fiyat</span>
+              <span style={val}>${market.expected_price?.toFixed(2)}</span>
+            </div>
+          )}
+          {market.price_delta != null && (
+            <div style={rowStyle}>
+              <span style={key}>Fark</span>
+              <span style={{...val, color: market.price_delta > 0 ? "#f97316" : "#22c55e"}}>
+                {market.price_delta > 0 ? "+" : ""}{market.price_delta?.toFixed(2)} ({market.price_delta_pct?.toFixed(1)}%)
+              </span>
+            </div>
+          )}
+          {market.data_source && (
+            <div style={rowStyle}>
+              <span style={key}>Kaynak</span>
+              <span style={val}>{market.data_source}</span>
+            </div>
+          )}
+          {market.reason && market.status !== "VERIFIED" && (
+            <div style={rowStyle}>
+              <span style={key}>Hata</span>
+              <span style={{...val,color:C.muted}}>{market.reason}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Step 3 — Vision AI */}
+        <div style={section}>
+          <div style={sHdr(
+            vision.verdict==="MATCH"?"#22c55e":
+            vision.verdict==="MISMATCH"?"#ef4444":
+            vision.verdict==="STOCK_PHOTO"?"#f97316":"#6b7280"
+          )}>
+            <span>Adım 3 — Görsel AI</span>
+            <Badge text={vision.verdict||vision.status||"SKIP"} />
+            {vision.provider && (
+              <span style={{marginLeft:"auto"}}>
+                <ProviderBadge provider={vision.provider} model={vision.model} />
+              </span>
+            )}
+          </div>
+
+          {(vision.verdict === "SKIP" || vision.status === "SKIP" || !vision.verdict || vision.verdict === "NO_IMAGE") && (
+            <div style={{padding:"8px 12px",color:C.muted,fontSize:10}}>
+              {vision.notes || "Görsel doğrulama atlandı"}
+            </div>
+          )}
+
+          {vision.confidence != null && vision.verdict !== "NO_IMAGE" && (
+            <div style={rowStyle}>
+              <span style={key}>Güven</span>
+              <span style={{...val, color: vision.confidence > 70 ? "#22c55e" : vision.confidence > 40 ? "#eab308" : "#ef4444"}}>
+                %{vision.confidence}
+              </span>
+            </div>
+          )}
+          {vision.notes && vision.verdict !== "NO_IMAGE" && (
+            <div style={rowStyle}>
+              <span style={key}>Not</span>
+              <span style={{...val,maxWidth:240}}>{vision.notes}</span>
+            </div>
+          )}
+          {vision.title_visible != null && (
+            <div style={rowStyle}>
+              <span style={key}>Başlık görünür</span>
+              <span style={val}>{vision.title_visible ? "✅ Evet" : "❌ Hayır"}</span>
+            </div>
+          )}
+          {vision.author_visible != null && (
+            <div style={rowStyle}>
+              <span style={key}>Yazar görünür</span>
+              <span style={val}>{vision.author_visible ? "✅ Evet" : "❌ Hayır"}</span>
+            </div>
+          )}
+          {vision.is_stock_photo != null && (
+            <div style={rowStyle}>
+              <span style={key}>Stock fotoğraf</span>
+              <span style={{...val, color: vision.is_stock_photo ? "#f97316" : C.text}}>
+                {vision.is_stock_photo ? "⚠️ Evet" : "✅ Hayır"}
+              </span>
+            </div>
+          )}
+          {vision.condition_notes && (
+            <div style={rowStyle}>
+              <span style={key}>Kondisyon notu</span>
+              <span style={{...val,maxWidth:240}}>{vision.condition_notes}</span>
+            </div>
+          )}
+          {vision.stock_photo_risk && (
+            <div style={{
+              margin:"6px 10px", padding:"6px 10px", borderRadius:6,
+              background:"#f9731618", border:"1px solid #f9731644",
+              fontSize:10, color:"#f97316",
+            }}>
+              ⚠️ Stock fotoğraf + used kondisyon: gerçek durumu görmüyorsunuz.
+            </div>
+          )}
+        </div>
+
+        <div style={{height:24}} />
+      </div>
+    </div>
+  );
+}
+
 
 function AlertsFeedTab({ C, theme, push, isbns, titles, bookMeta = {} }) {
   const [entries, setEntries] = useState([]);
