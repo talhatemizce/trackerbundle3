@@ -821,6 +821,25 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
+  const [verifyResults, setVerifyResults] = useState({});
+  const [verifying, setVerifying] = useState(new Set());
+  const [verifyDrawer, setVerifyDrawer] = useState(null);
+
+  const verifyOne = async (key, row) => {
+    setVerifying(prev => new Set([...prev, key]));
+    try {
+      const res = await fetch("/verify/listing", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({isbn: row.isbn, candidate: row}),
+      });
+      const data = await res.json();
+      setVerifyResults(prev => ({...prev, [key]: data}));
+    } catch(e) {
+      setVerifyResults(prev => ({...prev, [key]: {status:"ERROR", summary: e.message}}));
+    } finally {
+      setVerifying(prev => { const s=new Set(prev); s.delete(key); return s; });
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -855,6 +874,7 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
   );
 
   return (
+    <>
     <div style={{display:"flex",gap:20}}>
       {/* List */}
       <div style={{width:280,flexShrink:0}}>
@@ -929,7 +949,7 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                     <thead>
                       <tr style={{background:C.surface2,borderBottom:`1px solid ${C.border}`}}>
-                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Eşleşme","Kar $","ROI %","Tier","Linkler",""].map(h=>(
+                        {["ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Eşleşme","Kar $","ROI %","Tier","Linkler","Doğrula",""].map(h=>(
                           <th key={h} style={{padding:"8px 10px",textAlign:"left",color:C.muted,fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>
                         ))}
                       </tr>
@@ -974,6 +994,30 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
                               </a>
                             ))}
                           </td>
+                          <td style={{padding:"6px 8px",textAlign:"center",minWidth:90}}>
+                            {verifying.has(i) ? (
+                              <span style={{fontSize:10,color:C.muted}}>⏳</span>
+                            ) : verifyResults[i] ? (
+                              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                                <span style={{fontSize:9,fontWeight:700,
+                                  color:{VERIFIED:"#22c55e",VERIFIED_STOCK_PHOTO:"#f97316",GONE:"#ef4444",PRICE_UP:"#f97316",PRICE_DOWN:"#3b82f6",MISMATCH:"#ef4444"}[verifyResults[i].status]||"#94a3b8",
+                                  cursor:"pointer"}} onClick={()=>verifyOne(i,r)}>
+                                  {{VERIFIED:"✅",VERIFIED_STOCK_PHOTO:"📷⚠️",GONE:"💀",PRICE_UP:"📈",PRICE_DOWN:"📉",MISMATCH:"⚠️"}[verifyResults[i].status]||"?"} {verifyResults[i].status}
+                                </span>
+                                <button onClick={()=>setVerifyDrawer({rowIdx:i,row:r})}
+                                  style={{padding:"1px 7px",fontSize:9,borderRadius:4,cursor:"pointer",
+                                    background:"#a855f711",color:"#a855f7",border:"1px solid #a855f744",fontFamily:"var(--mono)"}}>
+                                  🧠 Detay
+                                </button>
+                              </div>
+                            ) : (
+                              <button onClick={()=>verifyOne(i,r)}
+                                style={{padding:"2px 7px",fontSize:9,borderRadius:4,cursor:"pointer",
+                                  background:"#0ea5e911",color:"#0ea5e9",border:"1px solid #0ea5e944",fontFamily:"var(--mono)"}}>
+                                🔍 Doğrula
+                              </button>
+                            )}
+                          </td>
                           <td style={{padding:"6px 8px",textAlign:"center"}}>
                             {(()=>{
                               const inCand = candidates.some(cx=>cx.isbn===r.isbn&&cx.source===r.source&&cx.source_condition===r.source_condition);
@@ -998,6 +1042,12 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
         )}
       </div>
     </div>
+
+    {verifyDrawer && verifyResults[verifyDrawer.rowIdx] && (
+      <VerifyDetailDrawer C={C} data={verifyResults[verifyDrawer.rowIdx]}
+        row={verifyDrawer.row} onClose={()=>setVerifyDrawer(null)}/>
+    )}
+  </>
   );
 }
 
@@ -1398,9 +1448,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   const tierColor = (tier) => tier==="fire"?"#f97316":tier==="good"?C.green:tier==="low"?C.blue:C.red||"#ef4444";
 
   return (
-    <div style={{display:"flex", gap:20}}>
+    <div style={{display:"flex", gap:16}}>
       {/* Left panel */}
-      <div style={{width:280, flexShrink:0}}>
+      <div style={{width:220, flexShrink:0}}>
 
         {/* Upload */}
         <div style={{background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:16, marginBottom:12}}>
@@ -2057,7 +2107,7 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
         onClick={e=>e.stopPropagation()}
         style={{
           width:400, maxWidth:"95vw", height:"100vh",
-          background:C.card, borderLeft:`1px solid ${C.border}`,
+          background:C.cardBg, borderLeft:`1px solid ${C.border}`,
           overflowY:"auto", display:"flex", flexDirection:"column",
           fontFamily:"var(--mono)",
         }}
@@ -2065,7 +2115,7 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
         {/* ── top bar ── */}
         <div style={{
           position:"sticky", top:0, zIndex:2,
-          background:C.card, borderBottom:`1px solid ${C.border}`,
+          background:C.cardBg, borderBottom:`1px solid ${C.border}`,
           padding:"11px 14px",
           display:"flex", alignItems:"center", justifyContent:"space-between",
         }}>
@@ -3451,6 +3501,27 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
   const [sortDir, setSortDir] = useState("desc");
   const [confirmClear, setConfirmClear] = useState(false);
 
+  // Verify
+  const [candVerifyResults, setCandVerifyResults] = useState({});
+  const [candVerifying, setCandVerifying] = useState(new Set());
+  const [candVerifyDrawer, setCandVerifyDrawer] = useState(null);
+
+  const candVerifyOne = async (key, row) => {
+    setCandVerifying(prev => new Set([...prev, key]));
+    try {
+      const res = await fetch("/verify/listing", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({isbn: row.isbn, candidate: row}),
+      });
+      const data = await res.json();
+      setCandVerifyResults(prev => ({...prev, [key]: data}));
+    } catch(e) {
+      setCandVerifyResults(prev => ({...prev, [key]: {status:"ERROR", summary: e.message}}));
+    } finally {
+      setCandVerifying(prev => { const s=new Set(prev); s.delete(key); return s; });
+    }
+  };
+
   // AI Analysis (single)
   const [aiModal, setAiModal] = useState(null);
   const [analyzingIsbn, setAnalyzingIsbn] = useState(null);
@@ -3530,6 +3601,7 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
   );
 
   return (
+    <>
     <div style={{padding:"24px 28px",maxWidth:1400}}>
       {/* AI Analysis Modal */}
       {aiModal&&(
@@ -3778,6 +3850,7 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                     {k:"confidence",l:"Güven"},{k:"ev_score",l:"EV/mo"},
                     {k:"_ai",l:"AI Sonuç"},
                     {k:"addedAt",l:"Eklenme"},
+                    {k:"_verify",l:"Doğrula"},
                     {k:"_actions",l:"Aksiyon"},
                   ].map(({k,l})=>(
                     <th key={k} style={{padding:"8px 10px",textAlign:"left",color:C.muted,fontWeight:600,whiteSpace:"nowrap"}}>
@@ -3853,6 +3926,30 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                       <td style={{padding:"7px 10px",color:C.muted,fontSize:10}}>
                         {r.addedAt?new Date(r.addedAt).toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—"}
                       </td>
+                      <td style={{padding:"6px 8px",textAlign:"center",minWidth:90}}>
+                        {candVerifying.has(r.isbn) ? (
+                          <span style={{fontSize:10,color:C.muted}}>⏳</span>
+                        ) : candVerifyResults[r.isbn] ? (
+                          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                            <span style={{fontSize:9,fontWeight:700,cursor:"pointer",
+                              color:{VERIFIED:"#22c55e",VERIFIED_STOCK_PHOTO:"#f97316",GONE:"#ef4444",PRICE_UP:"#f97316",PRICE_DOWN:"#3b82f6",MISMATCH:"#ef4444"}[candVerifyResults[r.isbn].status]||"#94a3b8"}}
+                              onClick={()=>candVerifyOne(r.isbn,r)}>
+                              {{VERIFIED:"✅",VERIFIED_STOCK_PHOTO:"📷⚠️",GONE:"💀",PRICE_UP:"📈",PRICE_DOWN:"📉",MISMATCH:"⚠️"}[candVerifyResults[r.isbn].status]||"?"} {candVerifyResults[r.isbn].status}
+                            </span>
+                            <button onClick={()=>setCandVerifyDrawer({rowIdx:r.isbn,row:r})}
+                              style={{padding:"1px 7px",fontSize:9,borderRadius:4,cursor:"pointer",
+                                background:"#a855f711",color:"#a855f7",border:"1px solid #a855f744",fontFamily:"var(--mono)"}}>
+                              🧠 Detay
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={()=>candVerifyOne(r.isbn,r)}
+                            style={{padding:"2px 7px",fontSize:9,borderRadius:4,cursor:"pointer",
+                              background:"#0ea5e911",color:"#0ea5e9",border:"1px solid #0ea5e944",fontFamily:"var(--mono)"}}>
+                            🔍 Doğrula
+                          </button>
+                        )}
+                      </td>
                       <td style={{padding:"6px 8px",whiteSpace:"nowrap"}}>
                         <div style={{display:"flex",gap:4,alignItems:"center"}}>
                           <button onClick={()=>runAiAnalysis(r)}
@@ -3890,6 +3987,12 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
         </div>
       )}
     </div>
+
+    {candVerifyDrawer && candVerifyResults[candVerifyDrawer.rowIdx] && (
+      <VerifyDetailDrawer C={C} data={candVerifyResults[candVerifyDrawer.rowIdx]}
+        row={candVerifyDrawer.row} onClose={()=>setCandVerifyDrawer(null)}/>
+    )}
+  </>
   );
 }
 
@@ -3905,7 +4008,7 @@ function SettingsTab({ C, theme, setTheme, blueFilter, setBlueFilter }) {
     padding:"12px 16px", borderBottom:`1px solid ${C.border}`, gap:12 };
   const label = { fontFamily:"var(--mono)", fontSize:13, color:C.text };
   const sub   = { fontFamily:"var(--mono)", fontSize:11, color:C.muted, marginTop:2 };
-  const card  = { background:C.card, border:`1px solid ${C.border}`, borderRadius:8,
+  const card  = { background:C.cardBg, border:`1px solid ${C.border}`, borderRadius:8,
     marginBottom:16, overflow:"hidden" };
   const sectionTitle = { fontFamily:"var(--mono)", fontSize:11, fontWeight:600,
     color:C.accent, letterSpacing:"0.08em", padding:"10px 16px 6px",
