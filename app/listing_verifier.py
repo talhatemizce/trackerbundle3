@@ -196,13 +196,14 @@ async def _verify_abebooks_price(
             if not block:
                 continue
             for offer in (block.get("offers") or []):
-                p = offer.get("total_price") or offer.get("price")
+                # Bookfinder offers use "total" (price+shipping), fallback to "price"
+                p = offer.get("total") or offer.get("total_price") or offer.get("price")
                 if p is not None:
                     try:
                         pf = float(p)
                         if cheapest is None or pf < cheapest:
                             cheapest = pf
-                            source = offer.get("source", "")
+                            source = offer.get("seller") or offer.get("source", "")
                     except (TypeError, ValueError):
                         pass
         return cheapest, source
@@ -216,6 +217,10 @@ async def _verify_abebooks_price(
         cheapest, source = (None, None)
         if result.get("ok"):
             cheapest, source = _extract_cheapest(result)
+            # Fast path: bookfinder already computed cheapest at top level
+            if cheapest is None and result.get("cheapest"):
+                cheapest = float(result["cheapest"])
+                source = (result.get("sources") or [""])[0]
 
         # Adım 2: cache'de fiyat çıkmadıysa live fetch yap
         if cheapest is None:
@@ -225,6 +230,9 @@ async def _verify_abebooks_price(
             cache_age_s = 0
             if result.get("ok"):
                 cheapest, source = _extract_cheapest(result)
+                if cheapest is None and result.get("cheapest"):
+                    cheapest = float(result["cheapest"])
+                    source = (result.get("sources") or [""])[0]
 
         if cheapest is None:
             return {

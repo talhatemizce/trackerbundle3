@@ -2022,26 +2022,20 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
     const col = accent || sc(statusKey);
     return (
       <div style={{borderTop:`1px solid ${C.border}`, paddingBottom:6}}>
-        {/* header */}
         <div style={{background:`${col}0e`, padding:"8px 16px 6px"}}>
-          <div style={{
-            fontSize:9, fontWeight:700, letterSpacing:"0.1em",
-            color:col, textTransform:"uppercase", marginBottom:4,
-          }}>
-            Adım {num}
+          {/* Row 1: step label left, tag right */}
+          <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4}}>
+            <span style={{fontSize:9, fontWeight:700, letterSpacing:"0.1em", color:col, textTransform:"uppercase"}}>
+              Adım {num}
+            </span>
+            {rightTag && <div>{rightTag}</div>}
           </div>
-          <div style={{
-            display:"flex", alignItems:"center",
-            justifyContent:"space-between", gap:8,
-          }}>
-            <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", minWidth:0}}>
-              <span style={{fontSize:12, fontWeight:700, color:C.text}}>{title}</span>
-              {statusKey && <Pill s={statusKey}/>}
-            </div>
-            {rightTag && <div style={{flexShrink:0}}>{rightTag}</div>}
+          {/* Row 2: title + status pill — no rightTag competing */}
+          <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+            <span style={{fontSize:12, fontWeight:700, color:C.text}}>{title}</span>
+            {statusKey && <Pill s={statusKey}/>}
           </div>
         </div>
-        {/* body */}
         {skipMsg
           ? <div style={{padding:"7px 16px", color:C.muted, fontSize:10}}>{skipMsg}</div>
           : children
@@ -2056,7 +2050,7 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
 
   return (
     <div
-      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:900,display:"flex",justifyContent:"flex-end"}}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.25)",zIndex:900,display:"flex",justifyContent:"flex-end"}}
       onClick={onClose}
     >
       <div
