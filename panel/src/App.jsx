@@ -1963,296 +1963,235 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
 // ─── Verify Detail Drawer ──────────────────────────────────────────────────
 function VerifyDetailDrawer({ C, data, onClose, row }) {
   if (!data) return null;
-
   const { ebay = {}, market = {}, vision = {}, status, summary, checked_at } = data;
 
-  const overlay = {
-    position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:900,
-    display:"flex", justifyContent:"flex-end",
-  };
-  const drawer = {
-    width: 420, maxWidth:"96vw", height:"100vh", background:C.card,
-    borderLeft:`1px solid ${C.border}`, overflowY:"auto",
-    display:"flex", flexDirection:"column",
-    fontFamily:"var(--mono)", fontSize:12,
-  };
-  const hdr = {
-    padding:"14px 16px", borderBottom:`1px solid ${C.border}`,
-    display:"flex", alignItems:"center", justifyContent:"space-between",
-    position:"sticky", top:0, background:C.card, zIndex:1,
-  };
-  const section = {
-    margin:"12px 14px 0", background:C.bg,
-    border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden",
-  };
-  const sHdr = (color) => ({
-    padding:"8px 12px", background:`${color}18`,
-    borderBottom:`1px solid ${C.border}`,
-    display:"flex", alignItems:"center", gap:8,
-    fontWeight:700, fontSize:11, color,
-  });
-  const rowStyle = {
-    display:"flex", justifyContent:"space-between", alignItems:"flex-start",
-    padding:"6px 12px", borderBottom:`1px solid ${C.border}18`, gap:8,
-  };
-  const key = { color:C.muted, fontSize:10, flexShrink:0, paddingTop:1 };
-  const val = { color:C.text, fontSize:11, textAlign:"right", wordBreak:"break-word" };
-
-  const statusColor = {
+  const SC = {
     VERIFIED:"#22c55e", VERIFIED_STOCK_PHOTO:"#f97316",
     GONE:"#ef4444", PRICE_UP:"#f97316", PRICE_DOWN:"#3b82f6",
-    MISMATCH:"#ef4444", ERROR:"#6b7280", SKIP:"#6b7280",
-    MATCH:"#22c55e", UNCERTAIN:"#eab308", STOCK_PHOTO:"#f97316",
-    NO_IMAGE:"#6b7280",
+    MISMATCH:"#ef4444", ERROR:"#94a3b8", SKIP:"#94a3b8",
+    MATCH:"#22c55e", UNCERTAIN:"#eab308", STOCK_PHOTO:"#f97316", NO_IMAGE:"#94a3b8",
   };
 
-  const Badge = ({ text, color, bg }) => (
-    <span style={{
-      padding:"1px 7px", borderRadius:10, fontSize:10, fontWeight:700,
-      color: color || "#fff",
-      background: bg || (statusColor[text] ? `${statusColor[text]}33` : "#ffffff22"),
-      border:`1px solid ${statusColor[text] || C.border}44`,
-    }}>{text}</span>
-  );
-
-  const ProviderBadge = ({ provider, model }) => {
-    if (!provider || provider === "unknown") return null;
-    const colors = {
-      groq:"#f55036", cerebras:"#6366f1", openrouter:"#10b981",
-      gemini:"#4285f4", google:"#4285f4",
-    };
-    const key = Object.keys(colors).find(k => provider.toLowerCase().includes(k));
-    const col = colors[key] || C.accent;
+  const Pill = ({ text }) => {
+    const col = SC[text] || "#94a3b8";
     return (
       <span style={{
-        padding:"1px 7px", borderRadius:10, fontSize:9, fontWeight:600,
-        background:`${col}22`, color:col, border:`1px solid ${col}44`,
-      }}>
-        🤖 {provider}{model ? ` / ${model.split("/").pop().slice(0,20)}` : ""}
-      </span>
+        display:"inline-block", padding:"2px 8px", borderRadius:99,
+        fontSize:10, fontWeight:700, letterSpacing:"0.04em",
+        background:`${col}20`, color:col,
+      }}>{text}</span>
     );
+  };
+
+  const Tag = ({ children, color="#94a3b8" }) => (
+    <span style={{
+      display:"inline-block", padding:"1px 7px", borderRadius:99,
+      fontSize:9, fontWeight:600, background:`${color}18`, color,
+    }}>{children}</span>
+  );
+
+  const ProvBadge = ({ provider, model }) => {
+    if (!provider || provider==="unknown") return null;
+    const map = { groq:"#f55036", cerebras:"#6366f1", openrouter:"#10b981", gemini:"#4285f4", google:"#4285f4" };
+    const k = Object.keys(map).find(k => provider.toLowerCase().includes(k));
+    const col = map[k] || "#94a3b8";
+    const shortModel = model ? model.split("/").pop().replace(/-\d{8}$/,"").slice(0,22) : "";
+    return <Tag color={col}>🤖 {provider}{shortModel ? ` · ${shortModel}` : ""}</Tag>;
   };
 
   const CacheTag = ({ fromCache, ageS }) => {
-    if (!fromCache) return <span style={{fontSize:9,color:C.muted}}>🌐 Live</span>;
+    if (!fromCache) return <Tag color="#94a3b8">🌐 live</Tag>;
     const mins = Math.round((ageS||0)/60);
+    return <Tag color="#a855f7">⚡ cache · {mins}dk</Tag>;
+  };
+
+  // ─── Step block ────────────────────────────────────────────────────────────
+  const Step = ({ num, title, stepStatus, accentColor, rightNode, children, skip }) => {
+    const col = accentColor || SC[stepStatus] || "#94a3b8";
     return (
-      <span style={{fontSize:9, color:"#a855f7",
-        background:"#a855f722", padding:"1px 6px", borderRadius:8,
-        border:"1px solid #a855f744"}}>
-        ⚡ Cache ({mins}dk önce)
-      </span>
+      <div style={{ margin:"0 0 1px", borderTop:`1px solid ${C.border}` }}>
+        {/* Step header — 2 rows, no overflow */}
+        <div style={{ padding:"10px 16px 6px", background:`${col}09` }}>
+          <div style={{
+            display:"flex", alignItems:"center",
+            justifyContent:"space-between", marginBottom:4,
+          }}>
+            <span style={{
+              fontSize:9, fontWeight:700, letterSpacing:"0.1em",
+              color:col, textTransform:"uppercase",
+            }}>Adım {num}</span>
+            {rightNode && <div>{rightNode}</div>}
+          </div>
+          <div style={{
+            display:"flex", alignItems:"center", gap:8, flexWrap:"wrap",
+          }}>
+            <span style={{ fontSize:12, fontWeight:700, color:C.text }}>{title}</span>
+            {stepStatus && <Pill text={stepStatus} />}
+          </div>
+        </div>
+        {/* Rows */}
+        {skip ? (
+          <div style={{ padding:"8px 16px 10px", color:C.muted, fontSize:10 }}>{skip}</div>
+        ) : (
+          <div style={{ paddingBottom:4 }}>{children}</div>
+        )}
+      </div>
     );
   };
 
-  const checkedDate = checked_at
-    ? new Date(checked_at * 1000).toLocaleTimeString("tr-TR")
-    : null;
+  // ─── Data row ──────────────────────────────────────────────────────────────
+  const Row = ({ label, children, danger }) => (
+    <div style={{
+      display:"flex", justifyContent:"space-between", alignItems:"flex-start",
+      padding:"5px 16px", gap:12,
+    }}>
+      <span style={{ color:C.muted, fontSize:10, flexShrink:0, paddingTop:1 }}>{label}</span>
+      <span style={{
+        color: danger ? "#ef4444" : C.text,
+        fontSize:11, textAlign:"right", wordBreak:"break-word", maxWidth:240,
+        lineHeight:1.4,
+      }}>{children}</span>
+    </div>
+  );
+
+  const checkedDate = checked_at ? new Date(checked_at*1000).toLocaleTimeString("tr-TR") : null;
+  const summaryCol = SC[status] || "#94a3b8";
 
   return (
-    <div style={overlay} onClick={onClose}>
-      <div style={drawer} onClick={e=>e.stopPropagation()}>
-
-        {/* Header */}
-        <div style={hdr}>
+    <div
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:900, display:"flex", justifyContent:"flex-end" }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          width:400, maxWidth:"95vw", height:"100vh", background:C.card,
+          borderLeft:`1px solid ${C.border}`, overflowY:"auto",
+          display:"flex", flexDirection:"column", fontFamily:"var(--mono)",
+        }}
+        onClick={e=>e.stopPropagation()}
+      >
+        {/* ── Top bar ── */}
+        <div style={{
+          padding:"12px 16px", display:"flex", alignItems:"center",
+          justifyContent:"space-between", position:"sticky", top:0,
+          background:C.card, borderBottom:`1px solid ${C.border}`, zIndex:2,
+        }}>
           <div>
-            <div style={{fontSize:13,fontWeight:700,color:C.text}}>
-              🔍 Doğrulama Detayı
-            </div>
+            <div style={{ fontSize:13, fontWeight:700, color:C.text }}>Doğrulama Detayı</div>
             {row?.isbn && (
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>
-                ISBN {row.isbn} · {checkedDate}
+              <div style={{ fontSize:10, color:C.muted, marginTop:1 }}>
+                {row.isbn}{checkedDate ? ` · ${checkedDate}` : ""}
               </div>
             )}
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <Badge text={status} />
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <Pill text={status||"?"} />
             <button onClick={onClose} style={{
-              background:"none",border:"none",cursor:"pointer",
-              color:C.muted,fontSize:16,padding:"2px 6px",
-            }}>✕</button>
+              background:"none", border:"none", cursor:"pointer",
+              color:C.muted, fontSize:18, lineHeight:1, padding:"2px 4px",
+            }}>×</button>
           </div>
         </div>
 
-        {/* Summary */}
-        <div style={{padding:"10px 14px",
-          background: statusColor[status] ? `${statusColor[status]}12` : C.bg,
+        {/* ── Summary banner ── */}
+        <div style={{
+          padding:"9px 16px",
+          borderLeft:`3px solid ${summaryCol}`,
+          background:`${summaryCol}0d`,
           borderBottom:`1px solid ${C.border}`,
-          fontSize:11, color:C.text, lineHeight:1.5}}>
+          fontSize:11, color:C.text, lineHeight:1.6,
+        }}>
           {summary || "Doğrulama tamamlandı."}
         </div>
 
-        {/* Step 1 — eBay */}
-        <div style={section}>
-          <div style={sHdr(ebay.status==="GONE"?"#ef4444":ebay.status?.includes("PRICE")?"#f97316":"#22c55e")}>
-            <span>Adım 1 — eBay API</span>
-            <Badge text={ebay.status||"SKIP"} />
-            <span style={{marginLeft:"auto",fontSize:9,color:C.muted}}>🌐 Live</span>
-          </div>
-          {ebay.item_title && (
-            <div style={rowStyle}>
-              <span style={key}>İlan başlığı</span>
-              <span style={{...val,maxWidth:240}}>{ebay.item_title}</span>
-            </div>
-          )}
+        {/* ── Step 1: eBay API ── */}
+        <Step
+          num={1} title="eBay API"
+          stepStatus={ebay.status}
+          accentColor={ebay.status==="GONE"?"#ef4444":ebay.status?.includes("PRICE")?"#f97316":"#22c55e"}
+          rightNode={<Tag color="#94a3b8">🌐 live</Tag>}
+          skip={(ebay.status==="SKIP"||ebay.reason==="not_ebay") ? "eBay ilanı değil — atlandı" : null}
+        >
+          {ebay.item_title && <Row label="İlan">{ebay.item_title}</Row>}
           {ebay.current_price != null && (
-            <div style={rowStyle}>
-              <span style={key}>Anlık fiyat</span>
-              <span style={val}>${ebay.current_price?.toFixed(2)}
-                {ebay.price_delta != null && (
-                  <span style={{color: ebay.price_delta > 0 ? "#f97316":"#22c55e", marginLeft:5}}>
-                    ({ebay.price_delta > 0 ? "+" : ""}{ebay.price_delta?.toFixed(2)} / {ebay.price_delta_pct?.toFixed(1)}%)
+            <Row label="Anlık fiyat">
+              ${ebay.current_price?.toFixed(2)}
+              {ebay.price_delta != null && (
+                <span style={{ color: ebay.price_delta>0?"#f97316":"#22c55e", marginLeft:6 }}>
+                  {ebay.price_delta>0?"+":""}{ebay.price_delta?.toFixed(2)} ({ebay.price_delta_pct?.toFixed(1)}%)
+                </span>
+              )}
+            </Row>
+          )}
+          {ebay.isbn_check && <Row label="ISBN"><Pill text={ebay.isbn_check}/></Row>}
+          {ebay.condition && <Row label="Kondisyon">{ebay.condition}</Row>}
+          {ebay.reason && ebay.status!=="VERIFIED" && <Row label="Neden" danger>{ebay.reason}</Row>}
+        </Step>
+
+        {/* ── Step 2: Market ── */}
+        <Step
+          num={2} title="Piyasa Fiyatı"
+          stepStatus={market.status}
+          accentColor={market.status==="ERROR"?"#94a3b8":market.status==="PRICE_UP"?"#f97316":market.status==="PRICE_DOWN"?"#3b82f6":"#a855f7"}
+          rightNode={<CacheTag fromCache={market.from_cache} ageS={market.cache_age_s}/>}
+          skip={market.status==="SKIP" ? "Piyasa verisi atlandı" : null}
+        >
+          {market.status==="ERROR" ? (
+            <Row label="Hata" danger>{market.reason||"bookfinder_failed"}</Row>
+          ) : (
+            <>
+              {market.cheapest_found!=null && (
+                <Row label="En ucuz">
+                  ${market.cheapest_found?.toFixed(2)}
+                  {market.cheapest_source && <span style={{color:C.muted,marginLeft:5}}>@ {market.cheapest_source}</span>}
+                </Row>
+              )}
+              {market.expected_price!=null && <Row label="Beklenen">${market.expected_price?.toFixed(2)}</Row>}
+              {market.price_delta!=null && (
+                <Row label="Fark">
+                  <span style={{color:market.price_delta>0?"#f97316":"#22c55e"}}>
+                    {market.price_delta>0?"+":""}{market.price_delta?.toFixed(2)} ({market.price_delta_pct?.toFixed(1)}%)
                   </span>
-                )}
-              </span>
-            </div>
+                </Row>
+              )}
+              {market.data_source && <Row label="Kaynak">{market.data_source}</Row>}
+            </>
           )}
-          {ebay.isbn_check && (
-            <div style={rowStyle}>
-              <span style={key}>ISBN eşleşmesi</span>
-              <Badge text={ebay.isbn_check} />
-            </div>
-          )}
-          {ebay.condition && (
-            <div style={rowStyle}>
-              <span style={key}>Kondisyon</span>
-              <span style={val}>{ebay.condition}</span>
-            </div>
-          )}
-          {ebay.reason && ebay.status !== "VERIFIED" && (
-            <div style={rowStyle}>
-              <span style={key}>Sebep</span>
-              <span style={{...val,color:"#ef4444"}}>{ebay.reason}</span>
-            </div>
-          )}
-          {(ebay.status === "SKIP" || ebay.reason === "not_ebay") && (
-            <div style={{padding:"8px 12px",color:C.muted,fontSize:10}}>
-              eBay ilanı değil — adım atlandı
-            </div>
-          )}
-        </div>
+        </Step>
 
-        {/* Step 2 — Market (BookFinder/AbeBooks) */}
-        <div style={section}>
-          <div style={sHdr(market.status==="PRICE_UP"?"#f97316":market.status==="PRICE_DOWN"?"#3b82f6":"#a855f7")}>
-            <span>Adım 2 — Piyasa Fiyatı</span>
-            <Badge text={market.status||"SKIP"} />
-            <span style={{marginLeft:"auto"}}>
-              <CacheTag fromCache={market.from_cache} ageS={market.cache_age_s} />
+        {/* ── Step 3: Vision ── */}
+        <Step
+          num={3} title="Görsel AI"
+          stepStatus={vision.verdict||vision.status}
+          accentColor={vision.verdict==="MATCH"?"#22c55e":vision.verdict==="MISMATCH"?"#ef4444":vision.verdict==="STOCK_PHOTO"?"#f97316":"#94a3b8"}
+          rightNode={vision.provider ? <ProvBadge provider={vision.provider} model={vision.model}/> : null}
+          skip={(!vision.verdict||vision.verdict==="NO_IMAGE"||vision.status==="SKIP") ? (vision.notes||"Görsel doğrulama atlandı") : null}
+        >
+          {vision.confidence!=null && <Row label="Güven">
+            <span style={{color:vision.confidence>70?"#22c55e":vision.confidence>40?"#eab308":"#ef4444",fontWeight:700}}>
+              %{vision.confidence}
             </span>
-          </div>
-          {market.cheapest_found != null && (
-            <div style={rowStyle}>
-              <span style={key}>En ucuz bulduğu</span>
-              <span style={val}>${market.cheapest_found?.toFixed(2)}
-                {market.cheapest_source && (
-                  <span style={{color:C.muted,marginLeft:5}}>@ {market.cheapest_source}</span>
-                )}
+          </Row>}
+          {vision.notes && <Row label="Not">{vision.notes}</Row>}
+          {vision.title_visible!=null && <Row label="Başlık görünür">{vision.title_visible?"✅ Evet":"❌ Hayır"}</Row>}
+          {vision.author_visible!=null && <Row label="Yazar görünür">{vision.author_visible?"✅ Evet":"❌ Hayır"}</Row>}
+          {vision.is_stock_photo!=null && (
+            <Row label="Stock fotoğraf">
+              <span style={{color:vision.is_stock_photo?"#f97316":"#22c55e"}}>
+                {vision.is_stock_photo?"⚠️ Evet":"✅ Hayır"}
               </span>
-            </div>
+            </Row>
           )}
-          {market.expected_price != null && (
-            <div style={rowStyle}>
-              <span style={key}>Beklenen fiyat</span>
-              <span style={val}>${market.expected_price?.toFixed(2)}</span>
-            </div>
-          )}
-          {market.price_delta != null && (
-            <div style={rowStyle}>
-              <span style={key}>Fark</span>
-              <span style={{...val, color: market.price_delta > 0 ? "#f97316" : "#22c55e"}}>
-                {market.price_delta > 0 ? "+" : ""}{market.price_delta?.toFixed(2)} ({market.price_delta_pct?.toFixed(1)}%)
-              </span>
-            </div>
-          )}
-          {market.data_source && (
-            <div style={rowStyle}>
-              <span style={key}>Kaynak</span>
-              <span style={val}>{market.data_source}</span>
-            </div>
-          )}
-          {market.reason && market.status !== "VERIFIED" && (
-            <div style={rowStyle}>
-              <span style={key}>Hata</span>
-              <span style={{...val,color:C.muted}}>{market.reason}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Step 3 — Vision AI */}
-        <div style={section}>
-          <div style={sHdr(
-            vision.verdict==="MATCH"?"#22c55e":
-            vision.verdict==="MISMATCH"?"#ef4444":
-            vision.verdict==="STOCK_PHOTO"?"#f97316":"#6b7280"
-          )}>
-            <span>Adım 3 — Görsel AI</span>
-            <Badge text={vision.verdict||vision.status||"SKIP"} />
-            {vision.provider && (
-              <span style={{marginLeft:"auto"}}>
-                <ProviderBadge provider={vision.provider} model={vision.model} />
-              </span>
-            )}
-          </div>
-
-          {(vision.verdict === "SKIP" || vision.status === "SKIP" || !vision.verdict || vision.verdict === "NO_IMAGE") && (
-            <div style={{padding:"8px 12px",color:C.muted,fontSize:10}}>
-              {vision.notes || "Görsel doğrulama atlandı"}
-            </div>
-          )}
-
-          {vision.confidence != null && vision.verdict !== "NO_IMAGE" && (
-            <div style={rowStyle}>
-              <span style={key}>Güven</span>
-              <span style={{...val, color: vision.confidence > 70 ? "#22c55e" : vision.confidence > 40 ? "#eab308" : "#ef4444"}}>
-                %{vision.confidence}
-              </span>
-            </div>
-          )}
-          {vision.notes && vision.verdict !== "NO_IMAGE" && (
-            <div style={rowStyle}>
-              <span style={key}>Not</span>
-              <span style={{...val,maxWidth:240}}>{vision.notes}</span>
-            </div>
-          )}
-          {vision.title_visible != null && (
-            <div style={rowStyle}>
-              <span style={key}>Başlık görünür</span>
-              <span style={val}>{vision.title_visible ? "✅ Evet" : "❌ Hayır"}</span>
-            </div>
-          )}
-          {vision.author_visible != null && (
-            <div style={rowStyle}>
-              <span style={key}>Yazar görünür</span>
-              <span style={val}>{vision.author_visible ? "✅ Evet" : "❌ Hayır"}</span>
-            </div>
-          )}
-          {vision.is_stock_photo != null && (
-            <div style={rowStyle}>
-              <span style={key}>Stock fotoğraf</span>
-              <span style={{...val, color: vision.is_stock_photo ? "#f97316" : C.text}}>
-                {vision.is_stock_photo ? "⚠️ Evet" : "✅ Hayır"}
-              </span>
-            </div>
-          )}
-          {vision.condition_notes && (
-            <div style={rowStyle}>
-              <span style={key}>Kondisyon notu</span>
-              <span style={{...val,maxWidth:240}}>{vision.condition_notes}</span>
-            </div>
-          )}
+          {vision.condition_notes && <Row label="Kondisyon">{vision.condition_notes}</Row>}
           {vision.stock_photo_risk && (
-            <div style={{
-              margin:"6px 10px", padding:"6px 10px", borderRadius:6,
-              background:"#f9731618", border:"1px solid #f9731644",
-              fontSize:10, color:"#f97316",
-            }}>
-              ⚠️ Stock fotoğraf + used kondisyon: gerçek durumu görmüyorsunuz.
+            <div style={{margin:"6px 16px 4px",padding:"7px 10px",borderRadius:6,
+              background:"#f9731612",borderLeft:"3px solid #f97316",fontSize:10,color:"#f97316"}}>
+              ⚠️ Stock fotoğraf + used kondisyon: gerçek durum gizli olabilir.
             </div>
           )}
-        </div>
+        </Step>
 
-        <div style={{height:24}} />
+        <div style={{height:32}}/>
       </div>
     </div>
   );
