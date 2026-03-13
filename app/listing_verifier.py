@@ -178,17 +178,17 @@ async def _verify_abebooks_price(
     expected_price: float,
     client: httpx.AsyncClient,
 ) -> Dict[str, Any]:
-    """AbeBooks ve BookFinder üzerinden mevcut piyasa tabanını doğrula."""
-    try:
-        from app.bookfinder_client import fetch_bookfinder
+    """AbeBooks ve BookFinder üzerinden mevcut piyasa tabanını doğrula.
 
-        # force=False → cache kullan (bulk verify'da scraper aşırı yüklenmesin)
-        # Cache TTL bookfinder_client'ta 2 saat — yeterli
-        result = await fetch_bookfinder(isbn, condition="all", force=False)
-        if not result.get("ok"):
-            return {"status": "ERROR", "reason": "bookfinder_failed"}
+    Strateji:
+      1. Önce cache'e bak (force=False).
+      2. Cache'de veri yoksa veya fiyat çıkmadıysa → live fetch (force=True).
+      3. Her iki girişim de başarısızsa → ERROR döndür.
+    """
+    from app.bookfinder_client import fetch_bookfinder
 
-        # En ucuz fiyatı bul
+    def _extract_cheapest(result: dict):
+        """Sonuç dict'inden en ucuz fiyat + kaynağı çıkar."""
         cheapest = None
         source = None
         for cond_key in ("used", "new"):
@@ -205,9 +205,34 @@ async def _verify_abebooks_price(
                             source = offer.get("source", "")
                     except (TypeError, ValueError):
                         pass
+        return cheapest, source
+
+    try:
+        # Adım 1: cache
+        result = await fetch_bookfinder(isbn, condition="all", force=False)
+        from_cache = result.get("cached", False)
+        cache_age_s = result.get("cache_age_s", 0)
+
+        cheapest, source = (None, None)
+        if result.get("ok"):
+            cheapest, source = _extract_cheapest(result)
+
+        # Adım 2: cache'de fiyat çıkmadıysa live fetch yap
+        if cheapest is None:
+            logger.info("bookfinder isbn=%s cache miss/empty — live fetch", isbn)
+            result = await fetch_bookfinder(isbn, condition="all", force=True)
+            from_cache = False
+            cache_age_s = 0
+            if result.get("ok"):
+                cheapest, source = _extract_cheapest(result)
 
         if cheapest is None:
-            return {"status": "ERROR", "reason": "no_prices_found"}
+            return {
+                "status": "ERROR",
+                "reason": "no_prices_found",
+                "from_cache": from_cache,
+                "data_source": "BookFinder/AbeBooks",
+            }
 
         delta = round(cheapest - expected_price, 2)
         delta_pct = round(delta / expected_price * 100, 1) if expected_price else 0
@@ -226,8 +251,8 @@ async def _verify_abebooks_price(
             "price_delta": delta,
             "price_delta_pct": delta_pct,
             "cheapest_source": source,
-            "from_cache": result.get("cached", False),
-            "cache_age_s": result.get("cache_age_s", 0),
+            "from_cache": from_cache,
+            "cache_age_s": cache_age_s,
             "data_source": "BookFinder/AbeBooks",
         }
 

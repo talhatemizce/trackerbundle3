@@ -1965,233 +1965,238 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
   if (!data) return null;
   const { ebay = {}, market = {}, vision = {}, status, summary, checked_at } = data;
 
-  const SC = {
+  const STATUS_COLOR = {
     VERIFIED:"#22c55e", VERIFIED_STOCK_PHOTO:"#f97316",
     GONE:"#ef4444", PRICE_UP:"#f97316", PRICE_DOWN:"#3b82f6",
     MISMATCH:"#ef4444", ERROR:"#94a3b8", SKIP:"#94a3b8",
     MATCH:"#22c55e", UNCERTAIN:"#eab308", STOCK_PHOTO:"#f97316", NO_IMAGE:"#94a3b8",
   };
 
-  const Pill = ({ text }) => {
-    const col = SC[text] || "#94a3b8";
-    return (
-      <span style={{
-        display:"inline-block", padding:"2px 8px", borderRadius:99,
-        fontSize:10, fontWeight:700, letterSpacing:"0.04em",
-        background:`${col}20`, color:col,
-      }}>{text}</span>
-    );
-  };
+  const sc = (s) => STATUS_COLOR[s] || "#94a3b8";
 
-  const Tag = ({ children, color="#94a3b8" }) => (
+  /* ── tiny helpers ────────────────────────────────────────── */
+  const Pill = ({ s }) => (
     <span style={{
-      display:"inline-block", padding:"1px 7px", borderRadius:99,
-      fontSize:9, fontWeight:600, background:`${color}18`, color,
+      padding:"2px 8px", borderRadius:99, fontSize:10, fontWeight:700,
+      background: sc(s)+"22", color: sc(s), whiteSpace:"nowrap",
+    }}>{s||"?"}</span>
+  );
+
+  const SmTag = ({ children, col="#94a3b8" }) => (
+    <span style={{
+      padding:"1px 6px", borderRadius:99, fontSize:9,
+      background: col+"18", color: col, whiteSpace:"nowrap",
     }}>{children}</span>
   );
 
-  const ProvBadge = ({ provider, model }) => {
-    if (!provider || provider==="unknown") return null;
-    const map = { groq:"#f55036", cerebras:"#6366f1", openrouter:"#10b981", gemini:"#4285f4", google:"#4285f4" };
+  const ProvBadge = ({ provider="", model="" }) => {
+    const map = {groq:"#f55036",cerebras:"#6366f1",openrouter:"#10b981",gemini:"#4285f4",google:"#4285f4"};
     const k = Object.keys(map).find(k => provider.toLowerCase().includes(k));
     const col = map[k] || "#94a3b8";
-    const shortModel = model ? model.split("/").pop().replace(/-\d{8}$/,"").slice(0,22) : "";
-    return <Tag color={col}>🤖 {provider}{shortModel ? ` · ${shortModel}` : ""}</Tag>;
+    const m = model.split("/").pop().replace(/-\d{8}$/,"").slice(0,20);
+    return <SmTag col={col}>🤖 {provider}{m ? " · "+m : ""}</SmTag>;
   };
 
-  const CacheTag = ({ fromCache, ageS }) => {
-    if (!fromCache) return <Tag color="#94a3b8">🌐 live</Tag>;
-    const mins = Math.round((ageS||0)/60);
-    return <Tag color="#a855f7">⚡ cache · {mins}dk</Tag>;
-  };
+  const LiveCacheTag = ({ fromCache, ageS }) =>
+    fromCache
+      ? <SmTag col="#a855f7">⚡ cache · {Math.round((ageS||0)/60)}dk</SmTag>
+      : <SmTag col="#64748b">🌐 live</SmTag>;
 
-  // ─── Step block ────────────────────────────────────────────────────────────
-  const Step = ({ num, title, stepStatus, accentColor, rightNode, children, skip }) => {
-    const col = accentColor || SC[stepStatus] || "#94a3b8";
+  /* ── data row (label left, value right) ─────────────────── */
+  const R = ({ label, val, danger, mono }) => (
+    <div style={{
+      display:"grid", gridTemplateColumns:"100px 1fr",
+      gap:8, padding:"5px 16px", alignItems:"start",
+    }}>
+      <span style={{color:C.muted, fontSize:10, paddingTop:1, flexShrink:0}}>{label}</span>
+      <span style={{
+        fontSize:11, color: danger ? "#ef4444" : C.text,
+        textAlign:"right", wordBreak:"break-word", lineHeight:1.5,
+        fontFamily: mono ? "var(--mono)" : undefined,
+      }}>{val}</span>
+    </div>
+  );
+
+  /* ── section wrapper ─────────────────────────────────────── */
+  const Section = ({ num, title, statusKey, accent, rightTag, children, skipMsg }) => {
+    const col = accent || sc(statusKey);
     return (
-      <div style={{ margin:"0 0 1px", borderTop:`1px solid ${C.border}` }}>
-        {/* Step header — 2 rows, no overflow */}
-        <div style={{ padding:"10px 16px 6px", background:`${col}09` }}>
+      <div style={{borderTop:`1px solid ${C.border}`, paddingBottom:6}}>
+        {/* header */}
+        <div style={{background:`${col}0e`, padding:"8px 16px 6px"}}>
+          <div style={{
+            fontSize:9, fontWeight:700, letterSpacing:"0.1em",
+            color:col, textTransform:"uppercase", marginBottom:4,
+          }}>
+            Adım {num}
+          </div>
           <div style={{
             display:"flex", alignItems:"center",
-            justifyContent:"space-between", marginBottom:4,
+            justifyContent:"space-between", gap:8,
           }}>
-            <span style={{
-              fontSize:9, fontWeight:700, letterSpacing:"0.1em",
-              color:col, textTransform:"uppercase",
-            }}>Adım {num}</span>
-            {rightNode && <div>{rightNode}</div>}
-          </div>
-          <div style={{
-            display:"flex", alignItems:"center", gap:8, flexWrap:"wrap",
-          }}>
-            <span style={{ fontSize:12, fontWeight:700, color:C.text }}>{title}</span>
-            {stepStatus && <Pill text={stepStatus} />}
+            <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", minWidth:0}}>
+              <span style={{fontSize:12, fontWeight:700, color:C.text}}>{title}</span>
+              {statusKey && <Pill s={statusKey}/>}
+            </div>
+            {rightTag && <div style={{flexShrink:0}}>{rightTag}</div>}
           </div>
         </div>
-        {/* Rows */}
-        {skip ? (
-          <div style={{ padding:"8px 16px 10px", color:C.muted, fontSize:10 }}>{skip}</div>
-        ) : (
-          <div style={{ paddingBottom:4 }}>{children}</div>
-        )}
+        {/* body */}
+        {skipMsg
+          ? <div style={{padding:"7px 16px", color:C.muted, fontSize:10}}>{skipMsg}</div>
+          : children
+        }
       </div>
     );
   };
 
-  // ─── Data row ──────────────────────────────────────────────────────────────
-  const Row = ({ label, children, danger }) => (
-    <div style={{
-      display:"flex", justifyContent:"space-between", alignItems:"flex-start",
-      padding:"5px 16px", gap:12,
-    }}>
-      <span style={{ color:C.muted, fontSize:10, flexShrink:0, paddingTop:1 }}>{label}</span>
-      <span style={{
-        color: danger ? "#ef4444" : C.text,
-        fontSize:11, textAlign:"right", wordBreak:"break-word", maxWidth:240,
-        lineHeight:1.4,
-      }}>{children}</span>
-    </div>
-  );
-
-  const checkedDate = checked_at ? new Date(checked_at*1000).toLocaleTimeString("tr-TR") : null;
-  const summaryCol = SC[status] || "#94a3b8";
+  const checkedAt = checked_at ? new Date(checked_at*1000).toLocaleTimeString("tr-TR") : null;
+  const sumCol = sc(status);
+  const isSkipVision = !vision.verdict || vision.verdict==="NO_IMAGE" || vision.status==="SKIP";
 
   return (
     <div
-      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:900, display:"flex", justifyContent:"flex-end" }}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:900,display:"flex",justifyContent:"flex-end"}}
       onClick={onClose}
     >
       <div
-        style={{
-          width:400, maxWidth:"95vw", height:"100vh", background:C.card,
-          borderLeft:`1px solid ${C.border}`, overflowY:"auto",
-          display:"flex", flexDirection:"column", fontFamily:"var(--mono)",
-        }}
         onClick={e=>e.stopPropagation()}
+        style={{
+          width:400, maxWidth:"95vw", height:"100vh",
+          background:C.card, borderLeft:`1px solid ${C.border}`,
+          overflowY:"auto", display:"flex", flexDirection:"column",
+          fontFamily:"var(--mono)",
+        }}
       >
-        {/* ── Top bar ── */}
+        {/* ── top bar ── */}
         <div style={{
-          padding:"12px 16px", display:"flex", alignItems:"center",
-          justifyContent:"space-between", position:"sticky", top:0,
-          background:C.card, borderBottom:`1px solid ${C.border}`, zIndex:2,
+          position:"sticky", top:0, zIndex:2,
+          background:C.card, borderBottom:`1px solid ${C.border}`,
+          padding:"11px 14px",
+          display:"flex", alignItems:"center", justifyContent:"space-between",
         }}>
           <div>
-            <div style={{ fontSize:13, fontWeight:700, color:C.text }}>Doğrulama Detayı</div>
-            {row?.isbn && (
-              <div style={{ fontSize:10, color:C.muted, marginTop:1 }}>
-                {row.isbn}{checkedDate ? ` · ${checkedDate}` : ""}
-              </div>
-            )}
+            <div style={{fontSize:13, fontWeight:700, color:C.text}}>Doğrulama Detayı</div>
+            <div style={{fontSize:10, color:C.muted, marginTop:1}}>
+              {row?.isbn}{checkedAt ? " · "+checkedAt : ""}
+            </div>
           </div>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <Pill text={status||"?"} />
-            <button onClick={onClose} style={{
-              background:"none", border:"none", cursor:"pointer",
-              color:C.muted, fontSize:18, lineHeight:1, padding:"2px 4px",
-            }}>×</button>
+          <div style={{display:"flex", alignItems:"center", gap:8}}>
+            <Pill s={status}/>
+            <button
+              onClick={onClose}
+              style={{background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:20,lineHeight:1,padding:0}}
+            >×</button>
           </div>
         </div>
 
-        {/* ── Summary banner ── */}
+        {/* ── summary ── */}
         <div style={{
-          padding:"9px 16px",
-          borderLeft:`3px solid ${summaryCol}`,
-          background:`${summaryCol}0d`,
+          padding:"9px 14px 9px 16px",
+          borderLeft:`3px solid ${sumCol}`,
+          background:`${sumCol}0d`,
           borderBottom:`1px solid ${C.border}`,
           fontSize:11, color:C.text, lineHeight:1.6,
         }}>
-          {summary || "Doğrulama tamamlandı."}
+          {summary||"Doğrulama tamamlandı."}
         </div>
 
         {/* ── Step 1: eBay API ── */}
-        <Step
+        <Section
           num={1} title="eBay API"
-          stepStatus={ebay.status}
-          accentColor={ebay.status==="GONE"?"#ef4444":ebay.status?.includes("PRICE")?"#f97316":"#22c55e"}
-          rightNode={<Tag color="#94a3b8">🌐 live</Tag>}
-          skip={(ebay.status==="SKIP"||ebay.reason==="not_ebay") ? "eBay ilanı değil — atlandı" : null}
+          statusKey={ebay.status}
+          accent={ebay.status==="GONE"?"#ef4444":ebay.status?.includes("PRICE")?"#f97316":"#22c55e"}
+          rightTag={<LiveCacheTag fromCache={false}/>}
+          skipMsg={(ebay.status==="SKIP"||ebay.reason==="not_ebay") ? "eBay ilanı değil — atlandı" : null}
         >
-          {ebay.item_title && <Row label="İlan">{ebay.item_title}</Row>}
-          {ebay.current_price != null && (
-            <Row label="Anlık fiyat">
-              ${ebay.current_price?.toFixed(2)}
-              {ebay.price_delta != null && (
-                <span style={{ color: ebay.price_delta>0?"#f97316":"#22c55e", marginLeft:6 }}>
-                  {ebay.price_delta>0?"+":""}{ebay.price_delta?.toFixed(2)} ({ebay.price_delta_pct?.toFixed(1)}%)
-                </span>
-              )}
-            </Row>
+          {ebay.item_title  && <R label="İlan"       val={ebay.item_title}/>}
+          {ebay.current_price!=null && (
+            <R label="Anlık fiyat" val={
+              <span>
+                ${ebay.current_price?.toFixed(2)}
+                {ebay.price_delta!=null && (
+                  <span style={{color:ebay.price_delta>0?"#f97316":"#22c55e",marginLeft:6}}>
+                    {ebay.price_delta>0?"+":""}{ebay.price_delta?.toFixed(2)} ({ebay.price_delta_pct?.toFixed(1)}%)
+                  </span>
+                )}
+              </span>
+            }/>
           )}
-          {ebay.isbn_check && <Row label="ISBN"><Pill text={ebay.isbn_check}/></Row>}
-          {ebay.condition && <Row label="Kondisyon">{ebay.condition}</Row>}
-          {ebay.reason && ebay.status!=="VERIFIED" && <Row label="Neden" danger>{ebay.reason}</Row>}
-        </Step>
+          {ebay.isbn_check  && <R label="ISBN" val={<Pill s={ebay.isbn_check}/>}/>}
+          {ebay.condition   && <R label="Kondisyon"  val={ebay.condition}/>}
+          {ebay.reason && ebay.status!=="VERIFIED" && <R label="Neden" val={ebay.reason} danger/>}
+        </Section>
 
         {/* ── Step 2: Market ── */}
-        <Step
+        <Section
           num={2} title="Piyasa Fiyatı"
-          stepStatus={market.status}
-          accentColor={market.status==="ERROR"?"#94a3b8":market.status==="PRICE_UP"?"#f97316":market.status==="PRICE_DOWN"?"#3b82f6":"#a855f7"}
-          rightNode={<CacheTag fromCache={market.from_cache} ageS={market.cache_age_s}/>}
-          skip={market.status==="SKIP" ? "Piyasa verisi atlandı" : null}
+          statusKey={market.status}
+          accent={market.status==="ERROR"?"#94a3b8":market.status==="PRICE_UP"?"#f97316":market.status==="PRICE_DOWN"?"#3b82f6":"#a855f7"}
+          rightTag={<LiveCacheTag fromCache={market.from_cache} ageS={market.cache_age_s}/>}
+          skipMsg={market.status==="SKIP"?"Piyasa verisi atlandı":null}
         >
-          {market.status==="ERROR" ? (
-            <Row label="Hata" danger>{market.reason||"bookfinder_failed"}</Row>
-          ) : (
-            <>
-              {market.cheapest_found!=null && (
-                <Row label="En ucuz">
-                  ${market.cheapest_found?.toFixed(2)}
-                  {market.cheapest_source && <span style={{color:C.muted,marginLeft:5}}>@ {market.cheapest_source}</span>}
-                </Row>
-              )}
-              {market.expected_price!=null && <Row label="Beklenen">${market.expected_price?.toFixed(2)}</Row>}
-              {market.price_delta!=null && (
-                <Row label="Fark">
-                  <span style={{color:market.price_delta>0?"#f97316":"#22c55e"}}>
-                    {market.price_delta>0?"+":""}{market.price_delta?.toFixed(2)} ({market.price_delta_pct?.toFixed(1)}%)
-                  </span>
-                </Row>
-              )}
-              {market.data_source && <Row label="Kaynak">{market.data_source}</Row>}
-            </>
-          )}
-        </Step>
+          {market.status==="ERROR"
+            ? <R label="Hata" val={market.reason||"no_prices_found"} danger/>
+            : <>
+                {market.cheapest_found!=null && (
+                  <R label="En ucuz" val={
+                    <span>
+                      ${market.cheapest_found?.toFixed(2)}
+                      {market.cheapest_source&&<span style={{color:C.muted,marginLeft:5}}>@ {market.cheapest_source}</span>}
+                    </span>
+                  }/>
+                )}
+                {market.expected_price!=null && <R label="Beklenen" val={`$${market.expected_price?.toFixed(2)}`}/>}
+                {market.price_delta!=null && (
+                  <R label="Fark" val={
+                    <span style={{color:market.price_delta>0?"#f97316":"#22c55e"}}>
+                      {market.price_delta>0?"+":""}{market.price_delta?.toFixed(2)} ({market.price_delta_pct?.toFixed(1)}%)
+                    </span>
+                  }/>
+                )}
+                {market.data_source && <R label="Kaynak" val={market.data_source}/>}
+              </>
+          }
+        </Section>
 
-        {/* ── Step 3: Vision ── */}
-        <Step
+        {/* ── Step 3: Vision AI ── */}
+        <Section
           num={3} title="Görsel AI"
-          stepStatus={vision.verdict||vision.status}
-          accentColor={vision.verdict==="MATCH"?"#22c55e":vision.verdict==="MISMATCH"?"#ef4444":vision.verdict==="STOCK_PHOTO"?"#f97316":"#94a3b8"}
-          rightNode={vision.provider ? <ProvBadge provider={vision.provider} model={vision.model}/> : null}
-          skip={(!vision.verdict||vision.verdict==="NO_IMAGE"||vision.status==="SKIP") ? (vision.notes||"Görsel doğrulama atlandı") : null}
+          statusKey={vision.verdict||vision.status}
+          accent={vision.verdict==="MATCH"?"#22c55e":vision.verdict==="MISMATCH"?"#ef4444":vision.verdict==="STOCK_PHOTO"?"#f97316":"#94a3b8"}
+          rightTag={vision.provider ? <ProvBadge provider={vision.provider} model={vision.model||""}/> : null}
+          skipMsg={isSkipVision ? (vision.notes||"Görsel doğrulama atlandı") : null}
         >
-          {vision.confidence!=null && <Row label="Güven">
-            <span style={{color:vision.confidence>70?"#22c55e":vision.confidence>40?"#eab308":"#ef4444",fontWeight:700}}>
-              %{vision.confidence}
-            </span>
-          </Row>}
-          {vision.notes && <Row label="Not">{vision.notes}</Row>}
-          {vision.title_visible!=null && <Row label="Başlık görünür">{vision.title_visible?"✅ Evet":"❌ Hayır"}</Row>}
-          {vision.author_visible!=null && <Row label="Yazar görünür">{vision.author_visible?"✅ Evet":"❌ Hayır"}</Row>}
+          {vision.confidence!=null && (
+            <R label="Güven" val={
+              <span style={{color:vision.confidence>70?"#22c55e":vision.confidence>40?"#eab308":"#ef4444",fontWeight:700}}>
+                %{vision.confidence}
+              </span>
+            }/>
+          )}
+          {vision.notes         && <R label="Not"          val={vision.notes}/>}
+          {vision.title_visible !=null && <R label="Başlık" val={vision.title_visible ?"✅ Evet":"❌ Hayır"}/>}
+          {vision.author_visible!=null && <R label="Yazar"  val={vision.author_visible?"✅ Evet":"❌ Hayır"}/>}
           {vision.is_stock_photo!=null && (
-            <Row label="Stock fotoğraf">
+            <R label="Stock foto" val={
               <span style={{color:vision.is_stock_photo?"#f97316":"#22c55e"}}>
                 {vision.is_stock_photo?"⚠️ Evet":"✅ Hayır"}
               </span>
-            </Row>
+            }/>
           )}
-          {vision.condition_notes && <Row label="Kondisyon">{vision.condition_notes}</Row>}
+          {vision.condition_notes && <R label="Kondisyon" val={vision.condition_notes}/>}
           {vision.stock_photo_risk && (
-            <div style={{margin:"6px 16px 4px",padding:"7px 10px",borderRadius:6,
-              background:"#f9731612",borderLeft:"3px solid #f97316",fontSize:10,color:"#f97316"}}>
-              ⚠️ Stock fotoğraf + used kondisyon: gerçek durum gizli olabilir.
+            <div style={{
+              margin:"4px 14px 4px", padding:"7px 10px", borderRadius:6,
+              borderLeft:"3px solid #f97316", background:"#f9731610",
+              fontSize:10, color:"#f97316", lineHeight:1.5,
+            }}>
+              ⚠️ Stock fotoğraf + used kondisyon — gerçek durum gizli olabilir.
             </div>
           )}
-        </Step>
+        </Section>
 
-        <div style={{height:32}}/>
+        <div style={{height:28}}/>
       </div>
     </div>
   );
