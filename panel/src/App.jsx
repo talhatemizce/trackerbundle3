@@ -1110,6 +1110,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   const [isbnMatchPolicy, setIsbnMatchPolicy] = useState("balanced");
   const [invalidIsbnPolicy, setInvalidIsbnPolicy] = useState("best_effort");
   const [verifiedOnlyFilter, setVerifiedOnlyFilter] = useState(false);
+  const [buybackOnlyFilter, setBuybackOnlyFilter] = useState(false);
   const [verifyResults, setVerifyResults] = useState({}); // {rowIndex: {status, summary, ...}}
   const [verifying, setVerifying] = useState(new Set()); // indices being verified
   const [bulkVerifying, setBulkVerifying] = useState(false);
@@ -1579,9 +1580,15 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           </div>
 
           {/* Verified only filter */}
-          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
+          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:4, cursor:"pointer"}}>
             <input type="checkbox" checked={verifiedOnlyFilter} onChange={e=>setVerifiedOnlyFilter(e.target.checked)}/>
             <span>Sadece Doğrulanmış <span style={{fontSize:9,color:C.muted}}>(CONFIRMED eşleşmeler)</span></span>
+          </label>
+
+          {/* Buyback only filter */}
+          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
+            <input type="checkbox" checked={buybackOnlyFilter} onChange={e=>setBuybackOnlyFilter(e.target.checked)}/>
+            <span>💰 Buyback kârlı <span style={{fontSize:9,color:C.muted}}>(buyback_profit &gt; $0)</span></span>
           </label>
 
           <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6}}>
@@ -1859,7 +1866,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                   <table style={{width:"100%", borderCollapse:"collapse", fontSize:11}}>
                     <thead>
                       <tr style={{background:C.surface2, borderBottom:`1px solid ${C.border}`}}>
-                        {[activeView==="accepted"?"☑":"","ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Kar $","ROI %","Tier",activeView==="accepted"?"Güven":"",activeView==="accepted"?"EV/mo":"",activeView==="accepted"?"Worst":"",activeView==="accepted"?"Linkler":"",activeView==="accepted"?"Doğrula":"",activeView==="rejected"?"Sebep":"",activeView==="rejected"?"Aksiyon":""].filter(Boolean).map(h=>(
+                        {[activeView==="accepted"?"☑":"","ISBN","ASIN","Kaynak","Cond","Alım $","Amazon $","Kar $","ROI %","Tier",activeView==="accepted"?"Güven":"",activeView==="accepted"?"EV/mo":"",activeView==="accepted"?"Worst":"",activeView==="accepted"?"Buyback":"",activeView==="accepted"?"Linkler":"",activeView==="accepted"?"Doğrula":"",activeView==="rejected"?"Sebep":"",activeView==="rejected"?"Aksiyon":""].filter(Boolean).map(h=>(
                           <th key={h} style={{padding:"8px 10px", textAlign:"left", color:C.muted, fontWeight:600, whiteSpace:"nowrap"}}>{h}</th>
                         ))}
                       </tr>
@@ -1867,6 +1874,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                     <tbody>
                       {(activeView==="accepted" ? results.accepted : results.rejected)
                         .filter(r => !verifiedOnlyFilter || r.match_quality === "CONFIRMED")
+                        .filter(r => !buybackOnlyFilter || (r.buyback_profit != null && r.buyback_profit > 0))
                         .map((r,i)=>(
                         <tr key={i} style={{borderBottom:`1px solid ${C.border}`, background: selectedRows.has(i)?(C.accent+"18"):i%2===0?C.surface:C.surface2, transition:"background .1s"}}>
                           {activeView==="accepted"&&(
@@ -1966,6 +1974,33 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                             <td style={{padding:"7px 10px", textAlign:"center", color:"#f97316", fontSize:11}}>
                               {r.worst_case_profit!=null?`$${r.worst_case_profit}`:"—"}
                               {r.worst_cut_pct!=null&&<span style={{fontSize:9,color:C.muted,marginLeft:2}}>({r.worst_cut_pct}%↓)</span>}
+                            </td>
+                          )}
+                          {/* Buyback channel */}
+                          {activeView==="accepted"&&(
+                            <td style={{padding:"6px 8px", textAlign:"center", minWidth:90}}>
+                              {r.buyback_cash!=null ? (
+                                <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+                                  <span style={{
+                                    fontSize:11, fontWeight:700,
+                                    color: r.buyback_profit>0 ? "#22c55e" : "#ef4444",
+                                  }}>
+                                    ${r.buyback_cash}
+                                  </span>
+                                  <span style={{fontSize:9, color:C.muted}}>
+                                    {r.buyback_profit>0 ? `+$${r.buyback_profit} (${r.buyback_roi}%)` : `−$${Math.abs(r.buyback_profit)}`}
+                                  </span>
+                                  {r.buyback_vendor && (
+                                    <a href={r.buyback_url||"#"} target="_blank" rel="noreferrer"
+                                      style={{fontSize:8,color:C.accent,textDecoration:"none",
+                                        opacity:0.8,maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                      {r.buyback_vendor}
+                                    </a>
+                                  )}
+                                </div>
+                              ) : (
+                                <span style={{fontSize:10,color:C.muted3}}>—</span>
+                              )}
                             </td>
                           )}
                           {activeView==="accepted"&&(
@@ -3893,6 +3928,7 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                     {k:"profit",l:"Kar $"},{k:"roi_pct",l:"ROI %"},{k:"roi_tier",l:"Tier"},
                     {k:"confidence",l:"Güven"},{k:"ev_score",l:"EV/mo"},
                     {k:"_ai",l:"AI Sonuç"},
+                    {k:"buyback_cash",l:"💰 Buyback"},
                     {k:"addedAt",l:"Eklenme"},
                     {k:"_verify",l:"Doğrula"},
                     {k:"_actions",l:"Aksiyon"},
@@ -3969,6 +4005,25 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                       </td>
                       <td style={{padding:"7px 10px",color:C.muted,fontSize:10}}>
                         {r.addedAt?new Date(r.addedAt).toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—"}
+                      </td>
+                      <td style={{padding:"6px 8px", textAlign:"center", minWidth:85}}>
+                        {r.buyback_cash!=null ? (
+                          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+                            <span style={{fontSize:11,fontWeight:700,
+                              color:r.buyback_profit>0?"#22c55e":"#ef4444"}}>
+                              ${r.buyback_cash}
+                            </span>
+                            <span style={{fontSize:9,color:C.muted}}>
+                              {r.buyback_profit>0?`+$${r.buyback_profit}`:`−$${Math.abs(r.buyback_profit||0)}`}
+                            </span>
+                            {r.buyback_vendor&&(
+                              <a href={r.buyback_url||"#"} target="_blank" rel="noreferrer"
+                                style={{fontSize:8,color:C.accent,textDecoration:"none"}}>
+                                {r.buyback_vendor}
+                              </a>
+                            )}
+                          </div>
+                        ) : <span style={{color:C.muted3,fontSize:10}}>—</span>}
                       </td>
                       <td style={{padding:"6px 8px",textAlign:"center",minWidth:90}}>
                         {candVerifying.has(r.isbn) ? (

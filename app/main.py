@@ -675,6 +675,28 @@ async def bookfinder_prices(isbn: str, condition: str = "all", force: bool = Fal
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/buyback/{isbn}")
+async def buyback_prices(isbn: str, force: bool = False):
+    """
+    BookScouter + BooksRun buyback fiyatlarını çek.
+    En yüksek nakit teklif, tüm vendor listesi ve kâr hesabı döner.
+
+    Kullanım:
+      GET /buyback/9781565332751
+      GET /buyback/9781565332751?force=true  (cache bypass)
+
+    API keylerini /etc/trackerbundle.env'e ekle:
+      BOOKSCOUTER_API_KEY=...   (api.bookscouter.com — ücretsiz kayıt)
+      BOOKSRUN_API_KEY=...      (booksrun.com/page/api-reference — ücretsiz)
+    """
+    try:
+        from app.buyback_client import fetch_buyback_prices
+        return await fetch_buyback_prices(isbn, force=force)
+    except Exception as e:
+        logger.error("buyback error isbn=%s: %s", isbn, e)
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/telemetry/link-broken")
 async def get_link_telemetry(limit: int = 50):
     """Read last N broken-link reports."""

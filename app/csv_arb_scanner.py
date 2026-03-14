@@ -132,6 +132,12 @@ class ArbResult:
     has_newer_edition: Optional[bool] = None   # daha yeni baskı var mı?
     price_volatility: str = ""                 # "LOW"|"MEDIUM"|"HIGH"
     seasonality_mult: Optional[float] = None   # bu aydaki çarpan
+    # ── Buyback kanalı (BookScouter/BooksRun) ─────────────────────────────────
+    buyback_cash: Optional[float] = None        # en iyi buyback teklifi ($)
+    buyback_vendor: str = ""                    # en iyi vendor adı
+    buyback_url: str = ""                       # vendor URL
+    buyback_profit: Optional[float] = None      # buyback_cash - buy_price - $3.99 nakliye
+    buyback_roi: Optional[float] = None         # % ROI buyback kanalında
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -419,6 +425,17 @@ async def _get_ebay_offers(isbn: str, filters: "ScanFilters | None" = None) -> L
         return [{"_error": err_msg}]  # hata bilgisini taşı
 
 
+
+async def _get_buyback_prices(isbn: str) -> Dict:
+    """BookScouter/BooksRun'dan buyback fiyatları çek."""
+    try:
+        from app.buyback_client import fetch_buyback_prices
+        return await fetch_buyback_prices(isbn)
+    except Exception as e:
+        logger.warning("Buyback fetch failed isbn=%s: %s", isbn, e)
+        return {}
+
+
 async def _get_bookfinder_offers(isbn: str) -> List[Dict]:
     """BookFinder kaynaklarından (AbeBooks, ThriftBooks...) fiyat çek."""
     try:
@@ -480,11 +497,12 @@ async def _scan_one(
         r.reason = "invalid_isbn_or_not_978"
         return [r]
 
-    # Paralel: Amazon + eBay + BookFinder
-    amazon_data, ebay_offers, bf_offers = await asyncio.gather(
+    # Paralel: Amazon + eBay + BookFinder + Buyback
+    amazon_data, ebay_offers, bf_offers, buyback_data = await asyncio.gather(
         _get_amazon_prices(asin),
         _get_ebay_offers(isbn, filters=filters),
         _get_bookfinder_offers(isbn),
+        _get_buyback_prices(isbn),
         return_exceptions=True,
     )
 
@@ -494,6 +512,8 @@ async def _scan_one(
         ebay_offers = []
     if isinstance(bf_offers, Exception):
         bf_offers = []
+    if isinstance(buyback_data, Exception):
+        buyback_data = {}
 
     # Hata itemlarını filtrele ama reason kaydet
     ebay_error = next((o["_error"] for o in (ebay_offers or []) if "_error" in o), None)
@@ -626,6 +646,18 @@ async def _scan_one(
                 r.accepted = False
             else:
                 r.accepted = True
+
+        # ── Buyback kanalı — her offer için aynı buyback verisi ──────────────
+        if isinstance(buyback_data, dict) and buyback_data.get("ok"):
+            best_cash = buyback_data.get("best_cash")
+            if best_cash and best_cash > 0:
+                from app.buyback_client import calc_buyback_profit
+                bb_calc = calc_buyback_profit(o["buy_price"], best_cash)
+                r.buyback_cash   = best_cash
+                r.buyback_vendor = buyback_data.get("best_vendor", "")
+                r.buyback_url    = buyback_data.get("best_url", "")
+                r.buyback_profit = bb_calc["profit"]
+                r.buyback_roi    = bb_calc["roi_pct"]
 
         results.append(r)
 
