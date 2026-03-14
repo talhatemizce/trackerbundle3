@@ -28,27 +28,51 @@ _UA = [
 ]
 
 SOURCE_LABELS = {
-    "bookfinder":  "📚 BookFinder",
-    "abebooks":    "📖 AbeBooks",
-    "thriftbooks": "♻️ ThriftBooks",
-    "bwb":         "🌍 BetterWorldBooks",
-    "biblio":      "📗 Biblio",
-    "alibris":     "📕 Alibris",
-    "goodwill":    "💛 GoodwillBooks",
-    "hpb":         "🔴 HPB",
+    "bookfinder":     "📚 BookFinder",
+    "abebooks":       "📖 AbeBooks",
+    "thriftbooks":    "♻️ ThriftBooks",
+    "bwb":            "🌍 BetterWorldBooks",
+    "biblio":         "📗 Biblio",
+    "alibris":        "📕 Alibris",
+    "goodwill":       "💛 GoodwillBooks",
+    "hpb":            "🔴 HPB",
+    # Bulk sellers
+    "bookpal":        "📦 BookPal",
+    "bookdepot":      "🏭 BookDepot",
+    "textbookrush":   "⚡ TextbookRush",
+    "campusbooks":    "🎓 CampusBooks",
+    "chegg":          "🎒 Chegg",
+    "valorebooks":    "📒 ValoreBooks",
+    # Resale marketplaces (URL-only, no scraping)
+    "mercari":        "🟠 Mercari",
+    "depop":          "🔵 Depop",
+    "poshmark":       "🩷 Poshmark",
+    "etsy":           "🟡 Etsy",
 }
 
 def _source_urls(isbn: str) -> dict:
     """Search URLs per source for a given ISBN."""
     return {
-        "bookfinder":  f"https://www.bookfinder.com/isbn/{isbn}/",
-        "abebooks":    f"https://www.abebooks.com/servlet/SearchResults?isbn={isbn}&n=100121503",
-        "thriftbooks": f"https://www.thriftbooks.com/browse/?b.search={isbn}",
-        "bwb":         f"https://www.betterworldbooks.com/search/results?q={isbn}",
-        "biblio":      f"https://www.biblio.com/search/?q={isbn}&type=isbn",
-        "alibris":     f"https://www.alibris.com/search/books/isbn/{isbn}",
-        "goodwill":    f"https://www.goodwillbooks.com/search?query={isbn}",
-        "hpb":         f"https://www.hpb.com/search?q={isbn}&type=product",
+        "bookfinder":   f"https://www.bookfinder.com/isbn/{isbn}/",
+        "abebooks":     f"https://www.abebooks.com/servlet/SearchResults?isbn={isbn}&n=100121503",
+        "thriftbooks":  f"https://www.thriftbooks.com/browse/?b.search={isbn}",
+        "bwb":          f"https://www.betterworldbooks.com/search/results?q={isbn}",
+        "biblio":       f"https://www.biblio.com/search/?q={isbn}&type=isbn",
+        "alibris":      f"https://www.alibris.com/search/books/isbn/{isbn}",
+        "goodwill":     f"https://www.goodwillbooks.com/search?query={isbn}",
+        "hpb":          f"https://www.hpb.com/search?q={isbn}&type=product",
+        # Bulk sellers
+        "bookpal":      f"https://www.bookpal.com/search?q={isbn}",
+        "bookdepot":    f"https://www.bookdepot.com/Store/Search.aspx?q={isbn}",
+        "textbookrush": f"https://www.textbookrush.com/search?q={isbn}",
+        "campusbooks":  f"https://www.campusbooks.com/search/{isbn}",
+        "chegg":        f"https://www.chegg.com/search?q={isbn}",
+        "valorebooks":  f"https://www.valorebooks.com/search?q={isbn}",
+        # Resale marketplaces (search by ISBN)
+        "mercari":      f"https://www.mercari.com/search/?keyword={isbn}",
+        "depop":        f"https://www.depop.com/search/?q={isbn}",
+        "poshmark":     f"https://poshmark.com/search?query={isbn}&type=listings",
+        "etsy":         f"https://www.etsy.com/search?q={isbn}",
     }
 
 def _cache_path() -> Path:
@@ -329,7 +353,110 @@ async def _src_hpb(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     except Exception as e:
         logger.debug("hpb err=%s", e); return None
 
-# ── Merge ────────────────────────────────────────────────────────────────────
+
+# ── Bulk book sellers ─────────────────────────────────────────────────────────
+
+async def _src_bookpal(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
+    """BookPal — bulk/wholesale new books, typically case-quantity discounts."""
+    url = f"https://www.bookpal.com/search?q={isbn}"
+    try:
+        r = await c.get(url, headers=_hdrs("https://www.bookpal.com/"), timeout=18)
+        if r.status_code != 200: return None
+        all_o = _jsonld_offers(r.text, "BookPal", "BOOKPAL")
+        if not all_o:
+            all_o = _price_regex(r.text, "BookPal", "BOOKPAL", 0.0)
+        if not all_o: return None
+        return {"source": "bookpal",
+                "new":  _stats([o for o in all_o if o["condition"] == "NEW"]),
+                "used": _stats([o for o in all_o if o["condition"] != "NEW"]),
+                "url":  url}
+    except Exception as e:
+        logger.debug("bookpal err=%s", e); return None
+
+
+async def _src_bookdepot(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
+    """BookDepot — Canadian bulk seller, deeply discounted remainders & overstock."""
+    url = f"https://www.bookdepot.com/Store/Search.aspx?q={isbn}"
+    try:
+        r = await c.get(url, headers=_hdrs("https://www.bookdepot.com/"), timeout=18)
+        if r.status_code != 200: return None
+        all_o = _jsonld_offers(r.text, "BookDepot", "BOOKDEPOT")
+        if not all_o:
+            # BookDepot uses span class="price" or data-price attrs
+            for m in re.finditer(r'\$\s*([\d]+\.[\d]{2})', r.text):
+                p = float(m.group(1))
+                if 0.5 < p < 300:
+                    all_o.append(_o(p, 0.0, "BookDepot", "BOOKDEPOT", "NEW"))
+                    if len(all_o) >= 8: break
+        if not all_o: return None
+        return {"source": "bookdepot",
+                "new":  _stats([o for o in all_o if o["condition"] == "NEW"]),
+                "used": _stats([o for o in all_o if o["condition"] != "NEW"]),
+                "url":  url}
+    except Exception as e:
+        logger.debug("bookdepot err=%s", e); return None
+
+
+async def _src_textbookrush(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
+    """TextbookRush — textbook buyback + used textbooks, good for academic ISBNs."""
+    url = f"https://www.textbookrush.com/search?q={isbn}"
+    try:
+        r = await c.get(url, headers=_hdrs("https://www.textbookrush.com/"), timeout=18)
+        if r.status_code != 200: return None
+        all_o = _jsonld_offers(r.text, "TextbookRush", "TBR")
+        if not all_o:
+            all_o = _price_regex(r.text, "TextbookRush", "TBR", 3.99)
+        if not all_o: return None
+        return {"source": "textbookrush",
+                "new":  _stats([o for o in all_o if o["condition"] == "NEW"]),
+                "used": _stats([o for o in all_o if o["condition"] != "NEW"]),
+                "url":  url}
+    except Exception as e:
+        logger.debug("textbookrush err=%s", e); return None
+
+
+async def _src_campusbooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
+    """CampusBooks — price comparison aggregator for textbooks (new + used + rental)."""
+    url = f"https://www.campusbooks.com/search/{isbn}"
+    try:
+        r = await c.get(url, headers=_hdrs("https://www.campusbooks.com/"), timeout=18)
+        if r.status_code != 200: return None
+        all_o = _jsonld_offers(r.text, "CampusBooks", "CB")
+        if not all_o:
+            all_o = _price_regex(r.text, "CampusBooks", "CB", 3.99)
+        if not all_o: return None
+        return {"source": "campusbooks",
+                "new":  _stats([o for o in all_o if o["condition"] == "NEW"]),
+                "used": _stats([o for o in all_o if o["condition"] != "NEW"]),
+                "url":  url}
+    except Exception as e:
+        logger.debug("campusbooks err=%s", e); return None
+
+
+async def _src_chegg(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
+    """Chegg — textbook rental + used sales, strong for college textbooks."""
+    url = f"https://www.chegg.com/search?q={isbn}"
+    try:
+        r = await c.get(url, headers=_hdrs("https://www.chegg.com/"), timeout=18)
+        if r.status_code != 200: return None
+        all_o = _jsonld_offers(r.text, "Chegg", "CHEGG")
+        if not all_o:
+            # Chegg uses JSON data in script tags
+            for m in re.finditer(r'"price"\s*:\s*"?([\d]+\.[\d]{2})"?', r.text):
+                p = float(m.group(1))
+                if 0.5 < p < 400:
+                    all_o.append(_o(p, 0.0, "Chegg", "CHEGG", "USED"))
+                    if len(all_o) >= 6: break
+        if not all_o: return None
+        return {"source": "chegg",
+                "new":  _stats([o for o in all_o if o["condition"] == "NEW"]),
+                "used": _stats([o for o in all_o if o["condition"] != "NEW"]),
+                "url":  url}
+    except Exception as e:
+        logger.debug("chegg err=%s", e); return None
+
+
+# ── Merge ─────────────────────────────────────────────────────────────────────
 def _merge(results: list) -> tuple[list, list]:
     new_all, used_all = [], []
     seen = set()
@@ -381,6 +508,12 @@ async def fetch_bookfinder(isbn: str, condition: str = "all", force: bool = Fals
             _src_alibris(client, isbn_clean),
             _src_goodwill(client, isbn_clean),
             _src_hpb(client, isbn_clean),
+            # Bulk sellers
+            _src_bookpal(client, isbn_clean),
+            _src_bookdepot(client, isbn_clean),
+            _src_textbookrush(client, isbn_clean),
+            _src_campusbooks(client, isbn_clean),
+            _src_chegg(client, isbn_clean),
             return_exceptions=True,
         )
 
@@ -391,7 +524,7 @@ async def fetch_bookfinder(isbn: str, condition: str = "all", force: bool = Fals
     if not results:
         exceptions = [str(r) for r in tasks if isinstance(r, Exception)]
         logger.warning("bookfinder all failed isbn=%s exceptions=%s", isbn_clean, exceptions[:3])
-        return {"ok": False, "error": "Tüm kaynaklar başarısız", "isbn": isbn_clean, "tried": 8, "hint": "VPS IP engellenmiş olabilir"}
+        return {"ok": False, "error": "Tüm kaynaklar başarısız", "isbn": isbn_clean, "tried": 13, "hint": "VPS IP engellenmiş olabilir"}
 
     new_o, used_o = _merge(results)
 

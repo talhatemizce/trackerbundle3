@@ -380,6 +380,43 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
   );
 }
 
+
+// ─── Source link builder (used in all result tables) ─────────────────────────
+function SourceLinks({ isbn, asin, C }) {
+  const isbn13 = toIsbn13(isbn) || isbn;
+  const base = [
+    {label:"AMZ", title:"Amazon",     url:`https://www.amazon.com/dp/${asin||isbn}`,                        bg:"#FF9900"},
+    {label:"eBay",title:"eBay",       url:`https://www.ebay.com/sch/i.html?_nkw=${isbn13}&_sacat=267`,      bg:"#E53238"},
+    {label:"ABE", title:"AbeBooks",   url:`https://www.abebooks.com/servlet/SearchResults?isbn=${isbn}`,    bg:"#990000"},
+    {label:"TB",  title:"ThriftBooks",url:`https://www.thriftbooks.com/browse/?b.search=${isbn}`,           bg:"#2E7D32"},
+    {label:"BF",  title:"BookFinder", url:`https://www.bookfinder.com/search/?isbn=${isbn}&new=1&used=1`,   bg:"#1565C0"},
+    {label:"KP",  title:"Keepa",      url:`https://keepa.com/#!product/1-${asin||isbn}`,                   bg:"#7B1FA2"},
+  ];
+  const resale = [
+    {label:"MCR",title:"Mercari",     url:`https://www.mercari.com/search/?keyword=${isbn13}`,              bg:"#FF0211"},
+    {label:"DEP",title:"Depop",       url:`https://www.depop.com/search/?q=${isbn13}`,                      bg:"#FF4040"},
+    {label:"PSH",title:"Poshmark",    url:`https://poshmark.com/search?query=${isbn13}&type=listings`,      bg:"#C2185B"},
+    {label:"ETY",title:"Etsy",        url:`https://www.etsy.com/search?q=${isbn13}`,                       bg:"#F45800"},
+    {label:"BPL",title:"BookPal",     url:`https://www.bookpal.com/search?q=${isbn13}`,                    bg:"#0277BD"},
+    {label:"BDP",title:"BookDepot",   url:`https://www.bookdepot.com/Store/Search.aspx?q=${isbn13}`,       bg:"#37474F"},
+    {label:"TBR",title:"TextbookRush",url:`https://www.textbookrush.com/search?q=${isbn13}`,               bg:"#1B5E20"},
+    {label:"CHG",title:"Chegg",       url:`https://www.chegg.com/search?q=${isbn13}`,                      bg:"#E85E00"},
+  ];
+  const A = ({label,title,url,bg,dim}) => (
+    <a key={label} href={url} target="_blank" rel="noreferrer" title={title}
+      style={{display:"inline-block",padding:"2px 5px",borderRadius:3,fontSize:9,fontWeight:700,
+        background:bg,color:"#fff",textDecoration:"none",marginRight:2,opacity:dim?0.7:1}}>
+      {label}
+    </a>
+  );
+  return (
+    <span style={{whiteSpace:"nowrap"}}>
+      {base.map(l=><A key={l.label} {...l}/>)}
+      {resale.map(l=><A key={l.label} {...l} dim/>)}
+    </span>
+  );
+}
+
 function PricingTab({ isbns, C, push, titles, rules, onRulesSaved }) {
   const [selected, setSelected] = useState(isbns[0]||"");
   const [goodLimit, setGoodLimit] = useState(30);
@@ -978,21 +1015,8 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
                               {r.roi_tier==="fire"?"🔥":r.roi_tier==="good"?"✅":r.roi_tier==="low"?"🔵":"❌"}
                             </span>}
                           </td>
-                          <td style={{padding:"6px 8px",whiteSpace:"nowrap"}}>
-                            {[
-                              {label:"AMZ",url:`https://www.amazon.com/dp/${r.asin||r.isbn}`,bg:"#FF9900"},
-                              {label:"eBay",url:`https://www.ebay.com/sch/i.html?_nkw=${toIsbn13(r.isbn)}&_sacat=267`,bg:"#E53238"},
-                              {label:"ABE",url:`https://www.abebooks.com/servlet/SearchResults?isbn=${r.isbn}`,bg:"#990000"},
-                              {label:"TB",url:`https://www.thriftbooks.com/browse/?b.search=${r.isbn}`,bg:"#2E7D32"},
-                              {label:"BF",url:`https://www.bookfinder.com/search/?isbn=${r.isbn}&new=1&used=1`,bg:"#1565C0"},
-                              {label:"KP",url:`https://keepa.com/#!product/1-${r.asin||r.isbn}`,bg:"#7B1FA2"},
-                            ].map(({label,url,bg})=>(
-                              <a key={label} href={url} target="_blank" rel="noreferrer"
-                                style={{display:"inline-block",padding:"2px 5px",borderRadius:3,fontSize:9,
-                                  fontWeight:700,background:bg,color:"#fff",textDecoration:"none",marginRight:2}}>
-                                {label}
-                              </a>
-                            ))}
+                          <td style={{padding:"6px 8px"}}>
+                            <SourceLinks isbn={r.isbn} asin={r.asin} C={C}/>
                           </td>
                           <td style={{padding:"6px 8px",textAlign:"center",minWidth:90}}>
                             {verifying.has(i) ? (
@@ -1610,10 +1634,31 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
             <span style={labelStyle}>Kaynak</span>
             <select style={inpStyle} value={sourceFilter} onChange={e=>setSourceFilter(e.target.value)}>
               <option value="all">Tümü</option>
-              <option value="ebay">eBay</option>
-              <option value="thriftbooks">ThriftBooks</option>
-              <option value="abebooks">AbeBooks</option>
-              <option value="betterworldbooks">BetterWorldBooks</option>
+              <optgroup label="— eBay">
+                <option value="ebay">eBay</option>
+              </optgroup>
+              <optgroup label="— Kitap Siteleri">
+                <option value="thriftbooks">ThriftBooks</option>
+                <option value="abebooks">AbeBooks</option>
+                <option value="betterworldbooks">BetterWorldBooks</option>
+                <option value="biblio">Biblio</option>
+                <option value="alibris">Alibris</option>
+                <option value="goodwill">GoodwillBooks</option>
+                <option value="hpb">HPB (Half Price Books)</option>
+              </optgroup>
+              <optgroup label="— Toptan / Bulk">
+                <option value="bookpal">BookPal</option>
+                <option value="bookdepot">BookDepot</option>
+                <option value="textbookrush">TextbookRush</option>
+                <option value="campusbooks">CampusBooks</option>
+                <option value="chegg">Chegg</option>
+              </optgroup>
+              <optgroup label="— Resale">
+                <option value="mercari">Mercari</option>
+                <option value="depop">Depop</option>
+                <option value="poshmark">Poshmark</option>
+                <option value="etsy">Etsy</option>
+              </optgroup>
             </select>
           </div>
           <div>
@@ -1924,35 +1969,8 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                             </td>
                           )}
                           {activeView==="accepted"&&(
-                            <td style={{padding:"6px 8px", whiteSpace:"nowrap"}}>
-                              {[
-                                {label:"AMZ", title:"Amazon",
-                                  url:`https://www.amazon.com/dp/${r.asin||r.isbn}`,
-                                  bg:"#FF9900", color:"#fff"},
-                                {label:"eBay", title:"eBay",
-                                  url:`https://www.ebay.com/sch/i.html?_nkw=${toIsbn13(r.isbn)}&_sacat=267`,
-                                  bg:"#E53238", color:"#fff"},
-                                {label:"ABE", title:"AbeBooks",
-                                  url:`https://www.abebooks.com/servlet/SearchResults?isbn=${r.isbn}`,
-                                  bg:"#990000", color:"#fff"},
-                                {label:"TB", title:"ThriftBooks",
-                                  url:`https://www.thriftbooks.com/browse/?b.search=${r.isbn}`,
-                                  bg:"#2E7D32", color:"#fff"},
-                                {label:"BF", title:"BookFinder",
-                                  url:`https://www.bookfinder.com/search/?isbn=${r.isbn}&new=1&used=1`,
-                                  bg:"#1565C0", color:"#fff"},
-                                {label:"KP", title:"Keepa",
-                                  url:`https://keepa.com/#!product/1-${r.asin||r.isbn}`,
-                                  bg:"#7B1FA2", color:"#fff"},
-                              ].map(({label,title,url,bg,color})=>(
-                                <a key={label} href={url} target="_blank" rel="noreferrer"
-                                  title={title}
-                                  style={{display:"inline-block", padding:"2px 5px", borderRadius:3,
-                                    fontSize:9, fontWeight:700, background:bg, color,
-                                    textDecoration:"none", marginRight:2, letterSpacing:"0.02em"}}>
-                                  {label}
-                                </a>
-                              ))}
+                            <td style={{padding:"6px 8px"}}>
+                              <SourceLinks isbn={r.isbn} asin={r.asin} C={C}/>
                             </td>
                           )}
                           {activeView==="accepted"&&(
