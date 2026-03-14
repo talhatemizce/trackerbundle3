@@ -408,6 +408,9 @@ async def verify_listing(
         # eBay items için eBay doğrulama
         if source == "ebay" and item_id:
             tasks.append(_verify_ebay_item(item_id, buy_price, isbn, client))
+        elif source == "ebay" and not item_id:
+            tasks.append(asyncio.sleep(0, result={"status": "SKIP", "reason": "no_item_id",
+                "note": "eBay ilan ID'si kayıt sırasında kaydedilmemiş — eski aday veya CSV kaynağı"}))
         else:
             tasks.append(asyncio.sleep(0, result={"status": "SKIP", "reason": "not_ebay"}))
 
@@ -459,8 +462,11 @@ def _decide_final_status(
     if vision and vision.get("verdict") == "MISMATCH":
         return "MISMATCH"
 
-    if source == "ebay":
-        ebay_status = ebay.get("status", "ERROR")
+    ebay_status = ebay.get("status", "ERROR")
+    market_status = market.get("status", "ERROR")
+
+    if source == "ebay" and ebay_status not in ("SKIP", "ERROR"):
+        # eBay API gerçekten çalıştı — sonucuna güven
         if ebay_status in ("GONE", "MISMATCH"):
             return ebay_status
         if ebay_status == "PRICE_UP":
@@ -468,15 +474,18 @@ def _decide_final_status(
         if ebay_status == "PRICE_DOWN":
             return "PRICE_DOWN"
         if ebay_status == "VERIFIED":
-            # Vision STOCK_PHOTO ile VERIFIED → özel durum
             if vision and vision.get("verdict") == "STOCK_PHOTO":
                 return "VERIFIED_STOCK_PHOTO"
             return "VERIFIED"
 
-    # eBay dışı kaynak
-    market_status = market.get("status", "ERROR")
-    if market_status in ("PRICE_UP", "PRICE_DOWN", "VERIFIED"):
+    # eBay SKIP veya ERROR → piyasa sonucuna bak
+    if market_status in ("VERIFIED", "PRICE_UP", "PRICE_DOWN"):
         return market_status
+
+    # Her ikisi de başarısız / bloklı
+    if ebay_status == "SKIP" and market_status == "ERROR":
+        # item_id eksik (eski aday) — bilgi eksik ama kötü değil
+        return "UNVERIFIABLE"
 
     return "ERROR"
 
@@ -496,9 +505,9 @@ def _build_summary(
             vision_note = " · 📷 Kapak belirsiz"
         return f"✅ İlan doğrulandı — fiyat ${expected:.2f}{vision_note}"
     if status == "VERIFIED_STOCK_PHOTO":
-        return f"⚠️ İlan mevcut ama kapak stock fotoğraf — gerçek kondisyon gizli olabilir"
+        return "⚠️ İlan mevcut ama kapak stock fotoğraf — gerçek kondisyon gizli olabilir"
     if status == "GONE":
-        return f"❌ İlan yok — satılmış veya kaldırılmış"
+        return "❌ İlan yok — satılmış veya kaldırılmış"
     if status == "MISMATCH":
         title = ebay.get("item_title", "")
         return f"⚠️ ISBN uyuşmuyor — eBay ilanı farklı kitap: {title[:60]}"
@@ -510,6 +519,8 @@ def _build_summary(
         current = ebay.get("current_price") or market.get("cheapest_found") or expected
         delta_pct = abs(ebay.get("price_delta_pct") or market.get("price_delta_pct") or 0)
         return f"📉 Fiyat düştü — ${current:.2f} (-{delta_pct:.1f}%) → daha iyi fırsat!"
+    if status == "UNVERIFIABLE":
+        return "ℹ️ Doğrulanamadı — eBay ilan ID'si eksik ve piyasa verisi alınamıyor. İlanı eBay'de manuel kontrol et."
     return f"⚠️ Kontrol hatası — {ebay.get('reason', '')} / {market.get('reason', '')}"
 
 

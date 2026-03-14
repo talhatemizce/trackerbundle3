@@ -1024,9 +1024,9 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
                             ) : verifyResults[i] ? (
                               <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
                                 <span style={{fontSize:9,fontWeight:700,
-                                  color:{VERIFIED:"#22c55e",VERIFIED_STOCK_PHOTO:"#f97316",GONE:"#ef4444",PRICE_UP:"#f97316",PRICE_DOWN:"#3b82f6",MISMATCH:"#ef4444"}[verifyResults[i].status]||"#94a3b8",
+                                  color:{VERIFIED:"#22c55e",VERIFIED_STOCK_PHOTO:"#f97316",GONE:"#ef4444",PRICE_UP:"#f97316",PRICE_DOWN:"#3b82f6",MISMATCH:"#ef4444",UNVERIFIABLE:"#64748b"}[verifyResults[i].status]||"#94a3b8",
                                   cursor:"pointer"}} onClick={()=>verifyOne(i,r)}>
-                                  {{VERIFIED:"✅",VERIFIED_STOCK_PHOTO:"📷⚠️",GONE:"💀",PRICE_UP:"📈",PRICE_DOWN:"📉",MISMATCH:"⚠️"}[verifyResults[i].status]||"?"} {verifyResults[i].status}
+                                  {{VERIFIED:"✅",VERIFIED_STOCK_PHOTO:"📷⚠️",GONE:"💀",PRICE_UP:"📈",PRICE_DOWN:"📉",MISMATCH:"⚠️",UNVERIFIABLE:"ℹ️"}[verifyResults[i].status]||"?"} {verifyResults[i].status}
                                 </span>
                                 <button onClick={()=>setVerifyDrawer({rowIdx:i,row:r})}
                                   style={{padding:"1px 7px",fontSize:9,borderRadius:4,cursor:"pointer",
@@ -1417,13 +1417,13 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
 
   const verifyStatusColor = (status) => {
     const m = {VERIFIED:"#22c55e", VERIFIED_STOCK_PHOTO:"#f97316",
-                GONE:"#ef4444", PRICE_UP:"#f97316",
+                GONE:"#ef4444", PRICE_UP:"#f97316", UNVERIFIABLE:"#64748b",
                 PRICE_DOWN:"#3b82f6", MISMATCH:"#ef4444", ERROR:"#6b7280"};
     return m[status] || "#6b7280";
   };
 
   const verifyStatusEmoji = (status) => {
-    const m = {VERIFIED:"✅", VERIFIED_STOCK_PHOTO:"📷⚠️",
+    const m = {VERIFIED:"✅", VERIFIED_STOCK_PHOTO:"📷⚠️", UNVERIFIABLE:"ℹ️",
                 GONE:"💀", PRICE_UP:"📈", PRICE_DOWN:"📉", MISMATCH:"⚠️", ERROR:"❓"};
     return m[status] || "❓";
   };
@@ -2036,7 +2036,7 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
   const STATUS_COLOR = {
     VERIFIED:"#22c55e", VERIFIED_STOCK_PHOTO:"#f97316",
     GONE:"#ef4444", PRICE_UP:"#f97316", PRICE_DOWN:"#3b82f6",
-    MISMATCH:"#ef4444", ERROR:"#94a3b8", SKIP:"#94a3b8",
+    MISMATCH:"#ef4444", ERROR:"#94a3b8", SKIP:"#94a3b8", UNVERIFIABLE:"#64748b",
     MATCH:"#22c55e", UNCERTAIN:"#eab308", STOCK_PHOTO:"#f97316", NO_IMAGE:"#94a3b8",
   };
 
@@ -2169,7 +2169,15 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
           statusKey={ebay.status}
           accent={ebay.status==="GONE"?"#ef4444":ebay.status?.includes("PRICE")?"#f97316":"#22c55e"}
           rightTag={<LiveCacheTag fromCache={false}/>}
-          skipMsg={(ebay.status==="SKIP"||ebay.reason==="not_ebay") ? "eBay ilanı değil — atlandı" : null}
+          skipMsg={
+            ebay.status==="SKIP"
+              ? (ebay.reason==="no_item_id"
+                  ? `⚠️ eBay ilan ID kaydedilmemiş — ${ebay.note||"bu aday doğrulanamaz, eBay'de manuel ara"}`
+                  : ebay.reason==="not_ebay"
+                    ? "eBay ilanı değil — bu adım atlandı"
+                    : "eBay adımı atlandı")
+              : null
+          }
         >
           {ebay.item_title  && <R label="İlan"       val={ebay.item_title}/>}
           {ebay.current_price!=null && (
@@ -3968,9 +3976,9 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
                         ) : candVerifyResults[r.isbn] ? (
                           <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
                             <span style={{fontSize:9,fontWeight:700,cursor:"pointer",
-                              color:{VERIFIED:"#22c55e",VERIFIED_STOCK_PHOTO:"#f97316",GONE:"#ef4444",PRICE_UP:"#f97316",PRICE_DOWN:"#3b82f6",MISMATCH:"#ef4444"}[candVerifyResults[r.isbn].status]||"#94a3b8"}}
+                              color:{VERIFIED:"#22c55e",VERIFIED_STOCK_PHOTO:"#f97316",GONE:"#ef4444",PRICE_UP:"#f97316",PRICE_DOWN:"#3b82f6",MISMATCH:"#ef4444",UNVERIFIABLE:"#64748b"}[candVerifyResults[r.isbn].status]||"#94a3b8"}}
                               onClick={()=>candVerifyOne(r.isbn,r)}>
-                              {{VERIFIED:"✅",VERIFIED_STOCK_PHOTO:"📷⚠️",GONE:"💀",PRICE_UP:"📈",PRICE_DOWN:"📉",MISMATCH:"⚠️"}[candVerifyResults[r.isbn].status]||"?"} {candVerifyResults[r.isbn].status}
+                              {{VERIFIED:"✅",VERIFIED_STOCK_PHOTO:"📷⚠️",GONE:"💀",PRICE_UP:"📈",PRICE_DOWN:"📉",MISMATCH:"⚠️",UNVERIFIABLE:"ℹ️"}[candVerifyResults[r.isbn].status]||"?"} {candVerifyResults[r.isbn].status}
                             </span>
                             <button onClick={()=>setCandVerifyDrawer({rowIdx:r.isbn,row:r})}
                               style={{padding:"1px 7px",fontSize:9,borderRadius:4,cursor:"pointer",
