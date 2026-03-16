@@ -7,10 +7,11 @@ GÖREV → MODEL ATAMALARI:
   vision      → Gemini 2.5 Flash-Lite  (tek vision destekleyen)
   web_search  → Gemini 2.5 Flash-Lite  (Google Search grounding)
                → Perplexity Sonar      (web araması en iyi, $5 kredi ~5k istek)
-  reasoning   → Groq Llama3.3-70B      (14.400/gün, 30 RPM, hızlı)
-               → Cerebras Llama3.3-70B (sınırsız, 30 RPM)
-               → OpenRouter DeepSeek-V3:free  (sınırsız, 20 RPM)
-               → OpenRouter Qwen3-235B:free   (sınırsız, 20 RPM)
+  reasoning   → OpenRouter Nemotron-3 Super 120B:free (∞ kota, 20 RPM)
+               → OpenRouter Hermes-3 405B:free       (∞ kota, 20 RPM)
+               → Groq Kimi K2               (14.400/gün, 30 RPM)
+               → Groq Llama3.3-70B           (14.400/gün, 30 RPM)
+               → Cerebras Llama3.3-70B       (∞, 30 RPM)
                → Gemini fallback
 
 /llm/status endpoint → kota durumu, devre dışı providerlar
@@ -45,7 +46,89 @@ class ProviderDef:
 
 
 PROVIDERS: List[ProviderDef] = [
-    # Vision → sadece Gemini
+    # ══════════════════════════════════════════════════════════════════════════
+    # Öncelik stratejisi: ZEKA-FIRST
+    #
+    # Reasoning:  OpenRouter Nemotron 120B → Hermes 405B → Groq Kimi K2 (8/10)
+    #             → Groq 70B (7/10) → Cerebras (7/10 ∞) → Gemini (7/10)
+    # Vision:     Groq Llama 4 Scout (8/10 hızlı) → Gemini (Google grounding)
+    # Web search: Gemini (Google Search grounding) → OpenRouter Hermes 405B
+    #
+    # Para: $0.  Tüm providerlar ücretsiz tier.
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # ── 1. REASONING: En akıllıdan başla ────────────────────────────────────
+
+    # OpenRouter Nemotron-3 Super 120B MoE — güçlü ücretsiz (∞ kota, 262k ctx)
+    ProviderDef(
+        name="openrouter_nemotron",
+        base_url="https://openrouter.ai/api/v1",
+        model="nvidia/nemotron-3-super-120b-a12b:free",
+        tasks=["reasoning"],
+        rpm=20, rpd=None,
+        auth_env_key="openrouter_api_key",
+        priority=1,
+        extra_headers={"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"},
+    ),
+    # OpenRouter Hermes-3 Llama 405B — en büyük ücretsiz model (∞ kota, 131k ctx)
+    ProviderDef(
+        name="openrouter_hermes",
+        base_url="https://openrouter.ai/api/v1",
+        model="nousresearch/hermes-3-llama-3.1-405b:free",
+        tasks=["reasoning", "web_search"],
+        rpm=20, rpd=None,
+        auth_env_key="openrouter_api_key",
+        priority=2,
+        extra_headers={"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"},
+    ),
+    # Groq Kimi K2 — hızlı + güçlü (8/10, 14.4k/gün paylaşımlı kota)
+    ProviderDef(
+        name="groq_kimi",
+        base_url="https://api.groq.com/openai/v1",
+        model="moonshotai/kimi-k2-instruct",
+        tasks=["reasoning"],
+        rpm=30, rpd=14400,
+        auth_env_key="groq_api_key",
+        priority=3,
+    ),
+    # Groq Llama 3.3 70B — hızlı fallback (7/10, 14.4k/gün paylaşımlı kota)
+    ProviderDef(
+        name="groq",
+        base_url="https://api.groq.com/openai/v1",
+        model="llama-3.3-70b-versatile",
+        tasks=["reasoning"],
+        rpm=30, rpd=14400,
+        auth_env_key="groq_api_key",
+        priority=4,
+    ),
+    # Cerebras Llama 3.3 70B — sınırsız kota, güvenilir yedek (7/10, ∞)
+    ProviderDef(
+        name="cerebras",
+        base_url="https://api.cerebras.ai/v1",
+        model="llama-3.3-70b",
+        tasks=["reasoning"],
+        rpm=30, rpd=None,
+        auth_env_key="cerebras_api_key",
+        priority=5,
+    ),
+
+    # ── 2. VISION: Görsel doğrulama ─────────────────────────────────────────
+
+    # Groq Llama 4 Scout — hızlı vision (8/10, multimodal, 14.4k/gün)
+    ProviderDef(
+        name="groq_vision",
+        base_url="https://api.groq.com/openai/v1",
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        tasks=["vision"],
+        rpm=30, rpd=14400,
+        auth_env_key="groq_api_key",
+        priority=1,
+        supports_vision=True,
+    ),
+
+    # ── 3. GEMINI: Son çare + Google Search grounding ───────────────────────
+
+    # Gemini Flash-Lite — vision fallback + web_search (Google grounding), kota 1.5k/gün
     ProviderDef(
         name="gemini",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
@@ -56,71 +139,6 @@ PROVIDERS: List[ProviderDef] = [
         priority=9,
         supports_vision=True,
     ),
-    # Groq — Llama 4 Scout (vision + reasoning, ücretsiz)
-    ProviderDef(
-        name="groq_vision",
-        base_url="https://api.groq.com/openai/v1",
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        tasks=["vision", "reasoning"],
-        rpm=30, rpd=14400,
-        auth_env_key="groq_api_key",
-        priority=1,
-        supports_vision=True,
-    ),
-    # Groq — Llama 3.3 70B (reasoning, hızlı, 14.4k/gün)
-    ProviderDef(
-        name="groq",
-        base_url="https://api.groq.com/openai/v1",
-        model="llama-3.3-70b-versatile",
-        tasks=["reasoning"],
-        rpm=30, rpd=14400,
-        auth_env_key="groq_api_key",
-        priority=2,
-    ),
-    # Groq — GPT OSS 120B (daha büyük, reasoning fallback)
-    ProviderDef(
-        name="groq_120b",
-        base_url="https://api.groq.com/openai/v1",
-        model="moonshotai/kimi-k2-instruct",
-        tasks=["reasoning"],
-        rpm=30, rpd=14400,
-        auth_env_key="groq_api_key",
-        priority=3,
-    ),
-    # Cerebras (sınırsız, 30 RPM)
-    ProviderDef(
-        name="cerebras",
-        base_url="https://api.cerebras.ai/v1",
-        model="llama-3.3-70b",
-        tasks=["reasoning"],
-        rpm=30, rpd=None,
-        auth_env_key="cerebras_api_key",
-        priority=4,
-    ),
-    # OpenRouter DeepSeek-V3:free (sınırsız ücretsiz)
-    ProviderDef(
-        name="openrouter_deepseek",
-        base_url="https://openrouter.ai/api/v1",
-        model="deepseek/deepseek-chat-v3-0324:free",
-        tasks=["reasoning", "web_search"],
-        rpm=20, rpd=None,
-        auth_env_key="openrouter_api_key",
-        priority=5,
-        extra_headers={"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"},
-    ),
-    # OpenRouter Qwen3-235B:free (en akıllı ücretsiz)
-    ProviderDef(
-        name="openrouter_qwen",
-        base_url="https://openrouter.ai/api/v1",
-        model="qwen/qwen3-235b-a22b:free",
-        tasks=["reasoning"],
-        rpm=20, rpd=None,
-        auth_env_key="openrouter_api_key",
-        priority=6,
-        extra_headers={"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"},
-    ),
-    # Perplexity kaldırıldı — free tier yok, Pro aboneliği ($20/ay) şart
-    # SambaNova kaldırıldı — $5 expiring credit, gerçek free tier değil
 ]
 
 
@@ -247,7 +265,10 @@ async def _call_openai_compat(
         if r.status_code != 200:
             raise RuntimeError(f"{defn.name} HTTP {r.status_code}: {r.text[:200]}")
     data = r.json()
-    return data["choices"][0]["message"]["content"]
+    msg = data["choices"][0]["message"]
+    # Thinking models (e.g. Nemotron) may put chain-of-thought in "reasoning"
+    # and leave "content" null when max_tokens is exhausted during reasoning.
+    return msg.get("content") or msg.get("reasoning") or ""
 
 
 class _RateLimitError(Exception):
