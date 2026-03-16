@@ -4495,7 +4495,13 @@ function AppReal() {
                 )}
                 <ST C={C}>Watchlist Önizleme</ST>
                 {isbns.slice(0,5).map(isbn=>(
-                  <div key={isbn} className="row-item" style={{...row}}>
+                  <div key={isbn} className="row-item" style={{...row, gap:10}}>
+                    <div style={{flexShrink:0,width:28,height:38,borderRadius:3,overflow:"hidden",background:C.surface2}}>
+                      <img src={`https://covers.openlibrary.org/b/isbn/${isbn}-S.jpg`}
+                        loading="lazy" alt=""
+                        style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}
+                        onError={e=>{e.target.style.opacity="0";}}/>
+                    </div>
                     <div style={{flex:1,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                       <span style={{fontSize:13}}>{isbn}</span>
                       {titles[isbn]&&<span style={{fontSize:11,color:C.muted,fontFamily:"var(--sans)"}}>— {titles[isbn]}</span>}
@@ -4804,7 +4810,7 @@ function AppReal() {
                         {/* Mini kapak */}
                         <div onClick={e=>e.stopPropagation()} style={{flexShrink:0,width:32,height:44,borderRadius:3,overflow:"hidden",background:C.surface2,cursor:"default"}}>
                           <img
-                            src={`https://covers.openlibrary.org/b/isbn/${isbn}-S.jpg`}
+                            src={`https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`}
                             loading="lazy"
                             style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}
                             onError={e=>{e.target.style.opacity="0";}}

@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 MODEL = "gemini-2.5-flash-lite"
 GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
-OPEN_LIBRARY_API = "https://openlibrary.org/api/books"
+OPEN_LIBRARY_API    = "https://openlibrary.org/api/books"
+OPEN_LIBRARY_SEARCH = "https://openlibrary.org/search.json"
 
 
 # ─── Kondisyon uyumsuzluğu (deterministic, skor tabanlı) ──────────────────────
@@ -119,7 +120,38 @@ async def _check_edition(isbn: str, client: httpx.AsyncClient) -> Dict[str, Any]
     except Exception as e:
         logger.debug("Google Books error: %s", e)
 
-    # 2. Open Library yedek
+    # 2. Open Library Search API — jscmd=data'dan daha güvenilir ve zengin
+    try:
+        r = await client.get(
+            OPEN_LIBRARY_SEARCH,
+            params={"isbn": isbn13, "fields": "title,author_name,publisher,subject,first_publish_year,number_of_pages_median"},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            docs = r.json().get("docs") or []
+            if docs:
+                doc = docs[0]
+                year = doc.get("first_publish_year")
+                try: year = int(year) if year else None
+                except (ValueError, TypeError): year = None
+                subjects   = [s for s in (doc.get("subject") or [])    if isinstance(s, str)][:6]
+                publishers = doc.get("publisher") or []
+                authors    = doc.get("author_name") or []
+                return {
+                    "edition_year": year,
+                    "has_newer_edition": None,
+                    "google_title": doc.get("title", ""),
+                    "authors": authors,
+                    "publisher": publishers[0] if publishers else "",
+                    "categories": subjects,
+                    "description": "",
+                    "page_count": doc.get("number_of_pages_median"),
+                    "source": "open_library",
+                }
+    except Exception as e:
+        logger.debug("Open Library Search error: %s", e)
+
+    # 3. Open Library Books API (son çare)
     try:
         r = await client.get(
             OPEN_LIBRARY_API,
@@ -129,20 +161,34 @@ async def _check_edition(isbn: str, client: httpx.AsyncClient) -> Dict[str, Any]
         if r.status_code == 200:
             data = r.json()
             book = data.get(f"ISBN:{isbn13}") or {}
-            pub_date = book.get("publish_date", "")
-            year = None
-            for chunk in pub_date.split():
-                try:
-                    y = int(chunk)
-                    if 1900 < y < 2030:
-                        year = y
-                        break
-                except (ValueError, TypeError):
-                    pass
-            return {"edition_year": year, "has_newer_edition": None,
-                    "google_title": book.get("title",""), "source": "open_library"}
+            if book:
+                pub_date = book.get("publish_date", "")
+                year = None
+                for chunk in pub_date.split():
+                    try:
+                        y = int(chunk)
+                        if 1900 < y < 2030:
+                            year = y; break
+                    except (ValueError, TypeError):
+                        pass
+                publishers = [p.get("name","") for p in (book.get("publishers") or []) if isinstance(p, dict)]
+                subjects   = [s.get("name","") for s in (book.get("subjects")   or []) if isinstance(s, dict)]
+                authors    = [a.get("name","") for a in (book.get("authors")    or []) if isinstance(a, dict)]
+                ol_desc    = book.get("description", "")
+                if isinstance(ol_desc, dict): ol_desc = ol_desc.get("value", "")
+                return {
+                    "edition_year": year,
+                    "has_newer_edition": None,
+                    "google_title": book.get("title", ""),
+                    "authors": authors,
+                    "publisher": publishers[0] if publishers else "",
+                    "categories": subjects[:5],
+                    "description": (ol_desc or "")[:300],
+                    "page_count": book.get("number_of_pages"),
+                    "source": "open_library_books",
+                }
     except Exception as e:
-        logger.debug("Open Library error: %s", e)
+        logger.debug("Open Library Books API error: %s", e)
 
     return {}
 
