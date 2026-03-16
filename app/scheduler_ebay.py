@@ -380,6 +380,9 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
         ok = await _send_telegram(msg)
         if ok:
             sent += 1
+            # Inter-message delay: Telegram allows ~30 msg/s globally but recommends 1/s per chat
+            # We use 1.2s to stay well under Telegram's rate limit
+            await asyncio.sleep(1.2)
             try:
                 alert_history_store.add_entry(
                     isbn=isbn,
@@ -405,6 +408,12 @@ async def _check_isbn(client: httpx.AsyncClient, isbn: str) -> int:
                 )
             except Exception as _he:
                 logger.warning("alert_history write failed: %s", _he)
+
+            # Per-ISBN batch cap: stop if we've sent sched_batch_limit messages for this ISBN
+            _batch_cap = get_settings().sched_batch_limit
+            if sent >= _batch_cap:
+                logger.info("isbn=%s batch cap reached (%d), stopping", isbn, _batch_cap)
+                break
 
     return sent
 

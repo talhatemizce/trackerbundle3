@@ -340,12 +340,31 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
         raise RuntimeError("Hiçbir LLM API key'i yapılandırılmamış — GEMINI_API_KEY, GROQ_API_KEY veya OPENROUTER_API_KEY gerekli")
 
     # ── Cache kontrolü ────────────────────────────────────────
-    cache_key = isbn.replace("-", "").replace(" ", "").strip()
-    if cache_key in _ai_cache:
-        cached = _ai_cache[cache_key]
-        if _time.time() - cached.get("_cached_at", 0) < _AI_CACHE_TTL:
-            logger.info("AI cache HIT isbn=%s", cache_key)
-            return {**cached, "_from_cache": True}
+    # Composite key: ISBN + buy_price_bucket (her $5 band) + source_condition
+    # Böylece aynı ISBN'in farklı fiyat/kondisyon kombinasyonları ayrı analiz alır
+    isbn_clean = isbn.replace("-", "").replace(" ", "").strip()
+    buy_price = float(candidate.get("buy_price") or candidate.get("ebay_total") or 0)
+    price_bucket = int(buy_price // 5) * 5  # $5 granülariyle grupla (28.94 → 25)
+    source_cond = candidate.get("source_condition", "used")
+    cache_key = f"{isbn_clean}:{price_bucket}:{source_cond}"
+
+    async with _ai_cache_lock:
+        if cache_key in _ai_cache:
+            cached = _ai_cache[cache_key]
+            if _time.time() - cached.get("_cached_at", 0) < _AI_CACHE_TTL:
+                logger.info("AI cache HIT key=%s", cache_key)
+                return {**cached, "_from_cache": True}
+        # In-flight coalescing: aynı key için paralel LLM çağrısı önle
+        if cache_key in _ai_inflight:
+            logger.info("AI in-flight, waiting for key=%s", cache_key)
+        while cache_key in _ai_inflight:
+            await asyncio.sleep(0.3)
+            # Tekrar cache'e bak — biten inflight sonucu cache'e yazmış olabilir
+            if cache_key in _ai_cache:
+                cached = _ai_cache[cache_key]
+                if _time.time() - cached.get("_cached_at", 0) < _AI_CACHE_TTL:
+                    return {**cached, "_from_cache": True}
+        _ai_inflight.add(cache_key)
 
     isbn13 = _to_isbn13(isbn) or isbn
 
@@ -364,7 +383,12 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
 
     # AI: Gemini Vision + Google Search
     prompt = _build_prompt(isbn, isbn13, candidate, edition_data, cond_analysis)
-    gemini_result = await _call_llm(prompt, image_b64)
+    try:
+        gemini_result = await _call_llm(prompt, image_b64)
+    except Exception:
+        async with _ai_cache_lock:
+            _ai_inflight.discard(cache_key)
+        raise
 
     # Deterministic ayarlamalar (verdict değiştirmeden confidence/risk)
     gemini_result = _apply_deterministic_adjustments(gemini_result, candidate, edition_data, cond_analysis)
@@ -395,9 +419,10 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
         "_cached_at": _time.time(),
     })
 
-    # Cache'e kaydet (lock ile race condition önle)
+    # Cache'e kaydet ve inflight'tan çıkar
     async with _ai_cache_lock:
         _ai_cache[cache_key] = gemini_result
+        _ai_inflight.discard(cache_key)
     return gemini_result
 
 
@@ -420,6 +445,7 @@ async def _call_llm(prompt: str, image_b64: Optional[str]) -> Dict[str, Any]:
             user_prompt=prompt,
             image_b64=image_b64,
             max_tokens=1200,
+            json_mode=(task == "reasoning"),  # enforce JSON for non-vision calls
         )
         text = result["text"]
         parsed = _parse_json(text)

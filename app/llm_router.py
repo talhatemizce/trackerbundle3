@@ -203,6 +203,7 @@ async def _call_openai_compat(
     max_tokens: int = 1200,
     temperature: float = 0.1,
     image_b64: Optional[str] = None,
+    json_mode: bool = False,
 ) -> str:
     """OpenAI-uyumlu /chat/completions endpoint'i çağır, ham text döndür.
     image_b64 varsa son user mesajına vision content ekler (Llama 4 Scout destekler).
@@ -233,6 +234,10 @@ async def _call_openai_compat(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    # JSON mode: enforce structured JSON output (Groq, OpenRouter, Cerebras all support this)
+    # Skip for vision calls — response_format conflicts with image input on some providers
+    if json_mode and not image_b64:
+        payload["response_format"] = {"type": "json_object"}
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             f"{defn.base_url}/chat/completions",
@@ -266,6 +271,7 @@ async def _call_gemini_native(
     user_prompt: str,
     image_b64: Optional[str] = None,
     use_search: bool = False,
+    json_mode: bool = False,
 ) -> str:
     """Gemini native API — vision ve Google Search grounding destekli."""
     GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -277,9 +283,13 @@ async def _call_gemini_native(
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64}})
     parts.append({"text": user_prompt})
 
+    gen_config: Dict[str, Any] = {"temperature": 0.1, "maxOutputTokens": 1200}
+    # JSON mode: Gemini enforces JSON output via responseMimeType (skip for vision+search)
+    if json_mode and not image_b64 and not use_search:
+        gen_config["responseMimeType"] = "application/json"
     payload: Dict[str, Any] = {
         "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1200},
+        "generationConfig": gen_config,
         "system_instruction": {"parts": [{"text": system_prompt}]},
     }
     if use_search:
@@ -309,6 +319,7 @@ async def route(
     user_prompt: str,
     image_b64: Optional[str] = None,  # sadece vision task'ı için
     max_tokens: int = 1200,
+    json_mode: bool = False,          # True → enforce JSON output (reasoning tasks only)
 ) -> Dict[str, Any]:
     """
     En uygun provider'a isteği gönder, başarısız olursa sıradakine geç.
@@ -340,11 +351,14 @@ async def route(
             state.record_request()
             logger.info("router: %s (%s) — task=%s", defn.name, defn.model, task)
 
+            # json_mode only for reasoning tasks (not vision, not web_search)
+            _json_mode = json_mode and task == "reasoning"
             if defn.name == "gemini":
                 text = await _call_gemini_native(
                     api_key, system_prompt, user_prompt,
                     image_b64=image_b64,
                     use_search=(task == "web_search"),
+                    json_mode=_json_mode,
                 )
             else:
                 messages = [
@@ -353,7 +367,7 @@ async def route(
                 ]
                 # Vision-capable non-Gemini providers (Llama 4 Scout on Groq)
                 img = image_b64 if (task == "vision" and defn.supports_vision) else None
-                text = await _call_openai_compat(defn, api_key, messages, max_tokens=max_tokens, image_b64=img)
+                text = await _call_openai_compat(defn, api_key, messages, max_tokens=max_tokens, image_b64=img, json_mode=_json_mode)
 
             state.record_success()
             return {"text": text, "provider": defn.name, "model": defn.model}
