@@ -1951,6 +1951,12 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                             {r.match_quality==="UNVERIFIED_KEYWORD"&&(
                               <span title="Keyword araması — doğrulanmadı" style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#6b728022",color:"#6b7280",fontFamily:"sans-serif"}}>KW</span>
                             )}
+                            {r.is_textbook_likely&&(
+                              <span title="Textbook olabilir — edition riski ve mevsimsellik yüksek" style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#ea580c22",color:"#ea580c",fontFamily:"sans-serif",fontWeight:700}}>📚TB</span>
+                            )}
+                            {r.has_newer_edition&&(
+                              <span title="Daha yeni baskı mevcut — satış zorlaşabilir" style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#dc262622",color:"#dc2626",fontFamily:"sans-serif",fontWeight:700}}>NEW ED⚠</span>
+                            )}
                           </td>
                           {/* Verify cell — sadece accepted view'da */}
                           {activeView==="accepted"&&(
@@ -2050,6 +2056,15 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                                         opacity:0.8,maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                                       {r.buyback_vendor}
                                     </a>
+                                  )}
+                                  {r.buyback_trend && r.buyback_trend!=="unknown" && (
+                                    <span title={r.buyback_trend_note||""} style={{
+                                      fontSize:8, padding:"1px 4px", borderRadius:3, fontWeight:700,
+                                      background: r.buyback_trend==="rising"?"#14532d20":r.buyback_trend==="falling"?"#7f1d1d20":"#1e293b30",
+                                      color: r.buyback_trend==="rising"?"#22c55e":r.buyback_trend==="falling"?"#ef4444":"#94a3b8",
+                                    }}>
+                                      {r.buyback_trend==="rising"?"↑":r.buyback_trend==="falling"?"↓":"→"}
+                                    </span>
                                   )}
                                 </div>
                               ) : (

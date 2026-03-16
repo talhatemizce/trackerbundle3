@@ -33,6 +33,7 @@ try:
         compute_confidence, confidence_tier,
         compute_ev, compute_scenarios,
         seasonal_velocity_mult,
+        lc_class_to_category, dewey_to_category, subjects_to_textbook_score,
     )
     _ANALYTICS_OK = True
 except Exception as _analytics_err:
@@ -45,6 +46,9 @@ except Exception as _analytics_err:
     def compute_ev(p, v, c): return None
     def compute_scenarios(*a, **k): return {}
     def seasonal_velocity_mult(*a, **k): return 1.0
+    def lc_class_to_category(lc): return {}
+    def dewey_to_category(d): return {}
+    def subjects_to_textbook_score(s): return 0.0
 
 logger = logging.getLogger("trackerbundle.csv_arb_scanner")
 
@@ -134,6 +138,14 @@ class ArbResult:
     seasonality_mult: Optional[float] = None   # bu aydaki çarpan
     # ── Buyback kanalı (BookScouter/BooksRun) ─────────────────────────────────
     buyback_cash: Optional[float] = None        # en iyi buyback teklifi ($)
+    buyback_trend: Optional[str] = None         # "rising"|"falling"|"stable"|"unknown"
+    buyback_trend_note: Optional[str] = None    # açıklama
+    # Kitap sınıflandırma (HathiTrust/LoC/Analytics'ten)
+    is_textbook_likely: bool = False             # DDC/LC/subjects → textbook sınıfı
+    textbook_score: float = 0.0                  # 0.0–1.0
+    has_newer_edition: Optional[bool] = None     # Open Library Work API'den
+    dewey: Optional[str] = None                  # Dewey Decimal
+    lc_class: Optional[str] = None              # LC Call Number
     buyback_vendor: str = ""                    # en iyi vendor adı
     buyback_url: str = ""                       # vendor URL
     buyback_profit: Optional[float] = None      # buyback_cash - buy_price - $3.99 nakliye
@@ -507,12 +519,30 @@ async def _scan_one(
         r.reason = "invalid_isbn_or_not_978"
         return [r]
 
-    # Paralel: Amazon + eBay + BookFinder + Buyback
-    amazon_data, ebay_offers, bf_offers, buyback_data = await asyncio.gather(
+    # Paralel: Amazon + eBay + BookFinder + Buyback + Buyback trend
+    async def _get_buyback_trend_safe(isbn):
+        try:
+            from app.buyback_client import get_buyback_price_trend
+            return await get_buyback_price_trend(isbn)
+        except Exception:
+            return {}
+
+    async def _get_book_meta_safe(isbn):
+        """Lightweight book metadata — OL Search only, no LLM, no vision."""
+        try:
+            async with httpx.AsyncClient(timeout=8) as _mc:
+                from app.ai_analyst import _check_edition
+                return await _check_edition(isbn, _mc)
+        except Exception:
+            return {}
+
+    amazon_data, ebay_offers, bf_offers, buyback_data, buyback_trend_data, book_meta = await asyncio.gather(
         _get_amazon_prices(asin),
         _get_ebay_offers(isbn, filters=filters),
         _get_bookfinder_offers(isbn),
         _get_buyback_prices(isbn),
+        _get_buyback_trend_safe(isbn),
+        _get_book_meta_safe(isbn),
         return_exceptions=True,
     )
 
@@ -524,6 +554,10 @@ async def _scan_one(
         bf_offers = []
     if isinstance(buyback_data, Exception):
         buyback_data = {}
+    if isinstance(buyback_trend_data, Exception):
+        buyback_trend_data = {}
+    if isinstance(book_meta, Exception):
+        book_meta = {}
 
     # Hata itemlarını filtrele ama reason kaydet
     ebay_error = next((o["_error"] for o in (ebay_offers or []) if "_error" in o), None)
@@ -572,6 +606,28 @@ async def _scan_one(
                       buy_price=0, amazon_sell_price=None, buybox_type=None, match_type=None)
         r.reason = reason
         return [r]
+
+    if not amazon_data:
+        # Google Shopping fallback: SP-API boş döndü, SERP üzerinden Amazon fiyatı dene
+        try:
+            from app.amazon_price_fallback import get_amazon_price_via_shopping
+            from app.core.config import get_settings as _gs
+            _s = _gs()
+            if _s.serper_api_key or _s.serpapi_key:
+                # Title bilgisini all_offers'dan çekmeye çalış
+                _fallback_title = next(
+                    (o.get("title","") for o in (all_offers or []) if o.get("title")), ""
+                )
+                # Condition hint: ne arıyoruz?
+                _cond_hint = "used" if any(
+                    o.get("source_condition","used") == "used" for o in (all_offers or [])
+                ) else "new"
+                _fb = await get_amazon_price_via_shopping(isbn, _fallback_title, _cond_hint)
+                if _fb:
+                    amazon_data = _fb
+                    logger.info("isbn=%s Amazon fallback via Google Shopping succeeded", isbn)
+        except Exception as _fb_err:
+            logger.debug("Amazon fallback error isbn=%s: %s", isbn, _fb_err)
 
     if not amazon_data:
         # buyback_only mode: Amazon yoksa buyback kâr hesabı yapabiliriz — erken çıkma
@@ -623,6 +679,14 @@ async def _scan_one(
                 r.velocity = bsr_to_velocity(r.bsr)
                 r.days_to_sell = bsr_to_days_to_sell(r.bsr)
 
+            # Book metadata (textbook classification, newer edition)
+            if book_meta and isinstance(book_meta, dict):
+                r.is_textbook_likely = bool(book_meta.get("is_textbook_likely", False))
+                r.textbook_score     = float(book_meta.get("textbook_score", 0.0))
+                r.has_newer_edition  = book_meta.get("has_newer_edition")
+                r.dewey              = book_meta.get("dewey")
+                r.lc_class           = book_meta.get("lc_class")
+
             # sell_source: "used_buybox" / "new_top1" formatı (P1 fix)
             _sec = (amazon_data.get(bb_type) or {}) if bb_type else {}
             _has_bb = bool((_sec.get("buybox") or {}).get("total"))
@@ -666,6 +730,10 @@ async def _scan_one(
                 r.buyback_url    = buyback_data.get("best_url", "")
                 r.buyback_profit = bb_calc["profit"]
                 r.buyback_roi    = bb_calc["roi_pct"]
+                # Fiyat trendi — falling ise dikkat
+                if buyback_trend_data and isinstance(buyback_trend_data, dict):
+                    r.buyback_trend      = buyback_trend_data.get("trend")
+                    r.buyback_trend_note = buyback_trend_data.get("note")
 
         # buyback_only mode: Amazon olmadan da kabul et (buyback kârlıysa)
         if filters.buyback_only and r.buyback_profit and r.buyback_profit > 0:

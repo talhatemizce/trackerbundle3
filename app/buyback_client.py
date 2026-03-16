@@ -329,3 +329,120 @@ def calc_buyback_profit(
         "profit": profit,
         "roi_pct": roi,
     }
+
+
+# ── BookScouter Historic Pricing ──────────────────────────────────────────────
+# BookScouter'ın ücretsiz tier'ında "historic" fiyat endpoint'i var.
+# Bu endpoint geçmiş fiyatları ve trend bilgisini döndürür.
+# Kayıt: https://bookscouter.com/api  (ücretsiz plan)
+# Endpoint: GET https://api.bookscouter.com/v1/book/{isbn}/prices/history
+
+_hist_cache: Dict[str, tuple] = {}  # isbn → (ts, data)
+_HIST_TTL = 3600 * 24  # 24 saat — tarihi veri daha yavaş değişir
+
+
+async def get_buyback_price_trend(isbn: str) -> Dict[str, Any]:
+    """
+    BookScouter'dan buyback fiyat trendi çek.
+
+    Returns:
+        {
+          "trend": "rising" | "falling" | "stable" | "unknown",
+          "current_avg": float,     # son 30 gün ortalama
+          "peak_30d": float,        # son 30 gün zirve
+          "low_30d": float,         # son 30 gün dip
+          "data_points": int,       # kaç veri noktası var
+          "note": str               # trend açıklaması
+        }
+    """
+    from app.isbn_utils import to_isbn13
+    isbn13 = to_isbn13(isbn) or isbn
+
+    # Cache
+    if isbn13 in _hist_cache:
+        ts, data = _hist_cache[isbn13]
+        if time.time() - ts < _HIST_TTL:
+            return data
+
+    s = get_settings()
+    key = s.bookscouter_api_key
+    if not key:
+        return {"trend": "unknown", "note": "BOOKSCOUTER_API_KEY yok"}
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"https://api.bookscouter.com/v1/book/{isbn13}/prices/history",
+                headers={"x-api-key": key},
+                timeout=10,
+            )
+            if r.status_code != 200:
+                logger.debug("BookScouter history HTTP %d for isbn=%s", r.status_code, isbn13)
+                return {"trend": "unknown", "note": f"HTTP {r.status_code}"}
+
+            data = r.json()
+            history = data.get("data") or data.get("history") or []
+            if not history:
+                return {"trend": "unknown", "note": "Veri yok"}
+
+            # Son 30 günü filtrele
+            now_ts = time.time()
+            cutoff = now_ts - 30 * 86400
+            prices_30d = []
+            for entry in history:
+                # entry: {date: "2024-01-15", price: 12.5} veya {timestamp: ..., price: ...}
+                entry_ts = entry.get("timestamp") or 0
+                if not entry_ts:
+                    # date string varsa parse et
+                    d_str = entry.get("date", "")
+                    if d_str:
+                        try:
+                            import datetime
+                            dt = datetime.datetime.strptime(d_str[:10], "%Y-%m-%d")
+                            entry_ts = dt.timestamp()
+                        except Exception:
+                            pass
+                price_val = entry.get("price") or entry.get("cash") or 0
+                if entry_ts >= cutoff and price_val > 0:
+                    prices_30d.append((entry_ts, float(price_val)))
+
+            if not prices_30d:
+                return {"trend": "unknown", "note": "Son 30 günde veri yok"}
+
+            prices_30d.sort(key=lambda x: x[0])
+            vals = [p for _, p in prices_30d]
+
+            current_avg = round(sum(vals) / len(vals), 2)
+            peak_30d    = round(max(vals), 2)
+            low_30d     = round(min(vals), 2)
+
+            # Trend: ilk yarı vs son yarı karşılaştır
+            mid = len(vals) // 2
+            first_half_avg = sum(vals[:mid]) / max(mid, 1)
+            second_half_avg = sum(vals[mid:]) / max(len(vals) - mid, 1)
+            diff_pct = ((second_half_avg - first_half_avg) / max(first_half_avg, 0.01)) * 100
+
+            if diff_pct > 10:
+                trend = "rising"
+                note = f"Son 30 günde +{diff_pct:.0f}% artış — buyback fiyatı yükseliyor"
+            elif diff_pct < -10:
+                trend = "falling"
+                note = f"Son 30 günde {diff_pct:.0f}% düşüş ⚠️ — buyback fiyatı eriyor"
+            else:
+                trend = "stable"
+                note = f"Son 30 günde ±{abs(diff_pct):.0f}% — stabil fiyat"
+
+            result = {
+                "trend": trend,
+                "current_avg": current_avg,
+                "peak_30d": peak_30d,
+                "low_30d": low_30d,
+                "data_points": len(prices_30d),
+                "note": note,
+            }
+            _hist_cache[isbn13] = (time.time(), result)
+            return result
+
+    except Exception as e:
+        logger.debug("BookScouter history error isbn=%s: %s", isbn13, e)
+        return {"trend": "unknown", "note": str(e)[:80]}

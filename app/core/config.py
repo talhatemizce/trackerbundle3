@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     # Buyback APIs
     bookscouter_api_key: str | None = Field(default=None, validation_alias="BOOKSCOUTER_API_KEY")
     booksrun_api_key:    str | None = Field(default=None, validation_alias="BOOKSRUN_API_KEY")
+    # Google Shopping SERP fallback (Amazon price when SP-API misses)
+    serper_api_key:  str | None = Field(default=None, validation_alias="SERPER_API_KEY")   # 2500 req/mo free
+    serpapi_key:     str | None = Field(default=None, validation_alias="SERPAPI_KEY")       # 250 req/mo free
+    # HathiTrust enabled (free, no key — rate limit courtesy)
+    hathitrust_enabled: bool = Field(default=True, validation_alias="HATHITRUST_ENABLED")
     # perplexity_api_key kaldırıldı — ay başı $5 kredi, kart riski, değmez
     # sambanova_api_key kaldırıldı — sadece $5 expiring credit, gerçek free tier değil
 

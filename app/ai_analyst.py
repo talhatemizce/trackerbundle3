@@ -275,6 +275,94 @@ async def _check_edition(isbn: str, client: httpx.AsyncClient) -> Dict[str, Any]
     result = dict(base)
     result["has_newer_edition"] = has_newer
     result["work_key"]          = work_key  # downstream kullanım için
+
+    # ── 5. HathiTrust + Library of Congress — DDC / LC classification ─────────
+    # Bu iki ücretsiz kaynak "textbook mı yoksa trade kitap mı?" sorusunu
+    # doğrudan yanıtlıyor: LC call number ve Dewey Decimal ile.
+    result["dewey"]    = None
+    result["lc_class"] = None
+    result["is_textbook_likely"] = False  # default
+
+    from app.core.config import get_settings as _cfg_gs
+    _s = _cfg_gs()
+    if getattr(_s, "hathitrust_enabled", True):
+        # 5a. HathiTrust brief — DDC (082 MARC field)
+        try:
+            _ht_url = f"https://catalog.hathitrust.org/api/volumes/brief/isbn/{isbn13}.json"
+            _r = await client.get(
+                _ht_url,
+                headers={"User-Agent": OL_USER_AGENT},
+                timeout=8,
+            )
+            if _r.status_code == 200:
+                _ht = _r.json()
+                # Cevap: {records: {"/books/OL...": {data: {dewey_decimal_class: ["512.5"]}}}}
+                for _rec in (_ht.get("records") or {}).values():
+                    _data = _rec.get("data") or {}
+                    _dewey_list = _data.get("dewey_decimal_class") or []
+                    if _dewey_list:
+                        result["dewey"] = str(_dewey_list[0]).strip()
+                        break
+                    # MARC 082 sometimes in different structure
+                    for _item in (_ht.get("items") or []):
+                        _marc_dd = (_item.get("marc") or {}).get("082") or []
+                        if _marc_dd:
+                            result["dewey"] = str(_marc_dd[0]).strip()
+                            break
+                    if result["dewey"]:
+                        break
+        except Exception as _ht_err:
+            logger.debug("HathiTrust error isbn=%s: %s", isbn13, _ht_err)
+
+        # 5b. Library of Congress — LC call number + subjects (no API key, 20 req/min)
+        if not result["lc_class"]:
+            try:
+                _loc_url = "https://www.loc.gov/search/"
+                _r2 = await client.get(
+                    _loc_url,
+                    params={"q": isbn13, "fo": "json", "c": 1, "at": "results"},
+                    headers={"User-Agent": OL_USER_AGENT},
+                    timeout=8,
+                )
+                if _r2.status_code == 200:
+                    _loc_results = (_r2.json().get("results") or [])
+                    if _loc_results:
+                        _loc_item = _loc_results[0]
+                        # LC call number
+                        _call_numbers = _loc_item.get("call_number") or []
+                        if _call_numbers:
+                            result["lc_class"] = str(_call_numbers[0]).strip()
+                        # Dewey fallback from LoC if HathiTrust missed
+                        if not result["dewey"]:
+                            _subjects_loc = _loc_item.get("subject") or []
+                            if _subjects_loc and not result.get("categories"):
+                                result["categories"] = [str(s) for s in _subjects_loc[:6]]
+            except Exception as _loc_err:
+                logger.debug("LoC API error isbn=%s: %s", isbn13, _loc_err)
+
+    # 5c. Derive textbook classification from DDC / LC / subjects
+    try:
+        from app.analytics import dewey_to_category, lc_class_to_category, subjects_to_textbook_score
+        _tb_score = 0.0
+        _category_meta = {}
+        if result.get("dewey"):
+            _category_meta = dewey_to_category(result["dewey"])
+            _tb_score = max(_tb_score, 0.8 if _category_meta.get("is_textbook_likely") else 0.1)
+            if not result.get("categories") and _category_meta.get("category"):
+                result.setdefault("categories", [])
+                if _category_meta["category"] not in result["categories"]:
+                    result["categories"].insert(0, _category_meta["category"])
+        if result.get("lc_class"):
+            _lc_meta = lc_class_to_category(result["lc_class"])
+            _tb_score = max(_tb_score, 0.75 if _lc_meta.get("is_textbook_likely") else 0.1)
+        if result.get("categories"):
+            _subj_score = subjects_to_textbook_score(result["categories"])
+            _tb_score = max(_tb_score, _subj_score)
+        result["is_textbook_likely"] = _tb_score >= 0.5
+        result["textbook_score"]     = round(_tb_score, 2)
+    except Exception as _tb_err:
+        logger.debug("Textbook classification error: %s", _tb_err)
+
     return result
 
 
@@ -704,6 +792,9 @@ def _build_prompt(isbn: str, isbn13: str, c: Dict[str, Any],
         f"Edition year: {edition.get('edition_year','?')}",
         f"Newer edition exists: {'YES ⚠️' if edition.get('has_newer_edition') else 'No/Unknown'}",
         f"Categories/Subjects: {', '.join((edition.get('categories') or [])[:4]) or 'N/A'}",
+        f"Dewey Decimal: {edition.get('dewey','N/A') or 'N/A'}",
+        f"LC Call Number: {edition.get('lc_class','N/A') or 'N/A'}",
+        f"Textbook classification: {'⚠️ LIKELY TEXTBOOK (high semester seasonality, edition risk)' if edition.get('is_textbook_likely') else 'Trade/General book'}",
         f"Page count: {edition.get('page_count','N/A') or 'N/A'}",
         f"Description: {(edition.get('description','') or '')[:200] or 'N/A'}",
         f"Data source: {edition.get('source','unknown')}",

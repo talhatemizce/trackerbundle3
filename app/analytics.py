@@ -12,18 +12,58 @@ from typing import Optional
 
 
 # ── BSR → Aylık Satış Hızı ────────────────────────────────────────────────────
-# Amazon Books US için ampirik eğri (Jungle Scout / Keepa 2023-24 kalibrasyonu)
-# Tier tablo: (BSR_eşik, aylık_satış_adet)
+# Amazon Books US için ampirik eğri
+# 2025 kalibrasyonu: Automateed + BSR-calculator.com + Jungle Scout Books data
+# Books kategorisi diğer kategorilerden farklı davranır:
+#   - Ders kitapları mevsimsel spike gösterir (Ağustos–Eylül, Ocak)
+#   - Long-tail çok uzun: BSR 500K+ hâlâ yılda birkaç satış
 _BSR_TIERS = [
+    (100,        900.0),   # #1–99: çok popüler (bestseller)
+    (500,        400.0),
     (1_000,      200.0),
-    (5_000,       80.0),
-    (20_000,      30.0),
-    (50_000,      12.0),
-    (100_000,      6.0),
-    (250_000,      2.5),
-    (500_000,      1.2),
-    (1_000_000,    0.5),
-    (float("inf"), 0.15),
+    (2_500,      100.0),
+    (5_000,       60.0),
+    (10_000,      35.0),
+    (20_000,      18.0),
+    (50_000,      10.0),
+    (100_000,      5.0),
+    (200_000,      2.5),
+    (400_000,      1.2),
+    (750_000,      0.5),
+    (1_500_000,    0.2),
+    (float("inf"), 0.08),  # ~1 satış/yıl
+]
+
+# Textbook kategorisi için çarpan (Ağustos-Eylül pikinde 2–3x normal)
+# Şu an analytics modülü mevsim bilgisi almıyor — csv_arb_scanner bu çarpanı uygular
+_TEXTBOOK_SUBJECT_KEYWORDS = frozenset([
+    "textbook", "textbooks", "education", "educational", "academic",
+    "college", "university", "study guide", "course material",
+    "mathematics", "calculus", "algebra", "chemistry", "biology", "physics",
+    "economics", "accounting", "statistics", "engineering",
+])
+
+# LC call number → kategori tahmini
+# format: (prefix_tuple, label, is_textbook_likely)
+_LC_CLASS_MAP = [
+    (("QA",),                       "Mathematics",          True),
+    (("QC",),                       "Physics",              True),
+    (("QD",),                       "Chemistry",            True),
+    (("QH", "QK", "QL", "QP"),      "Biology/Life Sciences",True),
+    (("QR",),                       "Microbiology",         True),
+    (("Q",),                        "Science (General)",    True),
+    (("T", "TA", "TC", "TE", "TJ",
+      "TK", "TL", "TN", "TP"),      "Engineering/Tech",     True),
+    (("HF",),                       "Business/Finance",     True),
+    (("HB", "HC", "HD"),            "Economics",            True),
+    (("LB", "LC", "L"),             "Education",            True),
+    (("R", "RA", "RB", "RC", "RD"), "Medicine/Health",      True),
+    (("K", "KF"),                   "Law",                  True),
+    (("P", "PE", "PS", "PR", "PQ"), "Language/Literature",  False),
+    (("N", "NA", "ND"),             "Fine Arts",            False),
+    (("B", "BD", "BF"),             "Philosophy/Psychology",False),
+    (("D", "DA", "DC", "E", "F"),   "History",              False),
+    (("Z",),                        "Library Science",      False),
 ]
 
 
@@ -34,7 +74,7 @@ def bsr_to_velocity(bsr: Optional[int]) -> Optional[float]:
     for threshold, vel in _BSR_TIERS:
         if bsr < threshold:
             return vel
-    return 0.15
+    return 0.08
 
 
 def bsr_to_days_to_sell(bsr: Optional[int]) -> Optional[int]:
@@ -47,6 +87,76 @@ def bsr_to_days_to_sell(bsr: Optional[int]) -> Optional[int]:
         return None
     days = math.ceil(30.0 / vel)
     return min(days, 730)
+
+
+def lc_class_to_category(lc_number: str) -> dict:
+    """
+    LC call number → {category, is_textbook_likely}
+    Örn: "QA76.5" → {"category": "Mathematics", "is_textbook_likely": True}
+    """
+    if not lc_number:
+        return {"category": "Unknown", "is_textbook_likely": False}
+    upper = lc_number.upper().strip()
+    for prefixes, label, is_tb in _LC_CLASS_MAP:
+        for pfx in prefixes:
+            if upper.startswith(pfx):
+                return {"category": label, "is_textbook_likely": is_tb}
+    return {"category": "General/Other", "is_textbook_likely": False}
+
+
+def dewey_to_category(dewey: str) -> dict:
+    """
+    Dewey Decimal number → {category, is_textbook_likely}
+    Örn: "512.5" → {"category": "Mathematics", "is_textbook_likely": True}
+    """
+    if not dewey:
+        return {"category": "Unknown", "is_textbook_likely": False}
+    try:
+        d = float(dewey.split("/")[0].strip())
+    except (ValueError, AttributeError):
+        return {"category": "Unknown", "is_textbook_likely": False}
+
+    # Dewey ranges
+    if 000 <= d < 100:   return {"category": "Computer Science/General",  "is_textbook_likely": True}
+    if 100 <= d < 200:   return {"category": "Philosophy/Psychology",      "is_textbook_likely": False}
+    if 200 <= d < 300:   return {"category": "Religion",                   "is_textbook_likely": False}
+    if 300 <= d < 310:   return {"category": "Social Sciences",            "is_textbook_likely": True}
+    if 330 <= d < 340:   return {"category": "Economics",                  "is_textbook_likely": True}
+    if 340 <= d < 350:   return {"category": "Law",                        "is_textbook_likely": True}
+    if 370 <= d < 380:   return {"category": "Education",                  "is_textbook_likely": True}
+    if 380 <= d < 390:   return {"category": "Commerce/Business",          "is_textbook_likely": True}
+    if 300 <= d < 400:   return {"category": "Social Sciences",            "is_textbook_likely": True}
+    if 400 <= d < 500:   return {"category": "Language/Linguistics",       "is_textbook_likely": False}
+    if 500 <= d < 510:   return {"category": "Science (General)",          "is_textbook_likely": True}
+    if 510 <= d < 520:   return {"category": "Mathematics",                "is_textbook_likely": True}
+    if 520 <= d < 530:   return {"category": "Astronomy",                  "is_textbook_likely": True}
+    if 530 <= d < 540:   return {"category": "Physics",                    "is_textbook_likely": True}
+    if 540 <= d < 550:   return {"category": "Chemistry",                  "is_textbook_likely": True}
+    if 550 <= d < 560:   return {"category": "Earth Sciences",             "is_textbook_likely": True}
+    if 560 <= d < 600:   return {"category": "Biology/Life Sciences",      "is_textbook_likely": True}
+    if 600 <= d < 620:   return {"category": "Technology (General)",       "is_textbook_likely": True}
+    if 620 <= d < 630:   return {"category": "Engineering",                "is_textbook_likely": True}
+    if 610 <= d < 620:   return {"category": "Medicine/Health",            "is_textbook_likely": True}
+    if 600 <= d < 700:   return {"category": "Applied Sciences",           "is_textbook_likely": True}
+    if 700 <= d < 800:   return {"category": "Fine Arts",                  "is_textbook_likely": False}
+    if 800 <= d < 900:   return {"category": "Literature",                 "is_textbook_likely": False}
+    if 900 <= d < 1000:  return {"category": "History/Geography",          "is_textbook_likely": False}
+    return {"category": "General/Other", "is_textbook_likely": False}
+
+
+def subjects_to_textbook_score(subjects: list) -> float:
+    """
+    Subjects listesinden 0.0–1.0 arası textbook olasılık skoru.
+    0.6+ → muhtemelen textbook, 0.3–0.6 → belirsiz, <0.3 → trade kitap
+    """
+    if not subjects:
+        return 0.0
+    hits = sum(
+        1 for s in subjects
+        if any(kw in s.lower() for kw in _TEXTBOOK_SUBJECT_KEYWORDS)
+    )
+    return min(hits / max(len(subjects), 1), 1.0)
+
 
 
 # ── Confidence Score (0–100) ─────────────────────────────────────────────────
