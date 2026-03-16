@@ -655,14 +655,7 @@ async def _scan_one(
                 r.worst_case_roi    = _scen.get("worst_case_roi")
                 r.worst_cut_pct     = _scen.get("worst_cut_pct")
 
-            reject_reason = _filter_result(r, filters)
-            if reject_reason:
-                r.reason = reject_reason
-                r.accepted = False
-            else:
-                r.accepted = True
-
-        # ── Buyback kanalı — her offer için aynı buyback verisi ──────────────
+        # ── Buyback kanalı — filter'dan ÖNCE ekle (buyback_only filtresi için gerekli) ──
         if isinstance(buyback_data, dict) and buyback_data.get("ok"):
             best_cash = buyback_data.get("best_cash")
             if best_cash and best_cash > 0:
@@ -673,6 +666,20 @@ async def _scan_one(
                 r.buyback_url    = buyback_data.get("best_url", "")
                 r.buyback_profit = bb_calc["profit"]
                 r.buyback_roi    = bb_calc["roi_pct"]
+
+        # buyback_only mode: Amazon olmadan da kabul et (buyback kârlıysa)
+        if filters.buyback_only and r.buyback_profit and r.buyback_profit > 0:
+            r.reason = ""
+            r.accepted = True
+            results.append(r)
+            continue
+
+        reject_reason = _filter_result(r, filters)
+        if reject_reason:
+            r.reason = reject_reason
+            r.accepted = False
+        else:
+            r.accepted = True
 
         results.append(r)
 
