@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, Component } from "react";
+import React, { useState, useEffect, useCallback, useRef, Component } from "react";
 
 
 // ISBN-10 → ISBN-13 dönüşümü (eBay GTIN araması için)
