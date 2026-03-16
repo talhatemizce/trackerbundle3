@@ -346,25 +346,43 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
     buy_price = float(candidate.get("buy_price") or candidate.get("ebay_total") or 0)
     price_bucket = int(buy_price // 5) * 5  # $5 granülariyle grupla (28.94 → 25)
     source_cond = candidate.get("source_condition", "used")
-    cache_key = f"{isbn_clean}:{price_bucket}:{source_cond}"
+    # Seller-level granularity: same ISBN + same price band + same seller = reuse
+    # Different sellers can have different conditions/descriptions/images
+    item_id = candidate.get("item_id") or candidate.get("ebay_item_id") or ""
+    seller = candidate.get("ebay_seller_name") or candidate.get("seller_name") or ""
+    # Use item_id if available (most specific), else seller name
+    listing_key = item_id[:16] if item_id else seller[:20]
+    cache_key = f"{isbn_clean}:{price_bucket}:{source_cond}:{listing_key}"
 
+    # Step 1: cache read (lock held briefly, no await inside)
     async with _ai_cache_lock:
         if cache_key in _ai_cache:
             cached = _ai_cache[cache_key]
             if _time.time() - cached.get("_cached_at", 0) < _AI_CACHE_TTL:
                 logger.info("AI cache HIT key=%s", cache_key)
                 return {**cached, "_from_cache": True}
-        # In-flight coalescing: aynı key için paralel LLM çağrısı önle
-        if cache_key in _ai_inflight:
-            logger.info("AI in-flight, waiting for key=%s", cache_key)
-        while cache_key in _ai_inflight:
+        already_inflight = cache_key in _ai_inflight
+        if not already_inflight:
+            _ai_inflight.add(cache_key)
+
+    # Step 2: if another coroutine is already computing this key, wait OUTSIDE the lock
+    if already_inflight:
+        logger.info("AI in-flight, waiting for key=%s", cache_key)
+        for _ in range(200):  # max 60s wait (200 × 0.3s)
             await asyncio.sleep(0.3)
-            # Tekrar cache'e bak — biten inflight sonucu cache'e yazmış olabilir
-            if cache_key in _ai_cache:
-                cached = _ai_cache[cache_key]
-                if _time.time() - cached.get("_cached_at", 0) < _AI_CACHE_TTL:
-                    return {**cached, "_from_cache": True}
-        _ai_inflight.add(cache_key)
+            async with _ai_cache_lock:
+                if cache_key in _ai_cache:
+                    cached = _ai_cache[cache_key]
+                    if _time.time() - cached.get("_cached_at", 0) < _AI_CACHE_TTL:
+                        return {**cached, "_from_cache": True}
+                if cache_key not in _ai_inflight:
+                    # inflight cleared (completed or errored) — proceed with own call
+                    _ai_inflight.add(cache_key)
+                    break
+        else:
+            logger.warning("AI in-flight wait timed out for key=%s — proceeding", cache_key)
+            async with _ai_cache_lock:
+                _ai_inflight.add(cache_key)
 
     isbn13 = _to_isbn13(isbn) or isbn
 
@@ -456,7 +474,8 @@ async def _call_llm(prompt: str, image_b64: Optional[str]) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error("LLM router tamamen başarısız: %s", e)
-        return {
+        # _parse_json normalization ile tüm schema key'leri doldur — UI boş göstermez
+        partial = {
             "verdict": "UNKNOWN",
             "summary": f"Tüm LLM providerlar başarısız: {str(e)[:120]}",
             "price_trend": "UNKNOWN",
@@ -466,6 +485,7 @@ async def _call_llm(prompt: str, image_b64: Optional[str]) -> Dict[str, Any]:
             "confidence": 20,
             "all_providers_failed": True,
         }
+        return _parse_json(str(partial).replace("'", '"'))
 
 
 def _system_prompt(has_image: bool) -> str:

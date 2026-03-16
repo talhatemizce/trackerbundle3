@@ -388,11 +388,13 @@ async def _get_ebay_offers(isbn: str, filters: "ScanFilters | None" = None) -> L
                 mr = isbn_info.reason.value
 
             # Policy filter: drop items that don't meet match policy
-            policy_str = str(match_policy)
-            if policy_str == "precision" and mq != "CONFIRMED":
+            # Use .value for str(Enum) — str(IsbnMatchPolicy.PRECISION) gives
+            # "IsbnMatchPolicy.PRECISION", not "precision"
+            policy_val = match_policy.value if hasattr(match_policy, "value") else str(match_policy)
+            if policy_val == "precision" and mq != "CONFIRMED":
                 logger.debug("isbn=%s item=%s DROPPED (precision policy, mq=%s)", isbn, it.get("itemId","?"), mq)
                 continue
-            elif policy_str == "balanced" and mq not in ("CONFIRMED", "UNVERIFIED_SUPER_DEAL"):
+            elif policy_val == "balanced" and mq not in ("CONFIRMED", "UNVERIFIED_SUPER_DEAL"):
                 logger.debug("isbn=%s item=%s DROPPED (balanced policy, mq=%s)", isbn, it.get("itemId","?"), mq)
                 continue
             # recall: keep everything
@@ -572,14 +574,19 @@ async def _scan_one(
         return [r]
 
     if not amazon_data:
-        results = []
-        for o in all_offers:
-            r = ArbResult(isbn=isbn, asin=asin, **{k: o[k] for k in
-                          ["source", "source_condition", "buy_price"]},
-                          amazon_sell_price=None, buybox_type=None, match_type=None)
-            r.reason = "amazon_unavailable"
-            results.append(r)
-        return results
+        # buyback_only mode: Amazon yoksa buyback kâr hesabı yapabiliriz — erken çıkma
+        if filters.buyback_only or filters.min_buyback_profit is not None:
+            logger.info("isbn=%s amazon_unavailable but buyback_only=True — continuing for buyback eval", isbn)
+            amazon_data = {}  # boş dict ile devam — buyback loop'u aşağıda çalışacak
+        else:
+            results = []
+            for o in all_offers:
+                r = ArbResult(isbn=isbn, asin=asin, **{k: o[k] for k in
+                              ["source", "source_condition", "buy_price"]},
+                              amazon_sell_price=None, buybox_type=None, match_type=None)
+                r.reason = "amazon_unavailable"
+                results.append(r)
+            return results
 
     results = []
     for o in all_offers:
