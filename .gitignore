@@ -37,6 +37,9 @@ _old/
 # local runtime data
 /data/
 *.json
+# exceptions: tracked JSON/lockfiles
+!panel/package.json
+!panel/package-lock.json
 __pycache__/
 *.pyc
 .venv/

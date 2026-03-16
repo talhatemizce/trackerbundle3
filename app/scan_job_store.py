@@ -12,8 +12,20 @@ HISTORY_FILE = DATA_DIR / "scan_history.json"
 
 # ── In-memory job store ───────────────────────────────────────────────────────
 _jobs: Dict[str, Dict] = {}  # job_id → job dict
+_JOB_TTL_S = 3600 * 4  # completed/error jobs evicted after 4 hours
+
+def _evict_old_jobs() -> None:
+    """Remove completed/error jobs older than TTL to prevent unbounded memory growth."""
+    cutoff = time.time() - _JOB_TTL_S
+    to_del = [
+        jid for jid, j in _jobs.items()
+        if j["status"] in ("done", "error") and j.get("created_at", 0) < cutoff
+    ]
+    for jid in to_del:
+        del _jobs[jid]
 
 def create_job(total: int) -> str:
+    _evict_old_jobs()
     job_id = str(uuid.uuid4())[:8]
     _jobs[job_id] = {
         "id": job_id,

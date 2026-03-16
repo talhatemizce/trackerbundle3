@@ -50,7 +50,7 @@ def deal_score(
     bonus = 0
     bonus += 10 if make_offer else 0
     bonus += _COND_BONUS.get(bucket, 0)
-    bonus += -2 if ship_estimated else 0  # est.ship penalty: minor uncertainty signal
+    # ship_estimated: etkisi sıfır — UX'de sadece uyarı gösteriliyor, skoru değiştirmiyor
     bonus += -5 if (sold_avg is not None and sold_avg < total) else 0  # None = no data = no penalty
     return max(0, min(100, int(round(ratio_score + bonus))))
 

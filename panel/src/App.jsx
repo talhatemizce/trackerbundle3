@@ -15,11 +15,15 @@ const toIsbn13 = (isbn) => {
 };
 
 const BASE = import.meta.env.PROD ? "" : "/api";
+// API key from localStorage — set via browser console: localStorage.setItem("tb_api_key","your-key")
+const _getApiKey = () => { try { return localStorage.getItem("tb_api_key") || ""; } catch { return ""; } };
 const req = async (path, opts = {}, timeoutMs = 15000) => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const apiKey = _getApiKey();
+  const baseHeaders = { "Content-Type": "application/json", ...(apiKey ? { "X-API-Key": apiKey } : {}) };
   try {
-    const r = await fetch(BASE + path, { headers: { "Content-Type": "application/json" }, signal: ctrl.signal, ...opts });
+    const r = await fetch(BASE + path, { headers: baseHeaders, signal: ctrl.signal, ...opts });
     if (!r.ok) { const e = await r.json().catch(() => ({ detail: r.statusText })); throw new Error(e.detail || "API error"); }
     return r.json();
   } catch (e) {
@@ -87,7 +91,7 @@ const SOFT = {
   green: "#2d8a5e", blue: "#2e6da4", purple: "#6b4fa8", orange: "#c2620a", red: "#b83232",
 };
 
-const BUILD_ID = "2026-03-02-v20-soft-theme";
+const BUILD_ID = "2026-03-16-audit-fixes";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const isbn13to10 = (isbn) => {
@@ -1107,6 +1111,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
 
   // Filters
   const [strictMode, setStrictMode] = useState(true);
+  const [onlyViable, setOnlyViable] = useState(true);
   const [isbnMatchPolicy, setIsbnMatchPolicy] = useState("balanced");
   const [invalidIsbnPolicy, setInvalidIsbnPolicy] = useState("best_effort");
   const [verifiedOnlyFilter, setVerifiedOnlyFilter] = useState(false);
@@ -1246,7 +1251,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
       setError("");
     } else if (ext === "xlsx" || ext === "xls") {
       try {
-        const XLSX = await import("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+        const XLSX = await import("xlsx");
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
@@ -1306,7 +1311,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
     const body = {
       isbns,
       strict_mode: strictMode,
-      only_viable: true,
+      only_viable: onlyViable,
       concurrency,
       ...(Object.keys(isbnBuyPrices).length ? {isbn_buy_prices: isbnBuyPrices} : {}),
       ...(Object.keys(isbnAmazonPrices).length ? {isbn_amazon_prices: isbnAmazonPrices} : {}),
@@ -1556,6 +1561,11 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
             <input type="checkbox" checked={strictMode} onChange={e=>setStrictMode(e.target.checked)}/>
             <span>Strict Mode <span style={{fontSize:9,color:C.muted}}>(NEW/Like New→AMZ New · Used→AMZ Used)</span></span>
+          </label>
+          {/* Only viable toggle */}
+          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
+            <input type="checkbox" checked={onlyViable} onChange={e=>setOnlyViable(e.target.checked)}/>
+            <span>Yalnızca karlı <span style={{fontSize:9,color:C.muted}}>(only_viable — kapalıysa tüm sonuçlar dahil)</span></span>
           </label>
 
           {/* ISBN Match Policy */}
@@ -2894,7 +2904,10 @@ function DetailDrawer({
                 <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
                   <div style={{fontSize:9,color:C.muted,marginBottom:2}}>📦 TOPLAM</div>
                   <div style={{fontSize:18,fontWeight:700,color:C.text}}>${alertEntry.total}</div>
-                  {alertEntry.ship_estimated && <div style={{fontSize:9,color:C.orange}}>🚚 est.ship</div>}
+                  {/* Use shipping_is_estimated from /alerts/details when available; fallback to alertEntry flag */}
+                  {(drawerData?.ebay?.selected_listing?.shipping_is_estimated ?? alertEntry.ship_estimated) &&
+                    <div style={{fontSize:9,color:C.orange}} title={`Tahmini kargo — gerçek maliyet değişebilir (kaynak: ${drawerData?.ebay?.selected_listing?.shipping_source||"unknown"})`}>🚚 est.ship</div>
+                  }
                 </div>
                 {/* Limit */}
                 <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
@@ -3186,8 +3199,8 @@ function DetailDrawer({
                 })()}
               </AccordionSection>
 
-              {/* ── Amazon BuyBox ────────────────────────────────────── */}
-              {drawerData.amazon && (
+              {/* ── Amazon BuyBox — hide entirely if not configured ─── */}
+              {drawerData.amazon && drawerData.amazon.reason !== "not_configured" && (
                 <AccordionSection title="🛒 Amazon BuyBox" C={C} defaultOpen={true}>
                   {drawerData.amazon.available ? (() => {
                     const az = drawerData.amazon;

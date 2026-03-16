@@ -256,6 +256,7 @@ def item_total_price(
 
     ship = 0.0
     ship_estimated = False
+    ship_source = "free"  # free | fixed | calculated | unknown
     if opts:
         opt = opts[0]
         # Browse API uses shippingCostType; shippingServiceType/shippingType are fallbacks
@@ -264,6 +265,7 @@ def item_total_price(
             if calc_ship_est and calc_ship_est > 0:
                 ship = calc_ship_est
                 ship_estimated = True
+                ship_source = "calculated"
             else:
                 return None
 
@@ -274,18 +276,23 @@ def item_total_price(
                 if calc_ship_est and calc_ship_est > 0:
                     ship = calc_ship_est
                     ship_estimated = True
+                    ship_source = "unknown"
                 else:
                     return None
             else:
                 try:
                     ship = float(cost_val)
+                    # Numeric cost → NOT estimated, source = fixed
+                    ship_source = "fixed"
                 except (TypeError, ValueError):
                     return None
-    # opts == [] → free shipping
+    # opts == [] → free shipping (ship_source stays "free", ship_estimated stays False)
 
     result = round(price + ship, 2)
     # Always explicitly annotate (prevents stale True if dict is reused)
     item["_shipping_estimated"] = ship_estimated
+    item["_shipping_cost"] = round(ship, 2)
+    item["_shipping_source"] = ship_source
     return result
 
 

@@ -340,11 +340,17 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
         raise RuntimeError("Hiçbir LLM API key'i yapılandırılmamış — GEMINI_API_KEY, GROQ_API_KEY veya OPENROUTER_API_KEY gerekli")
 
     # ── Cache kontrolü ────────────────────────────────────────
-    cache_key = isbn.replace("-", "").replace(" ", "").strip()
+    # Composite key: ISBN + listing item_id + buy_price + condition
+    # Prevents stale verdict reuse for same ISBN with different listing/price
+    _isbn_norm = isbn.replace("-", "").replace(" ", "").strip()
+    _item_id   = str(candidate.get("ebay_item_id") or candidate.get("item_id") or "")[:20]
+    _buy_price = str(round(float(candidate.get("buy_price") or candidate.get("ebay_total") or 0), 2))
+    _cond      = str(candidate.get("source_condition") or "")
+    cache_key  = f"{_isbn_norm}|{_item_id}|{_buy_price}|{_cond}"
     if cache_key in _ai_cache:
         cached = _ai_cache[cache_key]
         if _time.time() - cached.get("_cached_at", 0) < _AI_CACHE_TTL:
-            logger.info("AI cache HIT isbn=%s", cache_key)
+            logger.info("AI cache HIT isbn=%s item=%s price=%s", _isbn_norm, _item_id, _buy_price)
             return {**cached, "_from_cache": True}
 
     isbn13 = _to_isbn13(isbn) or isbn
