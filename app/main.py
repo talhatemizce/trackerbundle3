@@ -1085,18 +1085,6 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks, _a
         inbound=req.fee_inbound if req.fee_inbound is not None else 0.60,
     )
 
-    # Kullanıcının gerçek filtre kriterleri (background'da uygulanacak)
-    user_filters = dict(
-        only_viable=req.only_viable,
-        min_roi_pct=req.min_roi_pct,
-        max_roi_pct=req.max_roi_pct,
-        min_profit_usd=req.min_profit_usd,
-        min_amazon_price=req.min_amazon_price,
-        max_amazon_price=req.max_amazon_price,
-        min_buy_price=req.min_buy_price,
-        max_buy_price=req.max_buy_price,
-    )
-
     job_id = create_job(len(req.isbns))
 
     async def _run():

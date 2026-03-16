@@ -326,8 +326,9 @@ import time as _time
 _ai_cache: Dict[str, Dict[str, Any]] = {}
 _ai_cache_lock = asyncio.Lock()
 _AI_CACHE_TTL = 3600 * 6  # 6 saat
-# In-flight set: aynı ISBN için paralel duplicate çağrı önle
-_ai_inflight: set = set()
+# In-flight coalescing: same cache_key → only ONE upstream LLM call, others wait
+_ai_inflight: Dict[str, asyncio.Event] = {}
+_ai_inflight_lock = asyncio.Lock()
 
 
 async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
@@ -353,58 +354,87 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
             logger.info("AI cache HIT isbn=%s item=%s price=%s", _isbn_norm, _item_id, _buy_price)
             return {**cached, "_from_cache": True}
 
+    # ── In-flight coalescing: if another coroutine is already calling LLM for
+    # the same key, wait for it to finish then return from cache ────────────
+    async with _ai_inflight_lock:
+        if cache_key in _ai_inflight:
+            event = _ai_inflight[cache_key]
+        else:
+            event = asyncio.Event()
+            _ai_inflight[cache_key] = event
+            event = None  # this coroutine is the primary caller
+
+    if event is not None:
+        # We are a waiter — wait for the primary caller to finish
+        logger.info("AI in-flight WAIT isbn=%s item=%s (coalescing)", _isbn_norm, _item_id)
+        await event.wait()
+        # Primary caller stored result in cache
+        cached = _ai_cache.get(cache_key)
+        if cached and _time.time() - cached.get("_cached_at", 0) < _AI_CACHE_TTL:
+            return {**cached, "_from_cache": True}
+        # Edge case: primary caller failed; fall through to make our own call
+        logger.warning("AI in-flight coalescing: primary call failed, making own call")
+
     isbn13 = _to_isbn13(isbn) or isbn
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        edition_task = _check_edition(isbn, client)
-        img_url = candidate.get("ebay_image_url", "")
-        image_task = _fetch_image_b64(img_url, client) if img_url else asyncio.sleep(0, result=None)
-        edition_data, image_b64 = await asyncio.gather(edition_task, image_task)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            edition_task = _check_edition(isbn, client)
+            img_url = candidate.get("ebay_image_url", "")
+            image_task = _fetch_image_b64(img_url, client) if img_url else asyncio.sleep(0, result=None)
+            edition_data, image_b64 = await asyncio.gather(edition_task, image_task)
 
-    # Deterministic: kondisyon skoru
-    cond_analysis = _condition_score(
-        candidate.get("ebay_title", ""),
-        candidate.get("ebay_description", ""),
-        candidate.get("source_condition", "used"),
-    )
+        # Deterministic: kondisyon skoru
+        cond_analysis = _condition_score(
+            candidate.get("ebay_title", ""),
+            candidate.get("ebay_description", ""),
+            candidate.get("source_condition", "used"),
+        )
 
-    # AI: Gemini Vision + Google Search
-    prompt = _build_prompt(isbn, isbn13, candidate, edition_data, cond_analysis)
-    gemini_result = await _call_llm(prompt, image_b64)
+        # AI: Gemini Vision + Google Search
+        prompt = _build_prompt(isbn, isbn13, candidate, edition_data, cond_analysis)
+        gemini_result = await _call_llm(prompt, image_b64)
 
-    # Deterministic ayarlamalar (verdict değiştirmeden confidence/risk)
-    gemini_result = _apply_deterministic_adjustments(gemini_result, candidate, edition_data, cond_analysis)
+        # Deterministic ayarlamalar (verdict değiştirmeden confidence/risk)
+        gemini_result = _apply_deterministic_adjustments(gemini_result, candidate, edition_data, cond_analysis)
 
-    # Tüm verileri birleştir
-    # ISBN conflict → auto HIGH risk
-    if gemini_result.get("isbn_conflict"):
-        if gemini_result.get("risk_level") not in ("HIGH",):
-            gemini_result["risk_level"] = "HIGH"
-        risks = gemini_result.get("risks") or []
-        conflict_note = gemini_result.get("isbn_conflict_note", "")
-        risks.insert(0, f"🚨 ISBN çakışması: {conflict_note}" if conflict_note else "🚨 Bu ISBN birden fazla farklı kitaba ait — doğrulanamadı")
-        gemini_result["risks"] = risks
+        # Tüm verileri birleştir
+        # ISBN conflict → auto HIGH risk
+        if gemini_result.get("isbn_conflict"):
+            if gemini_result.get("risk_level") not in ("HIGH",):
+                gemini_result["risk_level"] = "HIGH"
+            risks = gemini_result.get("risks") or []
+            conflict_note = gemini_result.get("isbn_conflict_note", "")
+            risks.insert(0, f"🚨 ISBN çakışması: {conflict_note}" if conflict_note else "🚨 Bu ISBN birden fazla farklı kitaba ait — doğrulanamadı")
+            gemini_result["risks"] = risks
 
-    gemini_result.update({
-        "isbn": isbn,
-        "edition_year": edition_data.get("edition_year"),
-        "has_newer_edition": edition_data.get("has_newer_edition"),
-        "google_title": edition_data.get("google_title", ""),
-        "edition_source": edition_data.get("source", ""),
-        "condition_flags": cond_analysis["condition_flags"],
-        "condition_risk": cond_analysis["condition_risk"],
-        "condition_score": cond_analysis["condition_score"],
-        "image_verified": bool(image_b64),
-        "amazon_seller_count": candidate.get("amazon_seller_count"),
-        "amazon_is_sold_by_amazon": candidate.get("amazon_is_sold_by_amazon", False),
-        "seasonality_mult": candidate.get("seasonality_mult"),
-        "_cached_at": _time.time(),
-    })
+        gemini_result.update({
+            "isbn": isbn,
+            "edition_year": edition_data.get("edition_year"),
+            "has_newer_edition": edition_data.get("has_newer_edition"),
+            "google_title": edition_data.get("google_title", ""),
+            "edition_source": edition_data.get("source", ""),
+            "condition_flags": cond_analysis["condition_flags"],
+            "condition_risk": cond_analysis["condition_risk"],
+            "condition_score": cond_analysis["condition_score"],
+            "image_verified": bool(image_b64),
+            "amazon_seller_count": candidate.get("amazon_seller_count"),
+            "amazon_is_sold_by_amazon": candidate.get("amazon_is_sold_by_amazon", False),
+            "seasonality_mult": candidate.get("seasonality_mult"),
+            "_cached_at": _time.time(),
+        })
 
-    # Cache'e kaydet (lock ile race condition önle)
-    async with _ai_cache_lock:
-        _ai_cache[cache_key] = gemini_result
-    return gemini_result
+        # Cache'e kaydet (lock ile race condition önle)
+        async with _ai_cache_lock:
+            _ai_cache[cache_key] = gemini_result
+
+        return gemini_result
+    finally:
+        # Always unblock waiters whether call succeeded or failed
+        async with _ai_inflight_lock:
+            done_event = _ai_inflight.pop(cache_key, None)
+        if done_event:
+            done_event.set()
 
 
 async def _call_llm(prompt: str, image_b64: Optional[str]) -> Dict[str, Any]:

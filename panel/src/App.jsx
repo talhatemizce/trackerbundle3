@@ -32,6 +32,21 @@ const req = async (path, opts = {}, timeoutMs = 15000) => {
   } finally { clearTimeout(timer); }
 };
 
+// ── Brand logo SVGs (inline, no external fetch) ──────────────────────────────
+const EbayLogo = ({ size=14 }) => (
+  <svg width={size*3.2} height={size} viewBox="0 0 64 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{display:"inline-block",verticalAlign:"middle"}}>
+    <text x="0"  y="20" fontSize="22" fontWeight="800" fill="#e53238">e</text>
+    <text x="15" y="20" fontSize="22" fontWeight="800" fill="#0064d2">b</text>
+    <text x="30" y="20" fontSize="22" fontWeight="800" fill="#f5af02">a</text>
+    <text x="46" y="20" fontSize="22" fontWeight="800" fill="#86b817">y</text>
+  </svg>
+);
+const AmazonLogo = ({ size=14 }) => (
+  <svg width={size*4} height={size} viewBox="0 0 80 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{display:"inline-block",verticalAlign:"middle"}}>
+    <text x="0" y="18" fontSize="16" fontWeight="700" fill="#FF9900" fontFamily="Arial,sans-serif">amazon</text>
+  </svg>
+);
+
 // ── ErrorBoundary — prevents white screen on any JS exception ──────────────
 class ErrorBoundary extends Component {
   constructor(p) { super(p); this.state = { err: null }; }
@@ -2580,7 +2595,7 @@ function AlertsFeedTab({ C, theme, push, isbns, titles, bookMeta = {} }) {
 
         {/* Dedup clear — proper React state */}
         <select className="inp" value={dedupIsbn} onChange={e=>setDedupIsbn(e.target.value)} style={{flex:"1 1 180px",minWidth:150,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text,fontSize:12}}>
-          <option value="">Tekrar bildirimi sıfırla…</option>
+          <option value="">Tekrarları temizle…</option>
           {isbns.map(i=><option key={i} value={i}>{i}</option>)}
         </select>
         <button
@@ -2726,10 +2741,10 @@ function AlertsFeedTab({ C, theme, push, isbns, titles, bookMeta = {} }) {
                   </span>
                   {e.url && (
                     <a href={e.url} target="_blank" rel="noreferrer" onClick={ev=>ev.stopPropagation()} style={{
-                      fontSize:11,color:C.accent,textDecoration:"none",
-                      border:`1px solid ${C.accent}`,borderRadius:5,
-                      padding:"2px 8px",whiteSpace:"nowrap",fontWeight:500,
-                    }}>eBay ↗</a>
+                      display:"inline-flex",alignItems:"center",gap:4,
+                      textDecoration:"none",border:`1px solid ${C.accent}`,borderRadius:5,
+                      padding:"2px 8px",whiteSpace:"nowrap",
+                    }}><EbayLogo size={11}/></a>
                   )}
                 </div>
                 <span style={{fontSize:10,color:C.muted3}}>{fmtTs(e.ts)}</span>
@@ -2926,7 +2941,7 @@ function DetailDrawer({
           {/* Cover */}
           <div
             onClick={onLightbox ? ()=>onLightbox(coverSrc) : undefined}
-            style={{width:110,height:155,flexShrink:0,borderRadius:8,overflow:"hidden",
+            style={{width:128,height:172,flexShrink:0,borderRadius:8,overflow:"hidden",
               background:C.surface2,border:`1px solid ${C.border}`,
               cursor:onLightbox?"zoom-in":"default",
               display:"flex",alignItems:"center",justifyContent:"center",
@@ -3376,18 +3391,24 @@ function DetailDrawer({
                     />
                   </a>
                 </div>
-                <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
+                <div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
                   <a href={`https://keepa.com/#!search/1-${isbn13to10(isbn)}`} target="_blank" rel="noreferrer"
-                    style={{flex:1,fontSize:11,color:"white",textDecoration:"none",padding:"8px 12px",
+                    style={{flex:1,minWidth:90,fontSize:11,color:"white",textDecoration:"none",padding:"7px 10px",
                       background:"#2563eb",borderRadius:6,textAlign:"center",fontWeight:600,
-                      display:"block",boxShadow:"0 2px 6px rgba(37,99,235,.3)"}}>
-                    🐝 Keepa Detay ↗
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:"0 2px 6px rgba(37,99,235,.3)"}}>
+                    🐝 Keepa
                   </a>
-                  <a href={`https://camelcamelcamel.com/product/${isbn}`} target="_blank" rel="noreferrer"
-                    style={{flex:1,fontSize:11,color:"white",textDecoration:"none",padding:"8px 12px",
-                      background:"#059669",borderRadius:6,textAlign:"center",fontWeight:600,
-                      display:"block",boxShadow:"0 2px 6px rgba(5,150,105,.3)"}}>
-                    📈 CamelCamelCamel ↗
+                  <a href={`https://www.amazon.com/s?k=${isbn}`} target="_blank" rel="noreferrer"
+                    style={{flex:1,minWidth:90,fontSize:11,color:"#111",textDecoration:"none",padding:"7px 10px",
+                      background:"#FF9900",borderRadius:6,textAlign:"center",fontWeight:600,
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:"0 2px 6px rgba(255,153,0,.3)"}}>
+                    <AmazonLogo size={12}/> ↗
+                  </a>
+                  <a href={buildEbaySearchUrl({isbn})} target="_blank" rel="noreferrer"
+                    style={{flex:1,minWidth:90,fontSize:11,textDecoration:"none",padding:"7px 10px",
+                      background:C.surface2,border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:5,color:C.text}}>
+                    <EbayLogo size={11}/> ↗
                   </a>
                 </div>
               </AccordionSection>

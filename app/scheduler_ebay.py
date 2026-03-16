@@ -55,6 +55,23 @@ def deal_score(
     return max(0, min(100, int(round(ratio_score + bonus))))
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=2, min=2, max=30),
+    retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+    reraise=False,
+)
+async def _telegram_post(url: str, payload: dict) -> None:
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(url, json=payload)
+        if r.status_code == 429:
+            retry_after = int(r.headers.get("Retry-After", 5))
+            logger.warning("Telegram 429 — retry after %ds", retry_after)
+            await asyncio.sleep(retry_after)
+            r = await c.post(url, json=payload)
+        r.raise_for_status()
+
+
 async def _send_telegram(message: str) -> bool:
     s = get_settings()
     if not s.telegram_bot_token or not s.telegram_chat_id:
@@ -70,12 +87,10 @@ async def _send_telegram(message: str) -> bool:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=12) as c:
-            r = await c.post(url, json=payload)
-            r.raise_for_status()
-            return True
+        await _telegram_post(url, payload)
+        return True
     except Exception:
-        logger.exception("Telegram sendMessage failed")
+        logger.exception("Telegram sendMessage failed after retries")
         return False
 
 
