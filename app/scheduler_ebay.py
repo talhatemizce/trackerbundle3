@@ -50,26 +50,9 @@ def deal_score(
     bonus = 0
     bonus += 10 if make_offer else 0
     bonus += _COND_BONUS.get(bucket, 0)
-    # ship_estimated: etkisi sıfır — UX'de sadece uyarı gösteriliyor, skoru değiştirmiyor
+    bonus += -2 if ship_estimated else 0  # est.ship penalty: minor uncertainty signal
     bonus += -5 if (sold_avg is not None and sold_avg < total) else 0  # None = no data = no penalty
     return max(0, min(100, int(round(ratio_score + bonus))))
-
-
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=2, min=2, max=30),
-    retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
-    reraise=False,
-)
-async def _telegram_post(url: str, payload: dict) -> None:
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(url, json=payload)
-        if r.status_code == 429:
-            retry_after = int(r.headers.get("Retry-After", 5))
-            logger.warning("Telegram 429 — retry after %ds", retry_after)
-            await asyncio.sleep(retry_after)
-            r = await c.post(url, json=payload)
-        r.raise_for_status()
 
 
 async def _send_telegram(message: str) -> bool:
@@ -87,10 +70,12 @@ async def _send_telegram(message: str) -> bool:
     }
 
     try:
-        await _telegram_post(url, payload)
-        return True
+        async with httpx.AsyncClient(timeout=12) as c:
+            r = await c.post(url, json=payload)
+            r.raise_for_status()
+            return True
     except Exception:
-        logger.exception("Telegram sendMessage failed after retries")
+        logger.exception("Telegram sendMessage failed")
         return False
 
 

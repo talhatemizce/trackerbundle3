@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, Component } from "react";
+import { useState, useEffect, useCallback, useRef, Component } from "react";
 
 
 // ISBN-10 → ISBN-13 dönüşümü (eBay GTIN araması için)
@@ -15,15 +15,11 @@ const toIsbn13 = (isbn) => {
 };
 
 const BASE = import.meta.env.PROD ? "" : "/api";
-// API key from localStorage — set via browser console: localStorage.setItem("tb_api_key","your-key")
-const _getApiKey = () => { try { return localStorage.getItem("tb_api_key") || ""; } catch { return ""; } };
 const req = async (path, opts = {}, timeoutMs = 15000) => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  const apiKey = _getApiKey();
-  const baseHeaders = { "Content-Type": "application/json", ...(apiKey ? { "X-API-Key": apiKey } : {}) };
   try {
-    const r = await fetch(BASE + path, { headers: baseHeaders, signal: ctrl.signal, ...opts });
+    const r = await fetch(BASE + path, { headers: { "Content-Type": "application/json" }, signal: ctrl.signal, ...opts });
     if (!r.ok) { const e = await r.json().catch(() => ({ detail: r.statusText })); throw new Error(e.detail || "API error"); }
     return r.json();
   } catch (e) {
@@ -31,21 +27,6 @@ const req = async (path, opts = {}, timeoutMs = 15000) => {
     throw e;
   } finally { clearTimeout(timer); }
 };
-
-// ── Brand logo SVGs (inline, no external fetch) ──────────────────────────────
-const EbayLogo = ({ size=14 }) => (
-  <svg width={size*3.2} height={size} viewBox="0 0 64 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{display:"inline-block",verticalAlign:"middle"}}>
-    <text x="0"  y="20" fontSize="22" fontWeight="800" fill="#e53238">e</text>
-    <text x="15" y="20" fontSize="22" fontWeight="800" fill="#0064d2">b</text>
-    <text x="30" y="20" fontSize="22" fontWeight="800" fill="#f5af02">a</text>
-    <text x="46" y="20" fontSize="22" fontWeight="800" fill="#86b817">y</text>
-  </svg>
-);
-const AmazonLogo = ({ size=14 }) => (
-  <svg width={size*4} height={size} viewBox="0 0 80 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{display:"inline-block",verticalAlign:"middle"}}>
-    <text x="0" y="18" fontSize="16" fontWeight="700" fill="#FF9900" fontFamily="Arial,sans-serif">amazon</text>
-  </svg>
-);
 
 // ── ErrorBoundary — prevents white screen on any JS exception ──────────────
 class ErrorBoundary extends Component {
@@ -106,7 +87,7 @@ const SOFT = {
   green: "#2d8a5e", blue: "#2e6da4", purple: "#6b4fa8", orange: "#c2620a", red: "#b83232",
 };
 
-const BUILD_ID = "2026-03-16-audit-fixes";
+const BUILD_ID = "2026-03-02-v20-soft-theme";
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const isbn13to10 = (isbn) => {
@@ -1126,11 +1107,11 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
 
   // Filters
   const [strictMode, setStrictMode] = useState(true);
-  const [onlyViable, setOnlyViable] = useState(true);
   const [isbnMatchPolicy, setIsbnMatchPolicy] = useState("balanced");
   const [invalidIsbnPolicy, setInvalidIsbnPolicy] = useState("best_effort");
   const [verifiedOnlyFilter, setVerifiedOnlyFilter] = useState(false);
   const [buybackOnlyFilter, setBuybackOnlyFilter] = useState(false);
+  const [minBuybackProfit, setMinBuybackProfit] = useState("");
   const [verifyResults, setVerifyResults] = useState({}); // {rowIndex: {status, summary, ...}}
   const [verifying, setVerifying] = useState(new Set()); // indices being verified
   const [bulkVerifying, setBulkVerifying] = useState(false);
@@ -1267,7 +1248,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
       setError("");
     } else if (ext === "xlsx" || ext === "xls") {
       try {
-        const XLSX = await import("xlsx");
+        const XLSX = await import("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
@@ -1327,13 +1308,15 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
     const body = {
       isbns,
       strict_mode: strictMode,
-      only_viable: onlyViable,
+      only_viable: true,
       concurrency,
       ...(Object.keys(isbnBuyPrices).length ? {isbn_buy_prices: isbnBuyPrices} : {}),
       ...(Object.keys(isbnAmazonPrices).length ? {isbn_amazon_prices: isbnAmazonPrices} : {}),
       ...(minRoi   ? {min_roi_pct: parseFloat(minRoi)}   : {}),
       ...(maxRoi   ? {max_roi_pct: parseFloat(maxRoi)}   : {}),
       ...(minProfit? {min_profit_usd: parseFloat(minProfit)}: {}),
+      ...(buybackOnlyFilter ? {buyback_only: true} : {}),
+      ...(minBuybackProfit ? {min_buyback_profit: parseFloat(minBuybackProfit)} : {}),
       ...(minAmazon? {min_amazon_price: parseFloat(minAmazon)}: {}),
       ...(maxAmazon? {max_amazon_price: parseFloat(maxAmazon)}: {}),
       ...(minBuy   ? {min_buy_price: parseFloat(minBuy)} : {}),
@@ -1614,11 +1597,6 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
             <input type="checkbox" checked={strictMode} onChange={e=>setStrictMode(e.target.checked)}/>
             <span>Strict Mode <span style={{fontSize:9,color:C.muted}}>(NEW/Like New→AMZ New · Used→AMZ Used)</span></span>
           </label>
-          {/* Only viable toggle */}
-          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
-            <input type="checkbox" checked={onlyViable} onChange={e=>setOnlyViable(e.target.checked)}/>
-            <span>Yalnızca karlı <span style={{fontSize:9,color:C.muted}}>(only_viable — kapalıysa tüm sonuçlar dahil)</span></span>
-          </label>
 
           {/* ISBN Match Policy */}
           <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:8}}>
@@ -1648,10 +1626,16 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           </label>
 
           {/* Buyback only filter */}
-          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
+          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:4, cursor:"pointer"}}>
             <input type="checkbox" checked={buybackOnlyFilter} onChange={e=>setBuybackOnlyFilter(e.target.checked)}/>
-            <span>💰 Buyback kârlı <span style={{fontSize:9,color:C.muted}}>(buyback_profit &gt; $0)</span></span>
+            <span>💰 Buyback kârlı <span style={{fontSize:9,color:C.muted}}>(profit &gt; $0)</span></span>
           </label>
+          <div style={{marginBottom:8}}>
+            <span style={labelStyle}>Min Buyback Kâr $</span>
+            <input style={inpStyle} type="number" value={minBuybackProfit}
+              onChange={e=>setMinBuybackProfit(e.target.value)}
+              placeholder="örn: 5"/>
+          </div>
 
           <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6}}>
             <div>
@@ -2595,7 +2579,7 @@ function AlertsFeedTab({ C, theme, push, isbns, titles, bookMeta = {} }) {
 
         {/* Dedup clear — proper React state */}
         <select className="inp" value={dedupIsbn} onChange={e=>setDedupIsbn(e.target.value)} style={{flex:"1 1 180px",minWidth:150,background:C.inputBg,border:`1px solid ${C.inputBorder}`,color:C.text,fontSize:12}}>
-          <option value="">Tekrarları temizle…</option>
+          <option value="">Tekrar bildirimi sıfırla…</option>
           {isbns.map(i=><option key={i} value={i}>{i}</option>)}
         </select>
         <button
@@ -2741,10 +2725,10 @@ function AlertsFeedTab({ C, theme, push, isbns, titles, bookMeta = {} }) {
                   </span>
                   {e.url && (
                     <a href={e.url} target="_blank" rel="noreferrer" onClick={ev=>ev.stopPropagation()} style={{
-                      display:"inline-flex",alignItems:"center",gap:4,
-                      textDecoration:"none",border:`1px solid ${C.accent}`,borderRadius:5,
-                      padding:"2px 8px",whiteSpace:"nowrap",
-                    }}><EbayLogo size={11}/></a>
+                      fontSize:11,color:C.accent,textDecoration:"none",
+                      border:`1px solid ${C.accent}`,borderRadius:5,
+                      padding:"2px 8px",whiteSpace:"nowrap",fontWeight:500,
+                    }}>eBay ↗</a>
                   )}
                 </div>
                 <span style={{fontSize:10,color:C.muted3}}>{fmtTs(e.ts)}</span>
@@ -2941,7 +2925,7 @@ function DetailDrawer({
           {/* Cover */}
           <div
             onClick={onLightbox ? ()=>onLightbox(coverSrc) : undefined}
-            style={{width:128,height:172,flexShrink:0,borderRadius:8,overflow:"hidden",
+            style={{width:110,height:155,flexShrink:0,borderRadius:8,overflow:"hidden",
               background:C.surface2,border:`1px solid ${C.border}`,
               cursor:onLightbox?"zoom-in":"default",
               display:"flex",alignItems:"center",justifyContent:"center",
@@ -2971,10 +2955,7 @@ function DetailDrawer({
                 <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
                   <div style={{fontSize:9,color:C.muted,marginBottom:2}}>📦 TOPLAM</div>
                   <div style={{fontSize:18,fontWeight:700,color:C.text}}>${alertEntry.total}</div>
-                  {/* Use shipping_is_estimated from /alerts/details when available; fallback to alertEntry flag */}
-                  {(drawerData?.ebay?.selected_listing?.shipping_is_estimated ?? alertEntry.ship_estimated) &&
-                    <div style={{fontSize:9,color:C.orange}} title={`Tahmini kargo — gerçek maliyet değişebilir (kaynak: ${drawerData?.ebay?.selected_listing?.shipping_source||"unknown"})`}>🚚 est.ship</div>
-                  }
+                  {alertEntry.ship_estimated && <div style={{fontSize:9,color:C.orange}}>🚚 est.ship</div>}
                 </div>
                 {/* Limit */}
                 <div style={{background:C.surface2,borderRadius:7,padding:"8px 10px"}}>
@@ -3266,8 +3247,8 @@ function DetailDrawer({
                 })()}
               </AccordionSection>
 
-              {/* ── Amazon BuyBox — hide entirely if not configured ─── */}
-              {drawerData.amazon && drawerData.amazon.reason !== "not_configured" && (
+              {/* ── Amazon BuyBox ────────────────────────────────────── */}
+              {drawerData.amazon && (
                 <AccordionSection title="🛒 Amazon BuyBox" C={C} defaultOpen={true}>
                   {drawerData.amazon.available ? (() => {
                     const az = drawerData.amazon;
@@ -3391,24 +3372,18 @@ function DetailDrawer({
                     />
                   </a>
                 </div>
-                <div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
+                <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:4}}>
                   <a href={`https://keepa.com/#!search/1-${isbn13to10(isbn)}`} target="_blank" rel="noreferrer"
-                    style={{flex:1,minWidth:90,fontSize:11,color:"white",textDecoration:"none",padding:"7px 10px",
+                    style={{flex:1,fontSize:11,color:"white",textDecoration:"none",padding:"8px 12px",
                       background:"#2563eb",borderRadius:6,textAlign:"center",fontWeight:600,
-                      display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:"0 2px 6px rgba(37,99,235,.3)"}}>
-                    🐝 Keepa
+                      display:"block",boxShadow:"0 2px 6px rgba(37,99,235,.3)"}}>
+                    🐝 Keepa Detay ↗
                   </a>
-                  <a href={`https://www.amazon.com/s?k=${isbn}`} target="_blank" rel="noreferrer"
-                    style={{flex:1,minWidth:90,fontSize:11,color:"#111",textDecoration:"none",padding:"7px 10px",
-                      background:"#FF9900",borderRadius:6,textAlign:"center",fontWeight:600,
-                      display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:"0 2px 6px rgba(255,153,0,.3)"}}>
-                    <AmazonLogo size={12}/> ↗
-                  </a>
-                  <a href={buildEbaySearchUrl({isbn})} target="_blank" rel="noreferrer"
-                    style={{flex:1,minWidth:90,fontSize:11,textDecoration:"none",padding:"7px 10px",
-                      background:C.surface2,border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",
-                      display:"flex",alignItems:"center",justifyContent:"center",gap:5,color:C.text}}>
-                    <EbayLogo size={11}/> ↗
+                  <a href={`https://camelcamelcamel.com/product/${isbn}`} target="_blank" rel="noreferrer"
+                    style={{flex:1,fontSize:11,color:"white",textDecoration:"none",padding:"8px 12px",
+                      background:"#059669",borderRadius:6,textAlign:"center",fontWeight:600,
+                      display:"block",boxShadow:"0 2px 6px rgba(5,150,105,.3)"}}>
+                    📈 CamelCamelCamel ↗
                   </a>
                 </div>
               </AccordionSection>

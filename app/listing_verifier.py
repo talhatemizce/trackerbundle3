@@ -232,15 +232,6 @@ async def _verify_ebay_by_isbn_search(
         else:
             status = "VERIFIED"
 
-        # Extract image URL from the cheapest listing so vision step can run
-        _thumb = cheapest_item.get("thumbnailImages") or cheapest_item.get("image") or {}
-        if isinstance(_thumb, list) and _thumb:
-            _img = _thumb[0].get("imageUrl", "")
-        elif isinstance(_thumb, dict):
-            _img = _thumb.get("imageUrl", "")
-        else:
-            _img = ""
-
         return {
             "status": status,
             "reason": status.lower(),
@@ -250,8 +241,6 @@ async def _verify_ebay_by_isbn_search(
             "price_delta_pct": delta_pct,
             "total_listings": len(priced),
             "item_title": (cheapest_item.get("title") or "")[:100],
-            "item_id": cheapest_item.get("itemId", ""),
-            "image_url": _img,  # passed back so vision step can run
             "isbn_check": "SEARCHED",  # item_id olmadığı için exact match yok
             "searched_by": "isbn_search",
             "note": f"ISBN araması — {len(priced)} aktif ilan, en ucuzu ${cheapest_price:.2f}",
@@ -406,25 +395,20 @@ async def _verify_image_vision(
 
         sys_prompt = """You are a book cover verification expert.
 Your job: examine the image and determine if it matches the expected book.
-
-CRITICAL: Base your answer ONLY on the visible text and visual elements in the provided image.
-Do NOT use your training data or prior knowledge about this ISBN/book.
-Look at what is ACTUALLY VISIBLE on the cover: title text, author name, edition info, cover art.
-
 Reply ONLY with this JSON (no markdown):
 {
   "verdict": "MATCH or MISMATCH or UNCERTAIN or STOCK_PHOTO",
   "confidence": 0-100,
-  "notes": "1-2 sentences about what you see IN THE IMAGE",
+  "notes": "1-2 sentences about what you see",
   "title_visible": true/false,
   "author_visible": true/false,
   "is_stock_photo": true/false,
   "condition_notes": "visible damage, wear, or condition observations"
 }
 
-MATCH: cover title/author visible in image clearly matches the expected book
-MISMATCH: clearly a different book based on visible text
-UNCERTAIN: can't determine (blurry, wrong angle, partial view, no text visible)
+MATCH: cover title/author clearly matches the expected book
+MISMATCH: clearly a different book
+UNCERTAIN: can't determine (blurry, wrong angle, partial view)
 STOCK_PHOTO: plain white background with no imperfections = publisher stock photo (used condition should show real item)
 """
 
@@ -433,7 +417,7 @@ Title: {expected_title[:100]}
 ISBN: {isbn13}
 Declared condition: {candidate.get('source_condition', '?')}
 
-Look at the eBay listing image. Based ONLY on what you can see in this image (not your training data), does it show THIS specific book?"""
+Does the eBay listing image show THIS specific book?"""
 
         result = await llm_route(
             task="vision",
@@ -444,20 +428,47 @@ Look at the eBay listing image. Based ONLY on what you can see in this image (no
         )
 
         import json as _json
+        import re as _re
         text = result["text"].strip()
+
         # Strip markdown fences
         for fence in ["```json", "```"]:
             if fence in text:
                 parts = text.split(fence)
                 text = parts[1] if len(parts) >= 3 else text.replace(fence, "")
         text = text.strip()
+
+        # Robust JSON extraction: find {…}, fix trailing commas, partial-parse on failure
         s, e = text.find("{"), text.rfind("}") + 1
+        parsed = None
         if s >= 0 and e > s:
-            parsed = _json.loads(text[s:e])
-        else:
-            parsed = {"verdict": "UNCERTAIN", "notes": text[:200]}
+            candidate_json = text[s:e]
+            # Fix trailing commas before } or ]
+            candidate_json = _re.sub(r",\s*}", "}", candidate_json)
+            candidate_json = _re.sub(r",\s*]", "]", candidate_json)
+            try:
+                parsed = _json.loads(candidate_json)
+            except (_json.JSONDecodeError, ValueError):
+                # Partial parse: try progressively shorter strings
+                for end in range(len(candidate_json), 0, -1):
+                    try:
+                        parsed = _json.loads(candidate_json[:end])
+                        if isinstance(parsed, dict):
+                            parsed["_partial"] = True
+                            break
+                    except (_json.JSONDecodeError, ValueError):
+                        continue
+
+        if not parsed or not isinstance(parsed, dict):
+            parsed = {"verdict": "UNCERTAIN", "notes": text[:200], "parse_error": True}
+
+        # Ensure required fields
+        for k, v in [("verdict","UNCERTAIN"), ("confidence",0), ("notes",""), ("is_stock_photo",None)]:
+            if k not in parsed:
+                parsed[k] = v
 
         parsed["provider"] = result.get("provider", "unknown")
+        parsed["model"] = result.get("model", "")
         parsed["status"] = parsed.get("verdict", "UNCERTAIN")
 
         # Stock photo + used condition = risky
@@ -521,10 +532,6 @@ async def verify_listing(
     market_result = results[1] if not isinstance(results[1], Exception) else {"status": "ERROR", "reason": str(results[1])[:100]}
 
     # Adım 3: Vision — eBay sonucu GONE/MISMATCH değilse kapağa bak
-    # Fallback: ISBN search returns image_url in its result — use it when candidate had no image
-    if not image_url and ebay_result.get("image_url"):
-        image_url = ebay_result["image_url"]
-        logger.info("vision fallback: using image_url from eBay ISBN-search result isbn=%s", isbn)
     vision_result: Dict[str, Any] = {"status": "SKIP", "verdict": "NO_IMAGE", "notes": ""}
     ebay_ok = ebay_result.get("status") not in ("GONE", "MISMATCH")
     if image_url and ebay_ok:

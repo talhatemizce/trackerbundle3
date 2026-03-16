@@ -14,8 +14,7 @@ import io
 from typing import Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks, Depends, Security
-from fastapi.security.api_key import APIKeyHeader
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from app import isbn_store
@@ -29,29 +28,12 @@ import logging
 import time as _time
 import time
 logger = logging.getLogger("trackerbundle.main")
-_CORS_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_CORS_ORIGINS,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ── API key auth — optional; only enforced when TRACKERBUNDLE_API_KEY is set ──
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-async def require_api_key(key: str | None = Security(_api_key_header)):
-    from app.core.config import get_settings as _gs
-    cfg_key = _gs().api_key
-    if not cfg_key:
-        return  # not configured → open (dev/single-user setup)
-    if key != cfg_key:
-        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
 
 
 # ---- Models ----
@@ -380,14 +362,12 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
             items = await browse_search_isbn(client, isbn_clean, limit=50, strict=False)
 
         buckets: dict = {}
-        items_with_totals = []
         for it in items:
             total = item_total_price(it, calc_ship_est=calc_est)
             if total is None:
                 continue
             bucket = normalize_condition(it.get("condition"), it.get("conditionId"))
             buckets.setdefault(bucket, []).append(round(float(total), 2))
-            items_with_totals.append((it, total, bucket))
 
         def _st(prices):
             if not prices: return None
@@ -398,38 +378,12 @@ async def _alert_details_inner(isbn: str, ebay_item_id: str = ""):
         new_p  = [p for b, ps in buckets.items() if b in _NEW  for p in ps]
         used_p = [p for b, ps in buckets.items() if b not in _NEW for p in ps]
 
-        # Find selected listing shipping details
-        selected_listing_info: dict | None = None
-        if ebay_item_id and items_with_totals:
-            for (it, total, bucket) in items_with_totals:
-                if (it.get("itemId") or "").startswith(ebay_item_id[:20]):
-                    selected_listing_info = {
-                        "item_id": it.get("itemId"),
-                        "shipping_cost": it.get("_shipping_cost", 0.0),
-                        "shipping_is_estimated": it.get("_shipping_estimated", False),
-                        "shipping_source": it.get("_shipping_source", "unknown"),
-                        "total": total,
-                    }
-                    break
-        # Fallback: cheapest used listing
-        if not selected_listing_info and items_with_totals:
-            cheapest = min(items_with_totals, key=lambda x: x[1])
-            it, total, _ = cheapest
-            selected_listing_info = {
-                "item_id": it.get("itemId"),
-                "shipping_cost": it.get("_shipping_cost", 0.0),
-                "shipping_is_estimated": it.get("_shipping_estimated", False),
-                "shipping_source": it.get("_shipping_source", "unknown"),
-                "total": total,
-            }
-
         ebay_data = {
             "ok": True,
             "by_condition": by_cond,
             "new":  _st(new_p),
             "used": _st(used_p),
             "total_listings": sum(len(ps) for ps in buckets.values()),
-            "selected_listing": selected_listing_info,
         }
     except Exception as exc:
         ebay_data["error"] = str(exc)
@@ -1047,10 +1001,13 @@ class CsvArbRequest(BaseModel):
     fee_closing: Optional[float] = None
     fee_fulfillment: Optional[float] = None
     fee_inbound: Optional[float] = None
+    # Buyback filtresi
+    buyback_only: bool = Field(default=False, description="Sadece buyback kanalında kârlı olanlar")
+    min_buyback_profit: Optional[float] = Field(default=None, description="Min buyback kârı ($)")
 
 
 @app.post("/discover/csv-arb")
-async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks, _auth=Depends(require_api_key)):
+async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
     """
     ISBN listesini arka planda tara. job_id döner.
     İlerlemeyi /discover/csv-arb/progress/{job_id} ile takip et.
@@ -1076,6 +1033,8 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks, _a
         strict_mode=req.strict_mode,
         isbn_match_policy=IsbnMatchPolicy(req.isbn_match_policy),
         invalid_isbn_policy=InvalidIsbnPolicy(req.invalid_isbn_policy),
+        buyback_only=req.buyback_only,
+        min_buyback_profit=req.min_buyback_profit,
     )
 
     fees = FeeConfig(
@@ -1083,6 +1042,18 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks, _a
         closing_fee=req.fee_closing if req.fee_closing is not None else 1.80,
         fulfillment=req.fee_fulfillment if req.fee_fulfillment is not None else 3.50,
         inbound=req.fee_inbound if req.fee_inbound is not None else 0.60,
+    )
+
+    # Kullanıcının gerçek filtre kriterleri (background'da uygulanacak)
+    user_filters = dict(
+        only_viable=req.only_viable,
+        min_roi_pct=req.min_roi_pct,
+        max_roi_pct=req.max_roi_pct,
+        min_profit_usd=req.min_profit_usd,
+        min_amazon_price=req.min_amazon_price,
+        max_amazon_price=req.max_amazon_price,
+        min_buy_price=req.min_buy_price,
+        max_buy_price=req.max_buy_price,
     )
 
     job_id = create_job(len(req.isbns))
@@ -1215,7 +1186,7 @@ def _ai_rate_check() -> bool:
     return True
 
 @app.post("/ai/analyze")
-async def ai_analyze(req: AiAnalyzeRequest, _auth=Depends(require_api_key)):
+async def ai_analyze(req: AiAnalyzeRequest):
     if not _ai_rate_check():
         raise HTTPException(status_code=429, detail=f"Rate limit: max {_AI_RATE_MAX} AI calls per {_AI_RATE_WINDOW}s")
     from app.ai_analyst import analyze_isbn
@@ -1251,7 +1222,7 @@ class VerifyBatchRequest(BaseModel):
 
 
 @app.post("/verify/listing")
-async def verify_listing_endpoint(req: VerifyRequest, _auth=Depends(require_api_key)):
+async def verify_listing_endpoint(req: VerifyRequest):
     """
     Tek bir arbitraj ilanını doğrula (AI yok, saf API).
     eBay item hâlâ var mı? Fiyat değişti mi? ISBN uyuşuyor mu?
@@ -1266,7 +1237,7 @@ async def verify_listing_endpoint(req: VerifyRequest, _auth=Depends(require_api_
 
 
 @app.post("/verify/batch")
-async def verify_batch_endpoint(req: VerifyBatchRequest, _auth=Depends(require_api_key)):
+async def verify_batch_endpoint(req: VerifyBatchRequest):
     """
     Birden fazla ilanı toplu doğrula (paralel, AI yok).
     items: [{"isbn": str, "candidate": {...}, "_index": int}, ...]
@@ -1302,6 +1273,7 @@ if _panel_dist.exists():
 
     @app.get("/panel")
     @app.get("/panel/{rest:path}")
+    @app.get("/")
     def serve_panel(rest: str = ""):
         from fastapi.responses import Response
         content = (_panel_dist / "index.html").read_bytes()

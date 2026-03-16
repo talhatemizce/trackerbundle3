@@ -236,6 +236,9 @@ class ScanFilters:
     strict_mode: bool = True
     isbn_match_policy: IsbnMatchPolicy = IsbnMatchPolicy.BALANCED
     invalid_isbn_policy: InvalidIsbnPolicy = InvalidIsbnPolicy.BEST_EFFORT
+    # Buyback kanalı filtresi
+    min_buyback_profit: Optional[float] = None  # buyback_profit >= X ($) olanları göster
+    buyback_only: bool = False                  # sadece buyback kanalında kârlı olanlar
 
 
 def _filter_result(r: ArbResult, f: ScanFilters) -> str:
@@ -267,6 +270,11 @@ def _filter_result(r: ArbResult, f: ScanFilters) -> str:
         return f"condition_not_in({f.condition_in})"
     if f.source_in and r.source not in f.source_in:
         return f"source_not_in({f.source_in})"
+    # Buyback filtresi — sadece buyback kanalı kârlıysa göster
+    if f.buyback_only and (r.buyback_profit is None or r.buyback_profit <= 0):
+        return "buyback_not_profitable"
+    if f.min_buyback_profit is not None and (r.buyback_profit is None or r.buyback_profit < f.min_buyback_profit):
+        return f"buyback_profit_below_min(${f.min_buyback_profit})"
     return ""
 
 

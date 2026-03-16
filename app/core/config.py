@@ -66,10 +66,6 @@ class Settings(BaseSettings):
     # CALCULATED shipping heuristic (0.0 = disabled → item skipped)
     calculated_ship_estimate_usd: float = Field(default=0.0, validation_alias="CALCULATED_SHIP_ESTIMATE_USD")
 
-    # API key for panel → expensive endpoints (discover/verify/ai).
-    # If not set, these endpoints are accessible without auth (dev mode).
-    api_key: str | None = Field(default=None, validation_alias="TRACKERBUNDLE_API_KEY")
-
     def resolved_data_dir(self) -> Path:
         p = self.data_dir
         p.mkdir(parents=True, exist_ok=True)
