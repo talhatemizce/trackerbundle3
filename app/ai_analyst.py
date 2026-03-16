@@ -21,11 +21,13 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-MODEL = "gemini-2.5-flash-lite"
-GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
-OPEN_LIBRARY_API    = "https://openlibrary.org/api/books"
-OPEN_LIBRARY_SEARCH = "https://openlibrary.org/search.json"
+GEMINI_API_BASE      = "https://generativelanguage.googleapis.com/v1beta/models"
+MODEL                = "gemini-2.5-flash-lite"
+GOOGLE_BOOKS_API     = "https://www.googleapis.com/books/v1/volumes"
+OPEN_LIBRARY_API     = "https://openlibrary.org/api/books"
+OPEN_LIBRARY_SEARCH  = "https://openlibrary.org/search.json"
+OPEN_LIBRARY_WORKS   = "https://openlibrary.org"   # + /works/{key}/editions.json
+OL_USER_AGENT        = "TrackerBundle3/1.0 (book arbitrage tool; contact via github)"
 
 
 # ─── Kondisyon uyumsuzluğu (deterministic, skor tabanlı) ──────────────────────
@@ -69,14 +71,26 @@ def _condition_score(title: str, description: str, declared_condition: str) -> D
 # ─── Edition check (Google Books + Open Library yedek) ────────────────────────
 
 async def _check_edition(isbn: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    isbn13 = _to_isbn13(isbn) or isbn
+    """
+    ISBN için kitap metadata + yeni baskı tespiti.
 
-    # 1. Google Books
+    Akış:
+      1. Google Books  → title, authors, publisher, categories, description, pageCount
+      2. Open Library Search → subjects, work_key (editions endpoint için)
+      3. Work & Edition API  → tüm baskıların yıllarını karşılaştır (en güvenilir yöntem)
+         Fallback: Google Books secondary search (eski yöntem)
+      4. OL Books API (son çare, jscmd=data)
+    """
+    isbn13 = _to_isbn13(isbn) or isbn
+    headers = {"User-Agent": OL_USER_AGENT}
+
+    # ── 1. Google Books — birincil metadata kaynağı ───────────────────────────
+    gb_meta: Dict[str, Any] = {}
     try:
         r = await client.get(
             GOOGLE_BOOKS_API,
             params={"q": f"isbn:{isbn13}", "maxResults": 1,
-                    "fields": "items(volumeInfo(title,authors,publishedDate))"},
+                    "fields": "items(volumeInfo(title,authors,publishedDate,publisher,categories,description,pageCount,averageRating,ratingsCount))"},
             timeout=10,
         )
         if r.status_code == 200:
@@ -85,112 +99,183 @@ async def _check_edition(isbn: str, client: httpx.AsyncClient) -> Dict[str, Any]
                 vi = items[0].get("volumeInfo", {})
                 pub_date = vi.get("publishedDate", "")
                 year = int(pub_date[:4]) if pub_date and len(pub_date) >= 4 else None
-                title = vi.get("title", "")
-                authors = vi.get("authors") or []
-
-                # Aynı başlık + yazar için daha yeni baskı var mı?
-                newer = False
-                if title and year:
-                    query = f'intitle:"{title[:25]}"'
-                    if authors:
-                        query += f' inauthor:"{authors[0].split()[-1]}"'
-                    r2 = await client.get(
-                        GOOGLE_BOOKS_API,
-                        params={"q": query, "maxResults": 8, "orderBy": "newest",
-                                "fields": "items(volumeInfo(publishedDate,industryIdentifiers))"},
-                        timeout=10,
-                    )
-                    if r2.status_code == 200:
-                        for item in (r2.json().get("items") or []):
-                            pd = (item.get("volumeInfo") or {}).get("publishedDate", "")
-                            # Farklı ISBN mi? (aynı baskı değil)
-                            idents = (item.get("volumeInfo") or {}).get("industryIdentifiers") or []
-                            item_isbns = [x.get("identifier","") for x in idents]
-                            if isbn13 in item_isbns or isbn in item_isbns:
-                                continue  # Aynı kitap
-                            if pd and len(pd) >= 4:
-                                try:
-                                    if int(pd[:4]) > year:
-                                        newer = True
-                                        break
-                                except:
-                                    pass
-                return {"edition_year": year, "has_newer_edition": newer,
-                        "google_title": title, "source": "google_books"}
+                gb_meta = {
+                    "edition_year": year,
+                    "google_title":  vi.get("title", ""),
+                    "authors":       vi.get("authors") or [],
+                    "publisher":     vi.get("publisher", ""),
+                    "categories":    vi.get("categories") or [],
+                    "description":   (vi.get("description") or "")[:300],
+                    "page_count":    vi.get("pageCount"),
+                    "avg_rating":    vi.get("averageRating"),
+                    "ratings_count": vi.get("ratingsCount"),
+                    "source":        "google_books",
+                }
     except Exception as e:
         logger.debug("Google Books error: %s", e)
 
-    # 2. Open Library Search API — jscmd=data'dan daha güvenilir ve zengin
+    # ── 2. Open Library Search — subjects + work_key ──────────────────────────
+    ol_meta: Dict[str, Any] = {}
+    work_key: Optional[str] = None
     try:
         r = await client.get(
             OPEN_LIBRARY_SEARCH,
-            params={"isbn": isbn13, "fields": "title,author_name,publisher,subject,first_publish_year,number_of_pages_median"},
-            timeout=10,
+            params={"isbn": isbn13, "fields": "key,title,author_name,publisher,subject,first_publish_year,number_of_pages_median"},
+            headers=headers, timeout=10,
         )
         if r.status_code == 200:
             docs = r.json().get("docs") or []
             if docs:
                 doc = docs[0]
+                work_key = doc.get("key")  # e.g. "/works/OL45804W"
                 year = doc.get("first_publish_year")
                 try: year = int(year) if year else None
                 except (ValueError, TypeError): year = None
-                subjects   = [s for s in (doc.get("subject") or [])    if isinstance(s, str)][:6]
+                subjects   = [s for s in (doc.get("subject")      or []) if isinstance(s, str)][:6]
                 publishers = doc.get("publisher") or []
                 authors    = doc.get("author_name") or []
-                return {
+                ol_meta = {
                     "edition_year": year,
-                    "has_newer_edition": None,
                     "google_title": doc.get("title", ""),
-                    "authors": authors,
-                    "publisher": publishers[0] if publishers else "",
-                    "categories": subjects,
-                    "description": "",
-                    "page_count": doc.get("number_of_pages_median"),
-                    "source": "open_library",
+                    "authors":      authors,
+                    "publisher":    publishers[0] if publishers else "",
+                    "categories":   subjects,
+                    "description":  "",
+                    "page_count":   doc.get("number_of_pages_median"),
+                    "source":       "open_library",
                 }
     except Exception as e:
         logger.debug("Open Library Search error: %s", e)
 
-    # 3. Open Library Books API (son çare)
-    try:
-        r = await client.get(
-            OPEN_LIBRARY_API,
-            params={"bibkeys": f"ISBN:{isbn13}", "format": "json", "jscmd": "data"},
-            timeout=10,
-        )
-        if r.status_code == 200:
-            data = r.json()
-            book = data.get(f"ISBN:{isbn13}") or {}
-            if book:
-                pub_date = book.get("publish_date", "")
-                year = None
-                for chunk in pub_date.split():
-                    try:
-                        y = int(chunk)
-                        if 1900 < y < 2030:
-                            year = y; break
-                    except (ValueError, TypeError):
-                        pass
-                publishers = [p.get("name","") for p in (book.get("publishers") or []) if isinstance(p, dict)]
-                subjects   = [s.get("name","") for s in (book.get("subjects")   or []) if isinstance(s, dict)]
-                authors    = [a.get("name","") for a in (book.get("authors")    or []) if isinstance(a, dict)]
-                ol_desc    = book.get("description", "")
-                if isinstance(ol_desc, dict): ol_desc = ol_desc.get("value", "")
-                return {
-                    "edition_year": year,
-                    "has_newer_edition": None,
-                    "google_title": book.get("title", ""),
-                    "authors": authors,
-                    "publisher": publishers[0] if publishers else "",
-                    "categories": subjects[:5],
-                    "description": (ol_desc or "")[:300],
-                    "page_count": book.get("number_of_pages"),
-                    "source": "open_library_books",
-                }
-    except Exception as e:
-        logger.debug("Open Library Books API error: %s", e)
+    # ── 3. Work & Edition API — has_newer_edition (en güvenilir yöntem) ───────
+    has_newer: Optional[bool] = None
+    current_year = gb_meta.get("edition_year") or ol_meta.get("edition_year")
 
-    return {}
+    if work_key and current_year:
+        try:
+            r = await client.get(
+                f"{OPEN_LIBRARY_WORKS}{work_key}/editions.json",
+                params={"limit": 100, "fields": "isbn_13,isbn_10,publish_date"},
+                headers=headers, timeout=12,
+            )
+            if r.status_code == 200:
+                entries = r.json().get("entries") or []
+                edition_years: List[int] = []
+                current_isbn_year: Optional[int] = None
+                for e in entries:
+                    isbns13 = e.get("isbn_13") or []
+                    isbns10 = e.get("isbn_10") or []
+                    pub_date = e.get("publish_date", "")
+                    yr = None
+                    for chunk in (pub_date or "").split():
+                        try:
+                            y = int(chunk)
+                            if 1900 < y < 2030:
+                                yr = y; break
+                        except (ValueError, TypeError):
+                            pass
+                    if yr:
+                        edition_years.append(yr)
+                        # Bu baskı bizim ISBN'imiz mi?
+                        all_isbns = isbns13 + isbns10
+                        if isbn13 in all_isbns or isbn in all_isbns:
+                            current_isbn_year = yr
+                if edition_years:
+                    newest_year = max(edition_years)
+                    check_year  = current_isbn_year or current_year
+                    has_newer   = newest_year > check_year
+                    logger.debug(
+                        "Work editions isbn=%s work=%s editions=%d newest=%d current=%d has_newer=%s",
+                        isbn13, work_key, len(edition_years), newest_year, check_year, has_newer,
+                    )
+        except Exception as e:
+            logger.debug("Work & Edition API error isbn=%s: %s", isbn13, e)
+
+    # Fallback: Google Books secondary search (has_newer tespit edilemezse)
+    if has_newer is None and gb_meta.get("google_title") and current_year:
+        try:
+            title   = gb_meta["google_title"]
+            authors = gb_meta.get("authors") or []
+            query   = f'intitle:"{title[:25]}"'
+            if authors:
+                query += f' inauthor:"{authors[0].split()[-1]}"'
+            r2 = await client.get(
+                GOOGLE_BOOKS_API,
+                params={"q": query, "maxResults": 8, "orderBy": "newest",
+                        "fields": "items(volumeInfo(publishedDate,industryIdentifiers))"},
+                timeout=10,
+            )
+            if r2.status_code == 200:
+                for item in (r2.json().get("items") or []):
+                    pd     = (item.get("volumeInfo") or {}).get("publishedDate", "")
+                    idents = (item.get("volumeInfo") or {}).get("industryIdentifiers") or []
+                    item_isbns = [x.get("identifier", "") for x in idents]
+                    if isbn13 in item_isbns or isbn in item_isbns:
+                        continue  # aynı baskı
+                    if pd and len(pd) >= 4:
+                        try:
+                            if int(pd[:4]) > current_year:
+                                has_newer = True
+                                break
+                        except (ValueError, TypeError):
+                            pass
+        except Exception as e:
+            logger.debug("Google Books newer-edition fallback error: %s", e)
+
+    # ── Sonuçları birleştir: Google Books metadata öncelikli, OL subjects ekle ─
+    base = gb_meta if gb_meta else ol_meta
+    if gb_meta and ol_meta:
+        # OL'un subjects'i genellikle daha zengin — merge
+        merged_cats = list(dict.fromkeys(
+            (gb_meta.get("categories") or []) + (ol_meta.get("categories") or [])
+        ))[:8]
+        base = {**ol_meta, **gb_meta, "categories": merged_cats}
+        # OL page_count bazen daha doğru (median of all editions)
+        if not gb_meta.get("page_count") and ol_meta.get("page_count"):
+            base["page_count"] = ol_meta["page_count"]
+
+    if not base:
+        # Son çare: OL Books API (jscmd=data)
+        try:
+            r = await client.get(
+                OPEN_LIBRARY_API,
+                params={"bibkeys": f"ISBN:{isbn13}", "format": "json", "jscmd": "data"},
+                headers=headers, timeout=10,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                book = data.get(f"ISBN:{isbn13}") or {}
+                if book:
+                    pub_date = book.get("publish_date", "")
+                    year = None
+                    for chunk in pub_date.split():
+                        try:
+                            y = int(chunk)
+                            if 1900 < y < 2030:
+                                year = y; break
+                        except (ValueError, TypeError): pass
+                    publishers = [p.get("name","") for p in (book.get("publishers") or []) if isinstance(p, dict)]
+                    subjects   = [s.get("name","") for s in (book.get("subjects")   or []) if isinstance(s, dict)]
+                    authors    = [a.get("name","") for a in (book.get("authors")    or []) if isinstance(a, dict)]
+                    ol_desc    = book.get("description", "")
+                    if isinstance(ol_desc, dict): ol_desc = ol_desc.get("value", "")
+                    base = {
+                        "edition_year": year,
+                        "google_title": book.get("title", ""),
+                        "authors":      authors,
+                        "publisher":    publishers[0] if publishers else "",
+                        "categories":   subjects[:5],
+                        "description":  (ol_desc or "")[:300],
+                        "page_count":   book.get("number_of_pages"),
+                        "source":       "open_library_books",
+                    }
+        except Exception as e:
+            logger.debug("Open Library Books API error: %s", e)
+
+    result = dict(base)
+    result["has_newer_edition"] = has_newer
+    result["work_key"]          = work_key  # downstream kullanım için
+    return result
 
 
 # ─── eBay kapak resmi ──────────────────────────────────────────────────────────
