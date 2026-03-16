@@ -21,8 +21,7 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-MODEL = "gemini-2.5-flash-lite"
+# Legacy constants — LLM calls now go through app.llm_router
 GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
 OPEN_LIBRARY_API = "https://openlibrary.org/api/books"
 

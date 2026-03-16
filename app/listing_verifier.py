@@ -406,20 +406,25 @@ async def _verify_image_vision(
 
         sys_prompt = """You are a book cover verification expert.
 Your job: examine the image and determine if it matches the expected book.
+
+CRITICAL: Base your answer ONLY on the visible text and visual elements in the provided image.
+Do NOT use your training data or prior knowledge about this ISBN/book.
+Look at what is ACTUALLY VISIBLE on the cover: title text, author name, edition info, cover art.
+
 Reply ONLY with this JSON (no markdown):
 {
   "verdict": "MATCH or MISMATCH or UNCERTAIN or STOCK_PHOTO",
   "confidence": 0-100,
-  "notes": "1-2 sentences about what you see",
+  "notes": "1-2 sentences about what you see IN THE IMAGE",
   "title_visible": true/false,
   "author_visible": true/false,
   "is_stock_photo": true/false,
   "condition_notes": "visible damage, wear, or condition observations"
 }
 
-MATCH: cover title/author clearly matches the expected book
-MISMATCH: clearly a different book
-UNCERTAIN: can't determine (blurry, wrong angle, partial view)
+MATCH: cover title/author visible in image clearly matches the expected book
+MISMATCH: clearly a different book based on visible text
+UNCERTAIN: can't determine (blurry, wrong angle, partial view, no text visible)
 STOCK_PHOTO: plain white background with no imperfections = publisher stock photo (used condition should show real item)
 """
 
@@ -428,7 +433,7 @@ Title: {expected_title[:100]}
 ISBN: {isbn13}
 Declared condition: {candidate.get('source_condition', '?')}
 
-Does the eBay listing image show THIS specific book?"""
+Look at the eBay listing image. Based ONLY on what you can see in this image (not your training data), does it show THIS specific book?"""
 
         result = await llm_route(
             task="vision",
