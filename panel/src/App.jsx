@@ -2071,7 +2071,7 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
   const STATUS_COLOR = {
     VERIFIED:"#22c55e", VERIFIED_STOCK_PHOTO:"#f97316",
     GONE:"#ef4444", PRICE_UP:"#f97316", PRICE_DOWN:"#3b82f6",
-    MISMATCH:"#ef4444", ERROR:"#94a3b8", SKIP:"#94a3b8", UNVERIFIABLE:"#64748b",
+    MISMATCH:"#ef4444", ERROR:"#94a3b8", SKIP:"#94a3b8", UNVERIFIABLE:"#64748b", SEARCHED:"#3b82f6",
     MATCH:"#22c55e", UNCERTAIN:"#eab308", STOCK_PHOTO:"#f97316", NO_IMAGE:"#94a3b8",
   };
 
@@ -2206,11 +2206,7 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
           rightTag={<LiveCacheTag fromCache={false}/>}
           skipMsg={
             ebay.status==="SKIP"
-              ? (ebay.reason==="no_item_id"
-                  ? `⚠️ eBay ilan ID kaydedilmemiş — ${ebay.note||"bu aday doğrulanamaz, eBay'de manuel ara"}`
-                  : ebay.reason==="not_ebay"
-                    ? "eBay ilanı değil — bu adım atlandı"
-                    : "eBay adımı atlandı")
+              ? (ebay.reason==="not_ebay" ? "eBay ilanı değil — bu adım atlandı" : "eBay adımı atlandı")
               : null
           }
         >
@@ -2226,6 +2222,13 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
                 )}
               </span>
             }/>
+          )}
+          {ebay.searched_by==="isbn_search" && (
+            <div style={{margin:"4px 16px 4px",padding:"6px 10px",borderRadius:6,
+              borderLeft:"3px solid #3b82f6",background:"#3b82f610",
+              fontSize:10,color:"#60a5fa",lineHeight:1.5}}>
+              🔍 ilan ID eksikti — ISBN ile yeniden arama yapıldı ({ebay.total_listings||0} aktif ilan bulundu)
+            </div>
           )}
           {ebay.isbn_check && (
             ebay.isbn_check === "UNKNOWN"

@@ -173,6 +173,88 @@ def _check_isbn_in_detail(data: Dict[str, Any], isbn: str) -> str:
 
 # ─── AbeBooks fiyat doğrulama ─────────────────────────────────────────────────
 
+
+async def _verify_ebay_by_isbn_search(
+    isbn: str,
+    expected_price: float,
+    client: httpx.AsyncClient,
+) -> Dict[str, Any]:
+    """
+    item_id eksik olduğunda ISBN ile eBay'de yeniden ara.
+    Alım fiyatına en yakın aktif ilanı bul ve durumunu raporla.
+
+    Mantık:
+      • ISBN ile eBay Browse API'yi sorgula (aynı GTIN search)
+      • Beklenen fiyata en yakın (±%20) ilan varsa → PRICE_OK/UP/DOWN döndür
+      • Hiç ilan yoksa → GONE döndür (o fiyatta artık yok)
+    """
+    try:
+        from app.ebay_client import browse_search_isbn, item_total_price
+        from app.core.config import get_settings
+        s = get_settings()
+        calc_est = s.calculated_ship_estimate_usd if s.calculated_ship_estimate_usd > 0 else 3.99
+
+        items = await browse_search_isbn(client, isbn)
+        if not items:
+            return {
+                "status": "GONE",
+                "reason": "no_active_listings",
+                "note": "eBay'de bu ISBN için aktif ilan bulunamadı",
+                "searched_by": "isbn_search",
+            }
+
+        # En ucuzdan sırala, beklenen fiyata en yakın ilanı bul
+        priced = []
+        for it in items:
+            total = item_total_price(it, calc_ship_est=calc_est)
+            if total and total > 0:
+                priced.append((total, it))
+
+        if not priced:
+            return {
+                "status": "GONE",
+                "reason": "no_priced_listings",
+                "note": "Aktif ilan var ama fiyat hesaplanamadı",
+                "searched_by": "isbn_search",
+            }
+
+        priced.sort(key=lambda x: x[0])
+        cheapest_price, cheapest_item = priced[0]
+
+        # En ucuz ilan beklenen fiyata yakın mı?
+        delta = round(cheapest_price - expected_price, 2)
+        delta_pct = round(delta / expected_price * 100, 1) if expected_price else 0
+
+        if cheapest_price > expected_price * 1.20:
+            status = "PRICE_UP"
+        elif cheapest_price < expected_price * 0.80:
+            status = "PRICE_DOWN"
+        else:
+            status = "VERIFIED"
+
+        return {
+            "status": status,
+            "reason": status.lower(),
+            "current_price": cheapest_price,
+            "expected_price": expected_price,
+            "price_delta": delta,
+            "price_delta_pct": delta_pct,
+            "total_listings": len(priced),
+            "item_title": (cheapest_item.get("title") or "")[:100],
+            "isbn_check": "SEARCHED",  # item_id olmadığı için exact match yok
+            "searched_by": "isbn_search",
+            "note": f"ISBN araması — {len(priced)} aktif ilan, en ucuzu ${cheapest_price:.2f}",
+        }
+
+    except Exception as e:
+        logger.warning("eBay ISBN search verify isbn=%s: %s", isbn, e)
+        return {
+            "status": "ERROR",
+            "reason": str(e)[:80],
+            "searched_by": "isbn_search",
+        }
+
+
 async def _verify_abebooks_price(
     isbn: str,
     expected_price: float,
@@ -402,15 +484,15 @@ async def verify_listing(
     image_url = candidate.get("image_url") or candidate.get("ebay_image_url") or ""
     expected_title = candidate.get("title") or candidate.get("ebay_title") or ""
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=25) as client:
         tasks = []
 
         # eBay items için eBay doğrulama
         if source == "ebay" and item_id:
             tasks.append(_verify_ebay_item(item_id, buy_price, isbn, client))
         elif source == "ebay" and not item_id:
-            tasks.append(asyncio.sleep(0, result={"status": "SKIP", "reason": "no_item_id",
-                "note": "eBay ilan ID'si kayıt sırasında kaydedilmemiş — eski aday veya CSV kaynağı"}))
+            # item_id yok (eski aday) → ISBN ile yeniden eBay'de ara
+            tasks.append(_verify_ebay_by_isbn_search(isbn, buy_price, client))
         else:
             tasks.append(asyncio.sleep(0, result={"status": "SKIP", "reason": "not_ebay"}))
 
@@ -497,16 +579,24 @@ def _build_summary(
     expected: float,
     vision: Optional[Dict[str, Any]] = None,
 ) -> str:
+    is_search = ebay.get("searched_by") == "isbn_search"
+    n_listings = ebay.get("total_listings", 0)
+
     if status == "VERIFIED":
         vision_note = ""
         if vision and vision.get("verdict") == "MATCH":
             vision_note = f" · 📷 Kapak doğru ({vision.get('confidence',0)}% güven)"
         elif vision and vision.get("verdict") == "UNCERTAIN":
             vision_note = " · 📷 Kapak belirsiz"
+        if is_search:
+            cheapest = ebay.get("current_price", expected)
+            return f"✅ eBay'de {n_listings} aktif ilan — en ucuzu ${cheapest:.2f} (beklenen: ${expected:.2f}){vision_note}"
         return f"✅ İlan doğrulandı — fiyat ${expected:.2f}{vision_note}"
     if status == "VERIFIED_STOCK_PHOTO":
         return "⚠️ İlan mevcut ama kapak stock fotoğraf — gerçek kondisyon gizli olabilir"
     if status == "GONE":
+        if is_search:
+            return "❌ eBay'de bu ISBN için aktif ilan yok — hepsi satılmış veya kaldırılmış olabilir"
         return "❌ İlan yok — satılmış veya kaldırılmış"
     if status == "MISMATCH":
         title = ebay.get("item_title", "")
@@ -514,13 +604,17 @@ def _build_summary(
     if status == "PRICE_UP":
         current = ebay.get("current_price") or market.get("cheapest_found") or expected
         delta_pct = ebay.get("price_delta_pct") or market.get("price_delta_pct") or 0
+        if is_search:
+            return f"📈 Mevcut en ucuz ilan ${current:.2f} (+{delta_pct:.1f}%) — {n_listings} ilan, fiyat yükselmiş"
         return f"📈 Fiyat arttı — ${current:.2f} (+{delta_pct:.1f}%) beklenen: ${expected:.2f}"
     if status == "PRICE_DOWN":
         current = ebay.get("current_price") or market.get("cheapest_found") or expected
         delta_pct = abs(ebay.get("price_delta_pct") or market.get("price_delta_pct") or 0)
+        if is_search:
+            return f"📉 Daha ucuz ilan var — ${current:.2f} (-{delta_pct:.1f}%) — {n_listings} ilan, iyi fırsat!"
         return f"📉 Fiyat düştü — ${current:.2f} (-{delta_pct:.1f}%) → daha iyi fırsat!"
     if status == "UNVERIFIABLE":
-        return "ℹ️ Doğrulanamadı — eBay ilan ID'si eksik ve piyasa verisi alınamıyor. İlanı eBay'de manuel kontrol et."
+        return "ℹ️ Doğrulanamadı — piyasa verisi alınamıyor ve eBay araması başarısız. İlanı manuel kontrol et."
     return f"⚠️ Kontrol hatası — {ebay.get('reason', '')} / {market.get('reason', '')}"
 
 
