@@ -1107,6 +1107,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
 
   // Filters
   const [strictMode, setStrictMode] = useState(true);
+  const [onlyViable, setOnlyViable] = useState(true);
   const [isbnMatchPolicy, setIsbnMatchPolicy] = useState("balanced");
   const [invalidIsbnPolicy, setInvalidIsbnPolicy] = useState("best_effort");
   const [verifiedOnlyFilter, setVerifiedOnlyFilter] = useState(false);
@@ -1308,7 +1309,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
     const body = {
       isbns,
       strict_mode: strictMode,
-      only_viable: true,
+      only_viable: onlyViable,
       concurrency,
       ...(Object.keys(isbnBuyPrices).length ? {isbn_buy_prices: isbnBuyPrices} : {}),
       ...(Object.keys(isbnAmazonPrices).length ? {isbn_amazon_prices: isbnAmazonPrices} : {}),
@@ -1593,9 +1594,13 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           <div style={{fontSize:12, fontWeight:600, color:C.text, marginBottom:10}}>⚙️ Filtreler</div>
 
           {/* Strict mode */}
-          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
+          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:4, cursor:"pointer"}}>
             <input type="checkbox" checked={strictMode} onChange={e=>setStrictMode(e.target.checked)}/>
             <span>Strict Mode <span style={{fontSize:9,color:C.muted}}>(NEW/Like New→AMZ New · Used→AMZ Used)</span></span>
+          </label>
+          <label style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.text, marginBottom:8, cursor:"pointer"}}>
+            <input type="checkbox" checked={onlyViable} onChange={e=>setOnlyViable(e.target.checked)}/>
+            <span>Sadece Kârlı <span style={{fontSize:9,color:C.muted}}>(profit &gt; 0)</span></span>
           </label>
 
           {/* ISBN Match Policy */}

@@ -33,8 +33,15 @@ from types import SimpleNamespace
 from typing import Any, Dict, Optional
 from pathlib import Path
 
-# Keep rules under app/data to match current repo convention
-RULES_FILE = Path(__file__).resolve().parent / "data" / "rules.json"
+def _rules_file() -> Path:
+    """config.resolved_rules_file() üzerinden doğru path'i döndür — env override'larını destekler."""
+    try:
+        from app.core.config import get_settings
+        return get_settings().resolved_rules_file()
+    except Exception:
+        # fallback: config yüklenemezse eski path
+        return Path(__file__).resolve().parent / "data" / "rules.json"
+
 USED_CONDITIONS = ["acceptable", "good", "very_good", "like_new"]
 
 # Global fallback interval (overridden by env var or rules.json defaults)
@@ -91,11 +98,11 @@ def _normalize_condition(condition: str) -> Optional[str]:
 def save_rules(rules: Dict[str, Any]) -> None:
     import json
     global _rules_cache, _rules_cache_ts
-    RULES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _rules_file().parent.mkdir(parents=True, exist_ok=True)
     # Atomic write — temp file then replace
-    tmp = RULES_FILE.with_suffix(".tmp")
+    tmp = _rules_file().with_suffix(".tmp")
     tmp.write_text(json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(RULES_FILE)
+    tmp.replace(_rules_file())
     # Invalidate cache
     with _rules_lock:
         _rules_cache = dict(rules)
@@ -109,7 +116,7 @@ def load_rules() -> Dict[str, Any]:
         if _rules_cache and (time.monotonic() - _rules_cache_ts) < _rules_cache_ttl:
             return dict(_rules_cache)
     # Cache miss — read from disk
-    if not RULES_FILE.exists():
+    if not _rules_file().exists():
         default_rules = {
             "defaults": {
                 "new_max": 50.0,
@@ -126,7 +133,7 @@ def load_rules() -> Dict[str, Any]:
         }
         save_rules(default_rules)
         return default_rules
-    raw = RULES_FILE.read_text(encoding="utf-8").strip()
+    raw = _rules_file().read_text(encoding="utf-8").strip()
     rules = json.loads(raw or "{}")
     with _rules_lock:
         _rules_cache = dict(rules)

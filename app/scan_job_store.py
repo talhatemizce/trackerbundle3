@@ -13,7 +13,24 @@ HISTORY_FILE = DATA_DIR / "scan_history.json"
 # ── In-memory job store ───────────────────────────────────────────────────────
 _jobs: Dict[str, Dict] = {}  # job_id → job dict
 
+_JOB_TTL_S = 3600 * 4  # 4 saat — tamamlanan job'ları bellekten temizle
+
+def _evict_old_jobs() -> None:
+    """4 saatten eski tamamlanmış job'ları _jobs dict'inden sil."""
+    now = time.time()
+    stale = [
+        jid for jid, j in list(_jobs.items())
+        if j["status"] in ("done", "error")
+        and now - j.get("created_at", 0) > _JOB_TTL_S
+    ]
+    for jid in stale:
+        del _jobs[jid]
+    if stale:
+        import logging
+        logging.getLogger("trackerbundle.scan_jobs").debug("evicted %d old jobs", len(stale))
+
 def create_job(total: int) -> str:
+    _evict_old_jobs()  # her yeni job öncesi eski job'ları temizle
     job_id = str(uuid.uuid4())[:8]
     _jobs[job_id] = {
         "id": job_id,
