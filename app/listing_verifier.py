@@ -232,6 +232,15 @@ async def _verify_ebay_by_isbn_search(
         else:
             status = "VERIFIED"
 
+        # Extract image URL from the cheapest listing so vision step can run
+        _thumb = cheapest_item.get("thumbnailImages") or cheapest_item.get("image") or {}
+        if isinstance(_thumb, list) and _thumb:
+            _img = _thumb[0].get("imageUrl", "")
+        elif isinstance(_thumb, dict):
+            _img = _thumb.get("imageUrl", "")
+        else:
+            _img = ""
+
         return {
             "status": status,
             "reason": status.lower(),
@@ -241,6 +250,8 @@ async def _verify_ebay_by_isbn_search(
             "price_delta_pct": delta_pct,
             "total_listings": len(priced),
             "item_title": (cheapest_item.get("title") or "")[:100],
+            "item_id": cheapest_item.get("itemId", ""),
+            "image_url": _img,  # passed back so vision step can run
             "isbn_check": "SEARCHED",  # item_id olmadığı için exact match yok
             "searched_by": "isbn_search",
             "note": f"ISBN araması — {len(priced)} aktif ilan, en ucuzu ${cheapest_price:.2f}",
@@ -505,6 +516,10 @@ async def verify_listing(
     market_result = results[1] if not isinstance(results[1], Exception) else {"status": "ERROR", "reason": str(results[1])[:100]}
 
     # Adım 3: Vision — eBay sonucu GONE/MISMATCH değilse kapağa bak
+    # Fallback: ISBN search returns image_url in its result — use it when candidate had no image
+    if not image_url and ebay_result.get("image_url"):
+        image_url = ebay_result["image_url"]
+        logger.info("vision fallback: using image_url from eBay ISBN-search result isbn=%s", isbn)
     vision_result: Dict[str, Any] = {"status": "SKIP", "verdict": "NO_IMAGE", "notes": ""}
     ebay_ok = ebay_result.get("status") not in ("GONE", "MISMATCH")
     if image_url and ebay_ok:
