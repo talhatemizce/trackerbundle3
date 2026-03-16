@@ -1075,7 +1075,7 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
   );
 }
 
-function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[], addCandidate }) {
+function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[], addCandidate, removeCandidate, saveCandidates, push, isbns: watchlistIsbns=[], addIsbn }) {
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
   const [isbnBuyPrices, setIsbnBuyPrices] = useState({}); // {isbn: buyPrice} — CSV'den gelen opsiyonel fiyatlar
@@ -1115,6 +1115,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   const [verifying, setVerifying] = useState(new Set()); // indices being verified
   const [bulkVerifying, setBulkVerifying] = useState(false);
   const [verifyDrawer, setVerifyDrawer] = useState(null); // {rowIdx, row} — detail panel open
+  const [discoverSubTab, setDiscoverSubTab] = useState("scan"); // "scan" | "results" | "candidates"
   const [minRoi, setMinRoi] = useState("");
   const [maxRoi, setMaxRoi] = useState("");
   const [minProfit, setMinProfit] = useState("");
@@ -1472,8 +1473,44 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   const labelStyle = {fontSize:10, color:C.muted, marginBottom:2, display:"block"};
   const tierColor = (tier) => tier==="fire"?"#f97316":tier==="good"?C.green:tier==="low"?C.blue:C.red||"#ef4444";
 
+  // Auto-switch to results when scan completes
+  const prevScanningRef = React.useRef(false);
+  React.useEffect(() => {
+    if (prevScanningRef.current && !scanJob?.scanning && scanJob?.results) {
+      setDiscoverSubTab("results");
+    }
+    prevScanningRef.current = scanJob?.scanning || false;
+  }, [scanJob?.scanning, scanJob?.results]);
+
+  const subTabStyle = (id) => ({
+    padding:"7px 18px", fontSize:11, borderRadius:"6px 6px 0 0", cursor:"pointer",
+    fontFamily:"var(--mono)", fontWeight: discoverSubTab===id ? 600 : 400,
+    background: discoverSubTab===id ? C.surface : "transparent",
+    color: discoverSubTab===id ? C.accent : C.muted,
+    border: discoverSubTab===id ? `1px solid ${C.border}` : "1px solid transparent",
+    borderBottom: discoverSubTab===id ? `1px solid ${C.surface}` : `1px solid ${C.border}`,
+    transition:"all .15s", marginBottom:-1,
+  });
+
   return (
-    <div style={{display:"flex", gap:16, alignItems:"flex-start"}}>
+    <>
+    {/* Sub-tab navigation */}
+    <div style={{display:"flex", gap:2, marginBottom:0, borderBottom:`1px solid ${C.border}`}}>
+      <button style={subTabStyle("scan")} onClick={()=>setDiscoverSubTab("scan")}>
+        🔍 Tara
+      </button>
+      <button style={subTabStyle("results")} onClick={()=>setDiscoverSubTab("results")}>
+        📊 Sonuçlar {results ? `(${(results.accepted||[]).length})` : ""}
+      </button>
+      <button style={subTabStyle("candidates")} onClick={()=>setDiscoverSubTab("candidates")}>
+        ⭐ Adaylar {candidates.length>0?`(${candidates.length})`:""}
+      </button>
+    </div>
+
+    {/* Sub-tab: Scan */}
+    {discoverSubTab==="scan" && (
+
+    <div style={{display:"flex", gap:16, alignItems:"flex-start", paddingTop:16}}>
       {/* Left panel — fixed narrow sidebar */}
       <div style={{width:210, flexShrink:0}}>
 
@@ -1733,9 +1770,12 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
         {error && <div style={{marginTop:8, color:C.red||"#ef4444", fontSize:11, padding:"6px 8px",
           background:C.surface2, borderRadius:6}}>{error}</div>}
       </div>
+    </div>
+    )}
 
-      {/* Right panel — results, fills all remaining space */}
-      <div style={{flex:1, minWidth:0, overflow:"hidden"}}>
+    {/* Sub-tab: Results */}
+    {discoverSubTab==="results" && (
+      <div style={{paddingTop:16}}>
         {!results && !scanning && (
           <div style={{textAlign:"center", paddingTop:80, color:C.muted3, fontSize:13}}>
             <div style={{fontSize:32, marginBottom:12}}>🔍</div>
@@ -2049,17 +2089,29 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           </>
         )}
       </div>
+    )}
 
-      {/* Verify Detail Drawer */}
-      {verifyDrawer && verifyResults[verifyDrawer.rowIdx] && (
-        <VerifyDetailDrawer
+    {/* Sub-tab: Candidates */}
+    {discoverSubTab==="candidates" && (
+      <div style={{paddingTop:16}}>
+        <CandidatesTab
           C={C}
-          data={verifyResults[verifyDrawer.rowIdx]}
-          row={verifyDrawer.row}
-          onClose={()=>setVerifyDrawer(null)}
+          candidates={candidates}
+          removeCandidate={removeCandidate}
+          saveCandidates={saveCandidates}
+          push={push}
+          isbns={watchlistIsbns}
+          addIsbn={addIsbn}
         />
-      )}
-    </div>
+      </div>
+    )}
+
+    {/* Global verify drawer */}
+    {verifyDrawer && verifyResults[verifyDrawer.rowIdx] && (
+      <VerifyDetailDrawer C={C} data={verifyResults[verifyDrawer.rowIdx]}
+        row={verifyDrawer.row} onClose={()=>setVerifyDrawer(null)}/>
+    )}
+  </>
   );
 }
 
@@ -4100,106 +4152,8 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
 
 
 // ─── Settings Tab ─────────────────────────────────────────────────────────────
-function SettingsTab({ C, theme, setTheme, blueFilter, setBlueFilter }) {
-  const safeTheme = theme || "dark";
-  const safeSetTheme = setTheme || (() => {});
-  const safeBlue = blueFilter || false;
-  const safeSetBlue = setBlueFilter || (() => {});
 
-  const row = { display:"flex", alignItems:"center", justifyContent:"space-between",
-    padding:"12px 16px", borderBottom:`1px solid ${C.border}`, gap:12 };
-  const label = { fontFamily:"var(--mono)", fontSize:13, color:C.text };
-  const sub   = { fontFamily:"var(--mono)", fontSize:11, color:C.muted, marginTop:2 };
-  const card  = { background:C.cardBg, border:`1px solid ${C.border}`, borderRadius:8,
-    marginBottom:16, overflow:"hidden" };
-  const sectionTitle = { fontFamily:"var(--mono)", fontSize:11, fontWeight:600,
-    color:C.accent, letterSpacing:"0.08em", padding:"10px 16px 6px",
-    textTransform:"uppercase", borderBottom:`1px solid ${C.border}` };
-
-  const ThemeBtn = ({ id, label: lbl }) => (
-    <button
-      onClick={() => safeSetTheme(id)}
-      style={{
-        padding:"6px 14px", borderRadius:6, cursor:"pointer",
-        fontFamily:"var(--mono)", fontSize:12,
-        background: safeTheme === id ? C.accent : C.bg,
-        color:       safeTheme === id ? "#fff"   : C.muted,
-        border:`1px solid ${safeTheme === id ? C.accent : C.border}`,
-        fontWeight:  safeTheme === id ? 600 : 400,
-        transition:"all .15s",
-      }}
-    >{lbl}</button>
-  );
-
-  return (
-    <div style={{ maxWidth:640, margin:"0 auto", padding:"24px 16px" }}>
-      <div style={{ fontFamily:"var(--mono)", fontSize:20, fontWeight:700,
-        color:C.text, marginBottom:24 }}>⚙️ Settings</div>
-
-      {/* Theme */}
-      <div style={card}>
-        <div style={sectionTitle}>Appearance</div>
-        <div style={row}>
-          <div>
-            <div style={label}>Theme</div>
-            <div style={sub}>Choose your preferred color scheme</div>
-          </div>
-          <div style={{ display:"flex", gap:8 }}>
-            <ThemeBtn id="dark"  label="Dark" />
-            <ThemeBtn id="soft"  label="Soft" />
-            <ThemeBtn id="light" label="Light" />
-          </div>
-        </div>
-        <div style={row}>
-          <div>
-            <div style={label}>Blue-light filter</div>
-            <div style={sub}>Warm tint to reduce eye strain</div>
-          </div>
-          <button
-            onClick={() => safeSetBlue(!safeBlue)}
-            style={{
-              padding:"6px 14px", borderRadius:6, cursor:"pointer",
-              fontFamily:"var(--mono)", fontSize:12,
-              background: safeBlue ? C.accent : C.bg,
-              color:       safeBlue ? "#fff"   : C.muted,
-              border:`1px solid ${safeBlue ? C.accent : C.border}`,
-              transition:"all .15s",
-            }}
-          >{safeBlue ? "ON" : "OFF"}</button>
-        </div>
-      </div>
-
-      {/* Build info */}
-      <div style={card}>
-        <div style={sectionTitle}>Build Info</div>
-        <div style={row}>
-          <div style={label}>Version</div>
-          <div style={{ fontFamily:"var(--mono)", fontSize:12, color:C.muted }}>{BUILD_ID}</div>
-        </div>
-        <div style={row}>
-          <div style={label}>API Base</div>
-          <div style={{ fontFamily:"var(--mono)", fontSize:12, color:C.muted }}>{BASE || "(same origin)"}</div>
-        </div>
-      </div>
-
-      {/* LLM quota shortcut */}
-      <div style={card}>
-        <div style={sectionTitle}>AI / LLM</div>
-        <div style={{ ...row, flexDirection:"column", alignItems:"flex-start" }}>
-          <div style={label}>Provider quota status</div>
-          <div style={sub}>Check /llm/status for live RPM / RPD counters</div>
-          <a href="/llm/status" target="_blank" rel="noopener"
-            style={{ marginTop:8, fontFamily:"var(--mono)", fontSize:12,
-              color:C.accent, textDecoration:"none" }}>
-            Open /llm/status →
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const TABS = ["dashboard","watchlist","candidates","pricing","alerts","discover","history","settings"];
+const TABS = ["dashboard","watchlist","discover","alerts","pricing"];
 
 export default function App() {
   return <ErrorBoundary><AppReal /></ErrorBoundary>;
@@ -4487,7 +4441,7 @@ function AppReal() {
         <div style={{display:"flex"}}>
           {TABS.map(t=>{
             const isScanning = t==="discover" && scanJob?.scanning;
-            const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",pricing:"💰 💰 Pricing",alerts:"🔔 Alerts",candidates:`⭐ Adaylar${candidates.length>0?" ("+candidates.length+")":""}`,discover: isScanning ? `⏳ ${scanJob?.progress?.done||0}/${scanJob?.progress?.total||0}` : "🔍 Discover",history:"📋 Geçmiş",settings:"⚙️ Ayarlar"}[t]||t;
+            const discoverLabel = isScanning ? `⏳ ${scanJob?.progress?.done||0}/${scanJob?.progress?.total||0}` : (candidates.length>0 ? `🔍 Discover ⭐${candidates.length}` : "🔍 Discover"); const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",discover:discoverLabel,alerts:"🔔 Alerts",pricing:"💰 Pricing"}[t]||t;
             return <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:12,color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400,letterSpacing:"0.01em"}}>{label}</button>;
           })}
         </div>
@@ -4539,6 +4493,66 @@ function AppReal() {
                   </div>
                 ))}
                 {isbns.length>5&&<div style={{fontSize:11,color:C.muted3,marginTop:8}}>+{isbns.length-5} daha</div>}
+
+                {/* ── Görünüm Ayarları ───────────────────────────────────── */}
+                <div style={{marginTop:24,marginBottom:10}}>
+                  <ST C={C}>Görünüm & Sistem</ST>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+                  {/* Theme */}
+                  <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 16px"}}>
+                    <div style={{fontSize:11,fontWeight:600,color:C.accent,letterSpacing:"0.07em",textTransform:"uppercase",marginBottom:10}}>Tema</div>
+                    <div style={{display:"flex",gap:6}}>
+                      {["dark","soft","light"].map(id=>(
+                        <button key={id} onClick={()=>setTheme(id)} style={{
+                          flex:1,padding:"6px 0",borderRadius:6,cursor:"pointer",
+                          fontFamily:"var(--mono)",fontSize:11,
+                          background:theme===id?C.accent:C.bg,
+                          color:theme===id?"#fff":C.muted,
+                          border:`1px solid ${theme===id?C.accent:C.border}`,
+                          fontWeight:theme===id?600:400,transition:"all .15s",
+                        }}>{id==="dark"?"🌙 Dark":id==="soft"?"🌤 Soft":"☀️ Light"}</button>
+                      ))}
+                    </div>
+                    <div style={{marginTop:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                      <span style={{fontSize:11,color:C.muted}}>Blue-light filtre</span>
+                      <button onClick={()=>setBlueFilter(b=>!b)} style={{
+                        padding:"4px 12px",borderRadius:6,cursor:"pointer",
+                        fontFamily:"var(--mono)",fontSize:11,
+                        background:blueFilter?C.accent:C.bg,
+                        color:blueFilter?"#fff":C.muted,
+                        border:`1px solid ${blueFilter?C.accent:C.border}`,
+                        transition:"all .15s",
+                      }}>{blueFilter?"ON":"OFF"}</button>
+                    </div>
+                  </div>
+                  {/* System info */}
+                  <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 16px"}}>
+                    <div style={{fontSize:11,fontWeight:600,color:C.accent,letterSpacing:"0.07em",textTransform:"uppercase",marginBottom:10}}>Sistem</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
+                        <span style={{color:C.muted}}>Build</span>
+                        <span style={{color:C.text,fontFamily:"var(--mono)",fontSize:10}}>{BUILD_ID}</span>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
+                        <span style={{color:C.muted}}>API</span>
+                        <span style={{color:C.text,fontFamily:"var(--mono)",fontSize:10}}>{BASE||"same origin"}</span>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
+                        <span style={{color:C.muted}}>Telegram</span>
+                        <span style={{color:status?.has_bot_token?C.green:"#ef4444",fontSize:10}}>{status?.has_bot_token?"✓ Aktif":"✗ Token yok"}</span>
+                      </div>
+                      <a href="/llm/status" target="_blank" rel="noopener"
+                        style={{marginTop:4,fontSize:11,color:C.accent,textDecoration:"none"}}>
+                        🤖 LLM Provider Durumu →
+                      </a>
+                      <a href="/buyback/test" target="_blank" rel="noopener"
+                        style={{fontSize:11,color:C.accent,textDecoration:"none"}}>
+                        💰 Buyback API Test →
+                      </a>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -4884,10 +4898,8 @@ function AppReal() {
             )}
 
 {tab==="alerts"&&<AlertsFeedTab C={C} theme={theme} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
-            {tab==="discover"&&<DiscoverTab C={C} theme={theme} scanJob={scanJob} setScanJob={setScanJob} scanPollRef={scanPollRef} candidates={candidates} addCandidate={addCandidate}/>}
-            {tab==="candidates"&&<CandidatesTab C={C} candidates={candidates} removeCandidate={removeCandidate} saveCandidates={saveCandidates} push={push} isbns={isbns} addIsbn={async(isbn,secs)=>{const res=await req("/isbns",{method:"POST",body:JSON.stringify({isbn})});if(res.added){setIsbns(p=>[...p,isbn]);if(secs){await req(`/rules/${isbn}/interval`,{method:"PUT",body:JSON.stringify({interval_seconds:secs})});}push(isbn+" watchlist'e eklendi","success");}else{push("Zaten watchlist'te","info");}}}/>}
-            {tab==="history"&&<ScanHistoryTab C={C} addCandidate={addCandidate} candidates={candidates}/>}
-            {tab==="settings"&&<SettingsTab C={C} theme={theme} setTheme={setTheme} blueFilter={blueFilter} setBlueFilter={setBlueFilter}/>}
+            {tab==="discover"&&<DiscoverTab C={C} theme={theme} scanJob={scanJob} setScanJob={setScanJob} scanPollRef={scanPollRef} candidates={candidates} addCandidate={addCandidate} removeCandidate={removeCandidate} saveCandidates={saveCandidates} push={push} isbns={isbns} addIsbn={async(isbn,secs)=>{const res=await req("/isbns",{method:"POST",body:JSON.stringify({isbn})});if(res.added){setIsbns(p=>[...p,isbn]);if(secs){await req(`/rules/${isbn}/interval`,{method:"PUT",body:JSON.stringify({interval_seconds:secs})});}push(isbn+" watchlist'e eklendi","success");}else{push("Zaten watchlist'te","info");}}}/>}
+            {/* candidates, history, settings are now sub-tabs inside Discover */}
           </>
         )}
       </div>
