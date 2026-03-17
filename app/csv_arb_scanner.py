@@ -599,9 +599,13 @@ async def _scan_one(
         elif ebay_error and "EBAY_CLIENT_ID" in ebay_error:
             reason = "ebay_not_configured"
         elif ebay_error:
-            # Gerçek hata mesajını ilk 80 karaktere kes
             short = ebay_error.replace("\n", " ")[:80]
             reason = f"ebay_error:{short}"
+        elif (ebay_offers is not None and len([o for o in (ebay_offers or []) if "_error" not in o]) == 0
+              and filters and hasattr(filters, "isbn_match_policy")):
+            # eBay döndü ama policy tarafından drop edildi
+            policy_val = filters.isbn_match_policy.value if hasattr(filters.isbn_match_policy, "value") else str(filters.isbn_match_policy)
+            reason = f"policy_filtered({policy_val}):tüm_ilanlar_doğrulanamadı — 'recall' modunu dene"
         r = ArbResult(isbn=isbn, asin=asin, source="", source_condition="",
                       buy_price=0, amazon_sell_price=None, buybox_type=None, match_type=None)
         r.reason = reason

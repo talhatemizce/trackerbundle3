@@ -1108,7 +1108,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   // Filters
   const [strictMode, setStrictMode] = useState(true);
   const [onlyViable, setOnlyViable] = useState(true);
-  const [isbnMatchPolicy, setIsbnMatchPolicy] = useState("balanced");
+  const [isbnMatchPolicy, setIsbnMatchPolicy] = useState("recall");
   const [invalidIsbnPolicy, setInvalidIsbnPolicy] = useState("best_effort");
   const [verifiedOnlyFilter, setVerifiedOnlyFilter] = useState(false);
   const [buybackOnlyFilter, setBuybackOnlyFilter] = useState(false);
@@ -1609,9 +1609,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
               <span style={{fontSize:9,color:C.muted,display:"block",marginBottom:2}}>ISBN Eşleşme Politikası</span>
               <select value={isbnMatchPolicy} onChange={e=>setIsbnMatchPolicy(e.target.value)}
                 style={{width:"100%",fontSize:11,padding:"4px 6px",borderRadius:5,border:`1px solid ${C.border}`,background:C.surface2,color:C.text}}>
-                <option value="balanced">⚖️ Balanced (önerilen)</option>
-                <option value="precision">🎯 Precision (sadece doğrulanmış)</option>
-                <option value="recall">🕸 Recall (hepsi)</option>
+                <option value="recall">🕸 Recall (önerilen — hepsini gör)</option>
+                <option value="balanced">⚖️ Balanced (sadece GTIN eşleşmesi)</option>
+                <option value="precision">🎯 Precision (kesin eşleşme zorunlu)</option>
               </select>
             </div>
             <div>

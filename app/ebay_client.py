@@ -244,14 +244,19 @@ def item_total_price(
       - calc_ship_est == 0 veya None → None döner, item skip edilir
     """
     try:
-        price = float(item.get("price", {}).get("value", 0) or 0)
-    except (TypeError, ValueError):
+        price_field = item.get("price") or {}
+        price = float((price_field.get("value") if isinstance(price_field, dict) else price_field) or 0)
+    except (TypeError, ValueError, AttributeError):
         return None
 
     opts = item.get("shippingOptions")
 
-    # shippingOptions field tamamen yok → bilinmiyor, skip
+    # shippingOptions field tamamen yok veya null → bilinmiyor
+    # calc_ship_est varsa heuristic kullan, yoksa skip
     if opts is None:
+        if calc_ship_est and calc_ship_est > 0:
+            item["_shipping_estimated"] = True
+            return round(price + calc_ship_est, 2) if price > 0 else None
         return None
 
     ship = 0.0
