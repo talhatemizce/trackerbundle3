@@ -135,7 +135,8 @@ async def get_app_token(client: httpx.AsyncClient) -> str:
 
 
 def normalize_condition(cond_text: Optional[str], condition_id: Optional[int | str]) -> str:
-    # conditionId öncelikli
+    # conditionId öncelikli — eBay Books category (267) gerçek ID'leri
+    # Kaynak: https://developer.ebay.com/devzone/finding/callref/Enumerations/conditionIdList.html
     try:
         cid = int(condition_id) if condition_id is not None else None
     except (ValueError, TypeError):
@@ -143,26 +144,27 @@ def normalize_condition(cond_text: Optional[str], condition_id: Optional[int | s
 
     if cid is not None:
         mapping = {
-            1000: "brand_new",
-            1500: "brand_new",
-            1750: "brand_new",
-            2000: "like_new",
-            2500: "like_new",
-            2750: "like_new",
-            3000: "like_new",    # eBay Books: Like New
-            4000: "very_good",   # eBay Books: Very Good
-            5000: "good",        # eBay Books: Good
-            6000: "acceptable",  # eBay Books: Acceptable
+            1000: "brand_new",    # New
+            1500: "brand_new",    # New other (e.g., opened box)
+            1750: "brand_new",    # New with defects
+            2000: "like_new",     # Manufacturer refurbished
+            2500: "like_new",     # Seller refurbished
+            2750: "very_good",    # Like New (eBay Books: Like New / Fine)
+            3000: "good",         # Used (eBay Books: Good condition)
+            4000: "very_good",    # Very Good (eBay Books: Very Good)
+            5000: "good",         # Good (eBay Books: Good)
+            6000: "acceptable",   # Acceptable
+            7000: "for_parts",    # For parts or not working
         }
         if cid in mapping:
             return mapping[cid]
 
     t = (cond_text or "").lower().strip()
     if not t:
-        return "used_all"
+        return "unknown"
     if "brand" in t and "new" in t:
         return "brand_new"
-    if "like new" in t:
+    if "like new" in t or "fine" in t:
         return "like_new"
     if "very good" in t:
         return "very_good"
@@ -170,11 +172,13 @@ def normalize_condition(cond_text: Optional[str], condition_id: Optional[int | s
         return "good"
     if "acceptable" in t:
         return "acceptable"
-    if "used" in t or "pre-owned" in t:
+    if "for parts" in t or "parts only" in t or "not working" in t:
+        return "for_parts"
+    if "used" in t or "pre-owned" in t or "preowned" in t:
         return "used_all"
     if "new" in t:
         return "brand_new"
-    return "used_all"
+    return "unknown"
 
 
 # ── ISBN-10 ↔ ISBN-13 dönüşüm ──────────────────────────────────────────────────
