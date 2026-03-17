@@ -235,7 +235,8 @@ async def fetch_buyback_prices(isbn: str, force: bool = False) -> Dict[str, Any]
 
     s = get_settings()
     has_bookscouter = bool(s.bookscouter_api_key)
-    has_booksrun = bool(s.booksrun_api_key)
+    has_booksrun    = bool(s.booksrun_api_key)
+    has_valore      = bool(getattr(s, "valore_access_key", None)) or True  # web scrape her zaman denenebilir
 
     if not has_bookscouter and not has_booksrun:
         return {
@@ -250,7 +251,8 @@ async def fetch_buyback_prices(isbn: str, force: bool = False) -> Dict[str, Any]
             "hint": (
                 "Buyback fiyatları için API anahtarı gerekli. "
                 "BookScouter: api.bookscouter.com (ücretsiz kayıt) → BOOKSCOUTER_API_KEY. "
-                "BooksRun: booksrun.com/page/api-reference (ücretsiz) → BOOKSRUN_API_KEY."
+                "BooksRun: booksrun.com/page/api-reference (ücretsiz) → BOOKSRUN_API_KEY. "
+                "ValoreBooks: APIsupport@valorebooks.com → VALORE_ACCESS_KEY + VALORE_SECRET_KEY."
             ),
             "cached": False,
             "cache_age_s": 0,
@@ -260,6 +262,7 @@ async def fetch_buyback_prices(isbn: str, force: bool = False) -> Dict[str, Any]
         results = await asyncio.gather(
             _fetch_bookscouter(isbn13, client),
             _fetch_booksrun(isbn13, client),
+            _fetch_valore(isbn13, client),
             return_exceptions=True,
         )
 
@@ -446,3 +449,123 @@ async def get_buyback_price_trend(isbn: str) -> Dict[str, Any]:
     except Exception as e:
         logger.debug("BookScouter history error isbn=%s: %s", isbn13, e)
         return {"trend": "unknown", "note": str(e)[:80]}
+
+
+# ── ValoreBooks Sellback API ───────────────────────────────────────────────────
+# Docs: https://valorebooks.github.io/api/sellback/price/
+# Endpoint: GET https://api.valorebooks.com/sellback/price?isbn={isbn}
+# Auth: AWS SigV4 — partner credentials gerekli
+#   Kayıt: APIsupport@valorebooks.com → ücretsiz
+#   Env: VALORE_ACCESS_KEY, VALORE_SECRET_KEY, VALORE_API_URL
+#
+# Not: API gateway URL partner başvurusu sonrası verilir.
+# Bu aşamada web sayfasını scrape ederek fiyat çekiyoruz (public endpoint).
+
+async def _fetch_valore(isbn: str, client: httpx.AsyncClient) -> List[Dict]:
+    """
+    ValoreBooks sellback fiyatı.
+    İki yol:
+      1. Resmi API (VALORE_ACCESS_KEY varsa) — SigV4 signed
+      2. Web scrape fallback — /sellback?isbn= sayfasından JSON veri çek
+    """
+    from app.isbn_utils import to_isbn13
+    isbn13 = to_isbn13(isbn) or isbn
+    s = get_settings()
+
+    valore_key    = getattr(s, "valore_access_key", None)
+    valore_secret = getattr(s, "valore_secret_key", None)
+    valore_url    = getattr(s, "valore_api_url", None)
+
+    # Yol 1: Resmi API (credentials varsa)
+    if valore_key and valore_secret and valore_url:
+        try:
+            import hashlib, hmac, datetime
+            endpoint = f"{valore_url.rstrip('/')}/sellback/price"
+            params   = f"isbn={isbn13}"
+            full_url = f"{endpoint}?{params}"
+
+            # SigV4 imzalama (botocore gerekli — zaten amazon_client'ta kullanılıyor)
+            from botocore.auth import SigV4Auth
+            from botocore.awsrequest import AWSRequest
+            from botocore.credentials import Credentials
+
+            creds   = Credentials(valore_key, valore_secret)
+            req_obj = AWSRequest(method="GET", url=full_url, headers={"Host": valore_url.split("/")[2]})
+            SigV4Auth(creds, "execute-api", "us-east-1").add_auth(req_obj)
+            signed_headers = dict(req_obj.headers)
+
+            r = await client.get(full_url, headers=signed_headers, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                # Response schema: {"price": 14.50, "available": true, "condition": "Good"}
+                # veya {"prices": [{"condition": "Good", "price": 14.50}, ...]}
+                prices = data.get("prices") or []
+                if not prices and data.get("price"):
+                    prices = [{"condition": data.get("condition","Good"), "price": data["price"]}]
+
+                offers = []
+                for p in prices:
+                    cash = float(p.get("price") or 0)
+                    if cash > 0:
+                        offers.append({
+                            "vendor": "ValoreBooks",
+                            "vendor_id": "valorebooks",
+                            "cash": round(cash, 2),
+                            "credit": 0.0,
+                            "url": f"https://www.valore.com/sellback?isbn={isbn13}",
+                            "source": "valorebooks_api",
+                        })
+                if offers:
+                    return sorted(offers, key=lambda x: x["cash"], reverse=True)
+        except Exception as e:
+            logger.debug("ValoreBooks API error isbn=%s: %s", isbn13, e)
+
+    # Yol 2: Web scrape — /sellback sayfasından JSON-LD veya inline data al
+    try:
+        r = await client.get(
+            f"https://www.valore.com/sellback",
+            params={"isbn": isbn13},
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; TrackerBundle/1.0)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            timeout=12,
+            follow_redirects=True,
+        )
+        if r.status_code == 200:
+            import re
+            text = r.text
+            # Valore sayfa içinde fiyatı JSON olarak inline embed ediyor
+            # Örnek: data-price="14.50" veya "sellbackPrice":14.50
+            patterns = [
+                r'"sellbackPrice"\s*:\s*([\d.]+)',
+                r'data-price=["\'](\d+\.?\d*)["\']',
+                r'"price"\s*:\s*([\d.]+)',
+                r'\$(\d+\.\d{2})\s*(?:for|to\s+sell)',
+            ]
+            price = None
+            for pat in patterns:
+                m = re.search(pat, text)
+                if m:
+                    try:
+                        candidate = float(m.group(1))
+                        if 0.5 < candidate < 500:  # sanity check
+                            price = candidate
+                            break
+                    except (ValueError, TypeError):
+                        pass
+
+            if price:
+                logger.debug("ValoreBooks web scrape isbn=%s price=%.2f", isbn13, price)
+                return [{
+                    "vendor": "ValoreBooks",
+                    "vendor_id": "valorebooks",
+                    "cash": round(price, 2),
+                    "credit": 0.0,
+                    "url": f"https://www.valore.com/sellback?isbn={isbn13}",
+                    "source": "valorebooks_web",
+                }]
+    except Exception as e:
+        logger.debug("ValoreBooks web scrape error isbn=%s: %s", isbn13, e)
+
+    return []

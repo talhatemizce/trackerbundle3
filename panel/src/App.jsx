@@ -382,8 +382,12 @@ function SuggestedCard({ data, label, color, C, cached, cacheAge }) {
 
 
 // ─── Source link builder (used in all result tables) ─────────────────────────
-function SourceLinks({ isbn, asin, C }) {
+function SourceLinks({ isbn, asin, C, bookTitle="", bookAuthor="" }) {
   const isbn13 = toIsbn13(isbn) || isbn;
+  // Resale siteleri için arama terimi: title+author varsa onları kullan, yoksa ISBN
+  const titleQuery = bookTitle
+    ? encodeURIComponent(`${bookTitle}${bookAuthor ? " " + bookAuthor.split(" ").pop() : ""}`)
+    : isbn13;
   const base = [
     {label:"AMZ", title:"Amazon",     url:`https://www.amazon.com/dp/${asin||isbn}`,                        bg:"#FF9900"},
     {label:"eBay",title:"eBay",       url:`https://www.ebay.com/sch/i.html?_nkw=${isbn13}&_sacat=267`,      bg:"#E53238"},
@@ -393,14 +397,16 @@ function SourceLinks({ isbn, asin, C }) {
     {label:"KP",  title:"Keepa",      url:`https://keepa.com/#!product/1-${asin||isbn}`,                   bg:"#7B1FA2"},
   ];
   const resale = [
-    {label:"MCR",title:"Mercari",     url:`https://www.mercari.com/search/?keyword=${isbn13}`,              bg:"#FF0211"},
-    {label:"DEP",title:"Depop",       url:`https://www.depop.com/search/?q=${isbn13}`,                      bg:"#FF4040"},
-    {label:"PSH",title:"Poshmark",    url:`https://poshmark.com/search?query=${isbn13}&type=listings`,      bg:"#C2185B"},
-    {label:"ETY",title:"Etsy",        url:`https://www.etsy.com/search?q=${isbn13}`,                       bg:"#F45800"},
+    // Resale marketplaces — title+author araması (varsa) ISBN'den çok daha iyi sonuç verir
+    {label:"MCR",title:"Mercari",     url:`https://www.mercari.com/search/?keyword=${titleQuery}`,          bg:"#FF0211"},
+    {label:"DEP",title:"Depop",       url:`https://www.depop.com/search/?q=${titleQuery}`,                  bg:"#FF4040"},
+    {label:"PSH",title:"Poshmark",    url:`https://poshmark.com/search?query=${titleQuery}&type=listings`,  bg:"#C2185B"},
+    {label:"ETY",title:"Etsy",        url:`https://www.etsy.com/search?q=${titleQuery}`,                   bg:"#F45800"},
     {label:"BPL",title:"BookPal",     url:`https://www.bookpal.com/search?q=${isbn13}`,                    bg:"#0277BD"},
     {label:"BDP",title:"BookDepot",   url:`https://www.bookdepot.com/Store/Search.aspx?q=${isbn13}`,       bg:"#37474F"},
     {label:"TBR",title:"TextbookRush",url:`https://www.textbookrush.com/search?q=${isbn13}`,               bg:"#1B5E20"},
     {label:"CHG",title:"Chegg",       url:`https://www.chegg.com/search?q=${isbn13}`,                      bg:"#E85E00"},
+    {label:"VLR",title:"ValoreBooks Sellback",url:`https://www.valore.com/sellback?isbn=${isbn13}`,        bg:"#1A237E"},
   ];
   const A = ({label,title,url,bg,dim}) => (
     <a key={label} href={url} target="_blank" rel="noreferrer" title={title}
@@ -1016,7 +1022,10 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
                             </span>}
                           </td>
                           <td style={{padding:"6px 8px"}}>
-                            <SourceLinks isbn={r.isbn} asin={r.asin} C={C}/>
+                            <SourceLinks isbn={r.isbn} asin={r.asin} C={C}
+                              bookTitle={r.google_title||r.ebay_title||""}
+                              bookAuthor={(r.edition_authors||[]).join(" ")||""}
+                            />
                           </td>
                           <td style={{padding:"6px 8px",textAlign:"center",minWidth:90}}>
                             {verifying.has(i) ? (
@@ -2074,7 +2083,10 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                           )}
                           {activeView==="accepted"&&(
                             <td style={{padding:"6px 8px"}}>
-                              <SourceLinks isbn={r.isbn} asin={r.asin} C={C}/>
+                              <SourceLinks isbn={r.isbn} asin={r.asin} C={C}
+                              bookTitle={r.google_title||r.ebay_title||""}
+                              bookAuthor={(r.edition_authors||[]).join(" ")||""}
+                            />
                             </td>
                           )}
                           {activeView==="accepted"&&(
