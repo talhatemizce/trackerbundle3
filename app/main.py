@@ -1118,6 +1118,32 @@ async def scan_history():
     return {"ok": True, "history": get_history()}
 
 
+@app.get("/discover/nyt-suggestions")
+async def nyt_watchlist_suggestions():
+    """
+    NYT Bestseller listelerinden watchlist önerileri.
+    Güncel bestseller'ların ISBN listesini döndürür.
+    NYT_API_KEY env var gerekli — developer.nytimes.com (ücretsiz)
+    """
+    try:
+        from app.nyt_client import get_watchlist_suggestions
+        books = await get_watchlist_suggestions(max_per_list=5)
+        return {"ok": True, "count": len(books), "books": books}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/discover/nyt-check/{isbn}")
+async def nyt_isbn_check(isbn: str):
+    """ISBN'in NYT bestseller geçmişini kontrol et."""
+    try:
+        from app.nyt_client import get_isbn_nyt_history
+        data = await get_isbn_nyt_history(isbn)
+        return {"ok": True, "isbn": isbn, **data}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 class MaxBuyRequest(BaseModel):
     sell_price: float = Field(..., gt=0)
     target_roi_pct: float = Field(default=30.0, gt=0)

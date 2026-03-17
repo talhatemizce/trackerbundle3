@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     serpapi_key:     str | None = Field(default=None, validation_alias="SERPAPI_KEY")       # 250 req/mo free
     # HathiTrust enabled (free, no key — rate limit courtesy)
     hathitrust_enabled: bool = Field(default=True, validation_alias="HATHITRUST_ENABLED")
+    # New York Times Books API (bestseller check + watchlist discovery)
+    # Ücretsiz: 4000 req/gün, 10 req/dak — developer.nytimes.com
+    nyt_api_key: str | None = Field(default=None, validation_alias="NYT_API_KEY")
     # ValoreBooks Sellback API (ücretsiz — APIsupport@valorebooks.com'dan credentials al)
     valore_access_key: str | None = Field(default=None, validation_alias="VALORE_ACCESS_KEY")
     valore_secret_key: str | None = Field(default=None, validation_alias="VALORE_SECRET_KEY")

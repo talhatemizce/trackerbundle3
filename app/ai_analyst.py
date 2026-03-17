@@ -609,7 +609,18 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
         edition_task = _check_edition(isbn, client)
         img_url = candidate.get("ebay_image_url", "")
         image_task = _fetch_image_b64(img_url, client) if img_url else asyncio.sleep(0, result=None)
-        edition_data, image_b64 = await asyncio.gather(edition_task, image_task)
+
+        # NYT bestseller geçmişi — paralel, hata olursa boş dict
+        async def _nyt_safe():
+            try:
+                from app.nyt_client import get_isbn_nyt_history
+                return await get_isbn_nyt_history(isbn)
+            except Exception:
+                return {}
+
+        edition_data, image_b64, nyt_data = await asyncio.gather(
+            edition_task, image_task, _nyt_safe()
+        )
 
     # Deterministic: kondisyon skoru
     cond_analysis = _condition_score(
@@ -653,6 +664,10 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
         "amazon_seller_count": candidate.get("amazon_seller_count"),
         "amazon_is_sold_by_amazon": candidate.get("amazon_is_sold_by_amazon", False),
         "seasonality_mult": candidate.get("seasonality_mult"),
+        "nyt_bestseller": nyt_data.get("was_bestseller", False),
+        "nyt_weeks": nyt_data.get("total_weeks", 0),
+        "nyt_rank": nyt_data.get("highest_rank"),
+        "nyt_note": nyt_data.get("note", ""),
         "_cached_at": _time.time(),
     })
 
@@ -799,6 +814,7 @@ def _build_prompt(isbn: str, isbn13: str, c: Dict[str, Any],
         f"Description: {(edition.get('description','') or '')[:200] or 'N/A'}",
         f"Data source: {edition.get('source','unknown')}",
         f"Month: {dt.datetime.utcnow().strftime('%B')} | seasonality={c.get('seasonality_mult','?')}x",
+        f"NYT Bestseller: {c.get('nyt_note') or ('Hiçbir zaman NYT listesinde yer almadı' if c.get('nyt_note') == '' else 'Bilgi yok')}",
         f"Condition flags: {', '.join(cond['condition_flags']) or 'None'} (score: {cond['condition_score']}/10)",
     ]
     return "\n".join(lines)

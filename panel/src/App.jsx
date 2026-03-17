@@ -1966,6 +1966,11 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                             {r.has_newer_edition&&(
                               <span title="Daha yeni baskı mevcut — satış zorlaşabilir" style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#dc262622",color:"#dc2626",fontFamily:"sans-serif",fontWeight:700}}>NEW ED⚠</span>
                             )}
+                            {r.nyt_bestseller&&(
+                              <span title={r.nyt_note||"NYT Bestseller"} style={{marginLeft:4,fontSize:9,padding:"1px 4px",borderRadius:3,background:"#1d4ed822",color:"#1d4ed8",fontFamily:"sans-serif",fontWeight:700}}>
+                                📰NYT{r.nyt_weeks>0?` ${r.nyt_weeks}w`:""}
+                              </span>
+                            )}
                           </td>
                           {/* Verify cell — sadece accepted view'da */}
                           {activeView==="accepted"&&(

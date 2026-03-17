@@ -140,6 +140,11 @@ class ArbResult:
     buyback_cash: Optional[float] = None        # en iyi buyback teklifi ($)
     buyback_trend: Optional[str] = None         # "rising"|"falling"|"stable"|"unknown"
     buyback_trend_note: Optional[str] = None    # açıklama
+    # NYT Bestseller sinyali
+    nyt_bestseller: bool = False                 # NYT listesinde yer aldı mı?
+    nyt_weeks: int = 0                           # toplam liste haftası
+    nyt_rank: Optional[int] = None               # en yüksek rank (1=birinci)
+    nyt_note: str = ""                           # özet açıklama
     # Kitap sınıflandırma (HathiTrust/LoC/Analytics'ten)
     is_textbook_likely: bool = False             # DDC/LC/subjects → textbook sınıfı
     textbook_score: float = 0.0                  # 0.0–1.0
@@ -528,11 +533,21 @@ async def _scan_one(
             return {}
 
     async def _get_book_meta_safe(isbn):
-        """Lightweight book metadata — OL Search only, no LLM, no vision."""
+        """Book metadata + NYT bestseller check — OL Search, HathiTrust, LoC, NYT."""
         try:
-            async with httpx.AsyncClient(timeout=8) as _mc:
+            async with httpx.AsyncClient(timeout=10) as _mc:
                 from app.ai_analyst import _check_edition
-                return await _check_edition(isbn, _mc)
+                from app.nyt_client import get_isbn_nyt_history
+                meta, nyt = await asyncio.gather(
+                    _check_edition(isbn, _mc),
+                    get_isbn_nyt_history(isbn),
+                    return_exceptions=True,
+                )
+                if isinstance(meta, Exception): meta = {}
+                if isinstance(nyt, Exception):  nyt  = {}
+                if isinstance(meta, dict):
+                    meta["_nyt"] = nyt if isinstance(nyt, dict) else {}
+                return meta
         except Exception:
             return {}
 
@@ -690,6 +705,15 @@ async def _scan_one(
                 r.has_newer_edition  = book_meta.get("has_newer_edition")
                 r.dewey              = book_meta.get("dewey")
                 r.lc_class           = book_meta.get("lc_class")
+
+            # NYT bestseller sinyali — book_meta_safe içinde nyt_data da geliyor
+            if book_meta and isinstance(book_meta, dict):
+                nyt = book_meta.get("_nyt") or {}
+                if nyt:
+                    r.nyt_bestseller = bool(nyt.get("was_bestseller", False))
+                    r.nyt_weeks      = int(nyt.get("total_weeks") or 0)
+                    r.nyt_rank       = nyt.get("highest_rank")
+                    r.nyt_note       = nyt.get("note", "")
 
             # sell_source: "used_buybox" / "new_top1" formatı (P1 fix)
             _sec = (amazon_data.get(bb_type) or {}) if bb_type else {}
