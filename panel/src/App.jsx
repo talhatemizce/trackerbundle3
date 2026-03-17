@@ -1478,8 +1478,8 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   const tierColor = (tier) => tier==="fire"?"#f97316":tier==="good"?C.green:tier==="low"?C.blue:C.red||"#ef4444";
 
   // Auto-switch to results when scan completes
-  const prevScanningRef = React.useRef(false);
-  React.useEffect(() => {
+  const prevScanningRef = useRef(false);
+  useEffect(() => {
     if (prevScanningRef.current && !scanJob?.scanning && scanJob?.results) {
       setDiscoverSubTab("results");
     }
