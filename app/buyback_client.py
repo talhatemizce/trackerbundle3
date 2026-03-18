@@ -196,7 +196,7 @@ async def _fetch_booksrun(isbn: str, client: httpx.AsyncClient) -> List[Dict]:
                 "good": float(prices.get("Good", 0) or 0),
                 "new": float(prices.get("New", 0) or 0),
             },
-            "url": f"https://booksrun.com/books/sell#{isbn}",
+            "url": f"https://booksrun.com/textbooks-buyback/add-to-cart/{isbn}",
             "source": "booksrun_api",
         }]
 
@@ -236,9 +236,9 @@ async def fetch_buyback_prices(isbn: str, force: bool = False) -> Dict[str, Any]
     s = get_settings()
     has_bookscouter = bool(s.bookscouter_api_key)
     has_booksrun    = bool(s.booksrun_api_key)
-    has_valore      = bool(getattr(s, "valore_access_key", None)) or True  # web scrape her zaman denenebilir
+    has_valore      = bool(getattr(s, "valore_access_key", None))
 
-    if not has_bookscouter and not has_booksrun:
+    if not has_bookscouter and not has_booksrun and not has_valore:
         return {
             "ok": False,
             "isbn": isbn13,
@@ -380,7 +380,10 @@ async def get_buyback_price_trend(isbn: str) -> Dict[str, Any]:
             r = await client.get(
                 f"https://api.bookscouter.com/v1/book/{isbn13}/prices",
                 params={"type": "sell"},
-                headers={"x-api-key": key},
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Accept": "application/json",
+                },
                 timeout=10,
             )
             if r.status_code != 200:
@@ -495,7 +498,11 @@ async def _fetch_valore(isbn: str, client: httpx.AsyncClient) -> List[Dict]:
         from botocore.auth import SigV4Auth
         from botocore.awsrequest import AWSRequest
         from botocore.credentials import Credentials
+    except ImportError:
+        logger.debug("ValoreBooks: botocore not installed — skipping")
+        return []
 
+    try:
         host    = base_url.replace("https://", "").replace("http://", "").split("/")[0]
         creds   = Credentials(valore_key, valore_secret)
         req_obj = AWSRequest(method="GET", url=endpoint, headers={"Host": host})
