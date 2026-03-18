@@ -374,8 +374,12 @@ async def get_buyback_price_trend(isbn: str) -> Dict[str, Any]:
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
+            # BookScouter history endpoint resmi dokümanda yok.
+            # /v1/book/{isbn}/prices?type=sell mevcut current fiyatları döndürür.
+            # Trend için tek anlık veri yeterli değil — "stable" döndür.
             r = await client.get(
-                f"https://api.bookscouter.com/v1/book/{isbn13}/prices/history",
+                f"https://api.bookscouter.com/v1/book/{isbn13}/prices",
+                params={"type": "sell"},
                 headers={"x-api-key": key},
                 timeout=10,
             )

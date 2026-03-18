@@ -272,73 +272,79 @@ async def _check_edition(isbn: str, client: httpx.AsyncClient) -> Dict[str, Any]
         except Exception as e:
             logger.debug("Open Library Books API error: %s", e)
 
+    # ── 4b. OCLC xISBN — related editions (has_newer_edition için ek doğrulama) ───
+    # 1000 req/gün ücretsiz, ISBN → related edition ISBN listesi
+    # has_newer zaten None ise xISBN ile doldur
+    if has_newer is None:
+        try:
+            _xisbn_r = await client.get(
+                "http://xisbn.worldcat.org/webservices/xid/isbn/" + isbn13,
+                params={"method": "getEditions", "format": "json", "fl": "year,isbn"},
+                headers={"User-Agent": OL_USER_AGENT},
+                timeout=8,
+            )
+            if _xisbn_r.status_code == 200:
+                _xdata = _xisbn_r.json()
+                if _xdata.get("stat") == "ok":
+                    _related = _xdata.get("list") or []
+                    _other_years = []
+                    for _rel in _related:
+                        _rel_isbns = _rel.get("isbn") or []
+                        if isbn13 in _rel_isbns or isbn in _rel_isbns:
+                            continue  # bu bizim baskımız
+                        _yr = _rel.get("year")
+                        if _yr:
+                            try: _other_years.append(int(_yr))
+                            except (ValueError, TypeError): pass
+                    if _other_years and current_year:
+                        has_newer = max(_other_years) > current_year
+                        logger.debug("xISBN isbn=%s other_years=%s has_newer=%s",
+                                     isbn13, _other_years[:5], has_newer)
+        except Exception as _xi_err:
+            logger.debug("xISBN error isbn=%s: %s", isbn13, _xi_err)
+
     result = dict(base)
     result["has_newer_edition"] = has_newer
     result["work_key"]          = work_key  # downstream kullanım için
 
-    # ── 5. HathiTrust + Library of Congress — DDC / LC classification ─────────
-    # Bu iki ücretsiz kaynak "textbook mı yoksa trade kitap mı?" sorusunu
-    # doğrudan yanıtlıyor: LC call number ve Dewey Decimal ile.
+    # ── 5. Open Library jscmd=data — DDC + LC classification ─────────────────
+    # Open Library /api/books?jscmd=data endpoint'i classifications objesi döndürür:
+    # {"classifications": {"dewey_decimal_class": ["512.5"], "lc_classifications": ["QA76"]}}
+    # HathiTrust'tan daha güvenilir (canlı test edilmiş format).
     result["dewey"]    = None
     result["lc_class"] = None
     result["is_textbook_likely"] = False  # default
 
-    from app.core.config import get_settings as _cfg_gs
-    _s = _cfg_gs()
-    if getattr(_s, "hathitrust_enabled", True):
-        # 5a. HathiTrust brief — DDC (082 MARC field)
-        try:
-            _ht_url = f"https://catalog.hathitrust.org/api/volumes/brief/isbn/{isbn13}.json"
-            _r = await client.get(
-                _ht_url,
-                headers={"User-Agent": OL_USER_AGENT},
-                timeout=8,
-            )
-            if _r.status_code == 200:
-                _ht = _r.json()
-                # Cevap: {records: {"/books/OL...": {data: {dewey_decimal_class: ["512.5"]}}}}
-                for _rec in (_ht.get("records") or {}).values():
-                    _data = _rec.get("data") or {}
-                    _dewey_list = _data.get("dewey_decimal_class") or []
-                    if _dewey_list:
-                        result["dewey"] = str(_dewey_list[0]).strip()
-                        break
-                    # MARC 082 sometimes in different structure
-                    for _item in (_ht.get("items") or []):
-                        _marc_dd = (_item.get("marc") or {}).get("082") or []
-                        if _marc_dd:
-                            result["dewey"] = str(_marc_dd[0]).strip()
-                            break
-                    if result["dewey"]:
-                        break
-        except Exception as _ht_err:
-            logger.debug("HathiTrust error isbn=%s: %s", isbn13, _ht_err)
+    try:
+        _ol_data_r = await client.get(
+            OPEN_LIBRARY_API,
+            params={"bibkeys": f"ISBN:{isbn13}", "format": "json", "jscmd": "data"},
+            headers={"User-Agent": OL_USER_AGENT},
+            timeout=8,
+        )
+        if _ol_data_r.status_code == 200:
+            _ol_data = _ol_data_r.json()
+            _book_data = _ol_data.get(f"ISBN:{isbn13}") or {}
+            _classifications = _book_data.get("classifications") or {}
 
-        # 5b. Library of Congress — LC call number + subjects (no API key, 20 req/min)
-        if not result["lc_class"]:
-            try:
-                _loc_url = "https://www.loc.gov/search/"
-                _r2 = await client.get(
-                    _loc_url,
-                    params={"q": isbn13, "fo": "json", "c": 1, "at": "results"},
-                    headers={"User-Agent": OL_USER_AGENT},
-                    timeout=8,
-                )
-                if _r2.status_code == 200:
-                    _loc_results = (_r2.json().get("results") or [])
-                    if _loc_results:
-                        _loc_item = _loc_results[0]
-                        # LC call number
-                        _call_numbers = _loc_item.get("call_number") or []
-                        if _call_numbers:
-                            result["lc_class"] = str(_call_numbers[0]).strip()
-                        # Dewey fallback from LoC if HathiTrust missed
-                        if not result["dewey"]:
-                            _subjects_loc = _loc_item.get("subject") or []
-                            if _subjects_loc and not result.get("categories"):
-                                result["categories"] = [str(s) for s in _subjects_loc[:6]]
-            except Exception as _loc_err:
-                logger.debug("LoC API error isbn=%s: %s", isbn13, _loc_err)
+            # Dewey Decimal
+            _dewey_list = _classifications.get("dewey_decimal_class") or []
+            if _dewey_list:
+                result["dewey"] = str(_dewey_list[0]).strip()
+
+            # LC Classification
+            _lc_list = _classifications.get("lc_classifications") or []
+            if _lc_list:
+                result["lc_class"] = str(_lc_list[0]).strip()
+
+            # Subjects supplement (jscmd=data has richer subjects than search)
+            if not result.get("categories"):
+                _subjs = [s.get("name","") for s in (_book_data.get("subjects") or [])
+                          if isinstance(s, dict) and s.get("name")]
+                if _subjs:
+                    result["categories"] = _subjs[:6]
+    except Exception as _ol_class_err:
+        logger.debug("OL classification error isbn=%s: %s", isbn13, _ol_class_err)
 
     # 5c. Derive textbook classification from DDC / LC / subjects
     try:

@@ -1118,6 +1118,46 @@ async def scan_history():
     return {"ok": True, "history": get_history()}
 
 
+@app.get("/analytics/summary")
+async def analytics_summary():
+    """
+    Metabase / monitoring için operasyonel özet.
+    Scan geçmişi, buyback istatistikleri, hata oranları.
+    """
+    import time as _time
+    from app.scan_job_store import get_history
+    from app.alert_history_store import get_entries as get_alert_history
+    from app.isbn_store import get_isbns
+
+    history = get_history()
+    isbns   = get_isbns()
+
+    # Son 7 günün tarama istatistikleri
+    cutoff   = _time.time() - 7 * 86400
+    recent   = [h for h in history if h.get("ts", 0) >= cutoff]
+    total_accepted = sum(len(h.get("accepted", [])) for h in recent)
+    total_scanned  = sum((h.get("stats") or {}).get("total_isbns", 0) for h in recent)
+
+    # Alert istatistikleri (son 7 gün)
+    try:
+        all_alerts = get_alert_history()
+        recent_alerts = [a for a in all_alerts if (a.get("ts") or 0) >= cutoff]
+    except Exception:
+        recent_alerts = []
+
+    return {
+        "ok": True,
+        "ts": int(_time.time()),
+        "watchlist_size": len(isbns),
+        "scans_last_7d": len(recent),
+        "isbns_scanned_7d": total_scanned,
+        "deals_found_7d": total_accepted,
+        "alerts_last_7d": len(recent_alerts),
+        "total_scans": len(history),
+        "last_scan_ts": history[0].get("ts") if history else None,
+    }
+
+
 @app.get("/discover/nyt-suggestions")
 async def nyt_watchlist_suggestions():
     """
