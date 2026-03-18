@@ -610,7 +610,7 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
         img_url = candidate.get("ebay_image_url", "")
         image_task = _fetch_image_b64(img_url, client) if img_url else asyncio.sleep(0, result=None)
 
-        # NYT bestseller geçmişi — paralel, hata olursa boş dict
+        # NYT bestseller + Hardcover demand — paralel
         async def _nyt_safe():
             try:
                 from app.nyt_client import get_isbn_nyt_history
@@ -618,8 +618,15 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 return {}
 
-        edition_data, image_b64, nyt_data = await asyncio.gather(
-            edition_task, image_task, _nyt_safe()
+        async def _hardcover_safe():
+            try:
+                from app.hardcover_client import get_book_demand
+                return await get_book_demand(isbn)
+            except Exception:
+                return {}
+
+        edition_data, image_b64, nyt_data, hc_data = await asyncio.gather(
+            edition_task, image_task, _nyt_safe(), _hardcover_safe()
         )
 
     # Deterministic: kondisyon skoru
@@ -668,6 +675,10 @@ async def analyze_isbn(isbn: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
         "nyt_weeks": nyt_data.get("total_weeks", 0),
         "nyt_rank": nyt_data.get("highest_rank"),
         "nyt_note": nyt_data.get("note", ""),
+        "hc_users_read":    hc_data.get("users_read", 0),
+        "hc_users_reading": hc_data.get("users_reading", 0),
+        "hc_demand_tier":   hc_data.get("demand_tier", "unknown"),
+        "hc_note":          hc_data.get("note", ""),
         "_cached_at": _time.time(),
     })
 
@@ -815,6 +826,7 @@ def _build_prompt(isbn: str, isbn13: str, c: Dict[str, Any],
         f"Data source: {edition.get('source','unknown')}",
         f"Month: {dt.datetime.utcnow().strftime('%B')} | seasonality={c.get('seasonality_mult','?')}x",
         f"NYT Bestseller: {c.get('nyt_note') or ('Hiçbir zaman NYT listesinde yer almadı' if c.get('nyt_note') == '' else 'Bilgi yok')}",
+        f"Hardcover demand: {c.get('hc_note') or 'Bilgi yok'} (tier: {c.get('hc_demand_tier','unknown')})",
         f"Condition flags: {', '.join(cond['condition_flags']) or 'None'} (score: {cond['condition_score']}/10)",
     ]
     return "\n".join(lines)

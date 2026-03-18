@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     # New York Times Books API (bestseller check + watchlist discovery)
     # Ücretsiz: 4000 req/gün, 10 req/dak — developer.nytimes.com
     nyt_api_key: str | None = Field(default=None, validation_alias="NYT_API_KEY")
+    # Hardcover.app API — Goodreads alternatifi, ücretsiz GraphQL
+    # Kayıt: hardcover.app → Settings → API → token kopyala
+    hardcover_api_key: str | None = Field(default=None, validation_alias="HARDCOVER_API_KEY")
     # ValoreBooks Sellback API (ücretsiz — APIsupport@valorebooks.com'dan credentials al)
     valore_access_key: str | None = Field(default=None, validation_alias="VALORE_ACCESS_KEY")
     valore_secret_key: str | None = Field(default=None, validation_alias="VALORE_SECRET_KEY")
