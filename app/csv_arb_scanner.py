@@ -301,8 +301,11 @@ _amz_cache: Dict[str, Tuple[float, Dict]] = {}  # asin → (ts, data)
 _AMZ_TTL = 20 * 60  # 20 dakika
 
 
+_catalog_cache_sc: Dict[str, tuple] = {}
+_CATALOG_TTL_SC = 3600 * 2
+
 async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
-    """get_top2_prices ile Amazon buybox fiyatlarını çek, 20dk cache'le."""
+    """get_top2_prices + getCatalogItem (BSR) paralel çek, 20dk cache'le."""
     now = time.time()
     if asin in _amz_cache:
         ts, data = _amz_cache[asin]
@@ -311,12 +314,31 @@ async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
 
     from app import amazon_client as _amz
     try:
-        data = await _amz.get_top2_prices(asin)
+        # Paralel: fiyat + BSR/catalog metadata
+        prices, catalog = await asyncio.gather(
+            _amz.get_top2_prices(asin),
+            _amz.get_catalog_item(asin),
+            return_exceptions=True,
+        )
+        if isinstance(prices,  Exception): prices  = {}
+        if isinstance(catalog, Exception): catalog = {}
+
+        # BSR'ı fiyat verisine ekle — scanner ve UI bunu kullanır
+        if isinstance(prices, dict) and isinstance(catalog, dict):
+            bsr = catalog.get("bsr") or catalog.get("bsr_all")
+            if bsr:
+                # BSR'ı hem used hem new bloğuna ekle (hangisi varsa)
+                for cond in ("used", "new"):
+                    if prices.get(cond):
+                        prices[cond]["bsr"] = bsr
+                prices["bsr"] = bsr
+                prices["list_price"] = catalog.get("list_price")
+
+        data = prices if isinstance(prices, dict) else {}
         _amz_cache[asin] = (now, data)
         return data
     except Exception as e:
         logger.warning("Amazon prices failed asin=%s: %s", asin, e)
-        # 429 gelince cache'e boş değil None koy ki bir sonraki ISBN beklesin
         await asyncio.sleep(2.0)
         return {}
 

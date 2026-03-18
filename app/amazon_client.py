@@ -248,3 +248,141 @@ def format_telegram(data: Dict[str, Any]) -> str:
         msg += f"Buybox: {bb_str}\n"
 
     return msg
+
+
+# ── SP-API getCatalogItem — BSR + metadata ─────────────────────────────────────
+# Endpoint: GET /catalog/2022-04-01/items/{asin}
+# Rate limit: 2 req/sn (daha cömert than getItemOffers)
+# BSR: SalesRanks[] field içinde geliyor
+# Ücretsiz, mevcut credentials ile çalışır
+
+_catalog_cache: Dict[str, tuple] = {}
+_CATALOG_TTL = 3600 * 2  # 2 saat — BSR saatlik güncellenir
+
+
+async def get_catalog_item(asin: str) -> Dict[str, Any]:
+    """
+    SP-API Catalog Items API v2022-04-01 ile BSR + metadata çek.
+
+    Returns:
+        {
+          "bsr":          int | None,   # Books kategorisi BSR
+          "bsr_all":      int | None,   # tüm kategoriler BSR (en iyi)
+          "title":        str,
+          "authors":      list[str],
+          "publisher":    str,
+          "pub_date":     str,
+          "page_count":   int | None,
+          "binding":      str,          # Paperback / Hardcover / etc.
+          "list_price":   float | None, # yayıncı liste fiyatı
+        }
+    """
+    now = time.time()
+    if asin in _catalog_cache:
+        ts, data = _catalog_cache[asin]
+        if now - ts < _CATALOG_TTL:
+            return data
+
+    s = get_settings()
+    mkt = s.spapi_marketplace_id.strip()
+    endpoint = s.spapi_endpoint.rstrip("/")
+    url = f"{endpoint}/catalog/2022-04-01/items/{asin}"
+
+    import urllib.parse
+    qs = urllib.parse.urlencode({
+        "marketplaceIds": mkt,
+        "includedData": "attributes,salesRanks,summaries",
+    })
+    full_url = f"{url}?{qs}"
+    host = full_url.split("/")[2]
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            access_token = await _get_lwa_token(client)
+            base_headers = {
+                "host": host,
+                "x-amz-access-token": access_token,
+                "content-type": "application/json",
+            }
+            signed = await asyncio.to_thread(_sign_request, "GET", full_url, base_headers)
+
+            r = await client.get(full_url, headers=signed, timeout=15)
+            if r.status_code == 429:
+                logger.warning("getCatalogItem 429 asin=%s", asin)
+                return {}
+            if r.status_code == 404:
+                logger.debug("getCatalogItem 404 asin=%s", asin)
+                return {}
+            if r.status_code != 200:
+                logger.debug("getCatalogItem HTTP %d asin=%s", r.status_code, asin)
+                return {}
+
+            data = r.json()
+
+            # ── Sales Ranks ──────────────────────────────────────────────────
+            bsr_books = None
+            bsr_all   = None
+            for rank_obj in (data.get("salesRanks") or []):
+                # rank_obj: {"marketplaceId": ..., "classificationRanks": [...], "displayGroupRanks": [...]}
+                for rank in (rank_obj.get("classificationRanks") or []) + (rank_obj.get("displayGroupRanks") or []):
+                    title_lower = (rank.get("title") or "").lower()
+                    rk = rank.get("rank")
+                    if rk is None:
+                        continue
+                    rk = int(rk)
+                    if bsr_all is None or rk < bsr_all:
+                        bsr_all = rk
+                    if "book" in title_lower:
+                        if bsr_books is None or rk < bsr_books:
+                            bsr_books = rk
+
+            # ── Attributes ───────────────────────────────────────────────────
+            attrs = data.get("attributes") or {}
+
+            def _attr(key, idx=0, field="value"):
+                vals = attrs.get(key) or []
+                return vals[idx].get(field) if vals else None
+
+            title      = _attr("item_name")
+            publisher  = _attr("publisher")
+            pub_date   = _attr("publication_date") or _attr("item_publication_date")
+            page_count = _attr("number_of_pages")
+            binding    = _attr("binding")
+            list_price = None
+            lp_raw = attrs.get("list_price") or []
+            if lp_raw:
+                amt = lp_raw[0].get("amount")
+                if amt: list_price = float(amt)
+
+            authors = []
+            for c in (attrs.get("contributors") or []):
+                if c.get("role", {}).get("value", "").lower() == "author":
+                    name = (c.get("name") or [{}])[0].get("value", "")
+                    if name: authors.append(name)
+
+            # ── Summaries fallback ────────────────────────────────────────────
+            for s_obj in (data.get("summaries") or []):
+                if not title:
+                    title = s_obj.get("itemName")
+                if not publisher:
+                    publisher = s_obj.get("brand")
+
+            result = {
+                "bsr":        bsr_books,
+                "bsr_all":    bsr_all,
+                "title":      title or "",
+                "authors":    authors,
+                "publisher":  publisher or "",
+                "pub_date":   pub_date or "",
+                "page_count": int(page_count) if page_count else None,
+                "binding":    binding or "",
+                "list_price": list_price,
+            }
+            _catalog_cache[asin] = (now, result)
+            if bsr_books:
+                logger.info("getCatalogItem asin=%s bsr_books=%d", asin, bsr_books)
+            return result
+
+    except Exception as e:
+        logger.warning("getCatalogItem error asin=%s: %s", asin, e)
+        return {}
