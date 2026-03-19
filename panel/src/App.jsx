@@ -1119,9 +1119,13 @@ const fmtReason = (raw) => {
     "ebay_not_configured":       "eBay ayarlanmamış",
     "no_viable_condition_match": "Kondisyon eşleşmesi yok",
   };
-  // policy_filtered(recall):açıklama → sadece açıklama
-  const policyMatch = raw.match(/^policy_filtered\([^)]+\):(.+)$/);
-  if (policyMatch) return "Filtre: " + policyMatch[1].replace(/_/g," ");
+  // shipping_unknown — eBay'de ilan VAR ama kargo CALCULATED
+  if (raw.startsWith("shipping_unknown:")) return "⚠️ Kargo bilinmiyor — ilan var ama fiyat alınamadı";
+  // policy_filtered
+  if (raw.startsWith("policy_filtered(recall)")) return "⚠️ Kargo bilinmiyor (Recall modunda)";
+  const policyMatch = raw.match(/^policy_filtered\(([^)]+)\):(.+)$/);
+  if (policyMatch) return "Eşleşme yok (" + policyMatch[1] + ") — Recall dene";
+  if (raw.startsWith("no_valid_offers:")) return "Geçerli ilan yok";
   // ebay_error:... → kısa
   if (raw.startsWith("ebay_error:")) return "eBay hatası";
   // invalid_isbn:... → kısa

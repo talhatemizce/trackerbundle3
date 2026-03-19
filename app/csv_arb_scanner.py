@@ -388,10 +388,13 @@ async def _get_ebay_offers(isbn: str, filters: "ScanFilters | None" = None) -> L
             logger.debug("eBay browse_search_isbn isbn=%s returned 0 items", isbn)
 
         offers = []
+        price_skipped = 0   # shipping unknown → fiyat çıkarılamadı
+        policy_skipped = 0  # policy filter → dropped
         for it in (items or []):
             total = item_total_price(it, calc_ship_est=calc_est)
             if total is None or total <= 0:
                 logger.debug("eBay item_total_price=None isbn=%s item=%s", isbn, it.get("itemId","?"))
+                price_skipped += 1
                 continue
             # Browse API item_summary: condition = plain string, conditionId = plain string
             # e.g. {"condition": "Very Good", "conditionId": "4000"}
@@ -435,9 +438,11 @@ async def _get_ebay_offers(isbn: str, filters: "ScanFilters | None" = None) -> L
             policy_val = match_policy.value if hasattr(match_policy, "value") else str(match_policy)
             if policy_val == "precision" and mq != "CONFIRMED":
                 logger.debug("isbn=%s item=%s DROPPED (precision policy, mq=%s)", isbn, it.get("itemId","?"), mq)
+                policy_skipped += 1
                 continue
             elif policy_val == "balanced" and mq not in ("CONFIRMED", "UNVERIFIED_SUPER_DEAL"):
                 logger.debug("isbn=%s item=%s DROPPED (balanced policy, mq=%s)", isbn, it.get("itemId","?"), mq)
+                policy_skipped += 1
                 continue
             # recall: keep everything
 
@@ -643,9 +648,17 @@ async def _scan_one(
             reason = f"ebay_error:{short}"
         elif (ebay_offers is not None and len([o for o in (ebay_offers or []) if "_error" not in o]) == 0
               and filters and hasattr(filters, "isbn_match_policy")):
-            # eBay döndü ama policy tarafından drop edildi
             policy_val = filters.isbn_match_policy.value if hasattr(filters.isbn_match_policy, "value") else str(filters.isbn_match_policy)
-            reason = f"policy_filtered({policy_val}):tüm_ilanlar_doğrulanamadı — 'recall' modunu dene"
+            # raw_items: eBay'den dönen ham ilan sayısı (hata olmayanlar)
+            raw_items = [o for o in (ebay_offers or []) if "_error" not in o]
+            if policy_val == "recall":
+                # Recall'da policy drop olamaz → shipping sorunu
+                reason = "shipping_unknown:eBay'de ilan var ama kargo fiyatı alınamadı (CALCULATED shipping — env: CALCULATED_SHIP_ESTIMATE_USD)"
+            elif raw_items:
+                # İlanlar vardı ama policy drop etti
+                reason = f"policy_filtered({policy_val}):{len(raw_items)} ilan eşleşme politikasına uymadı — Recall modunu dene"
+            else:
+                reason = f"no_valid_offers:eBay ilan yok veya tümü elendi ({policy_val})"
         r = ArbResult(isbn=isbn, asin=asin, source="", source_condition="",
                       buy_price=0, amazon_sell_price=None, buybox_type=None, match_type=None)
         r.reason = reason
