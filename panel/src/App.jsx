@@ -88,6 +88,15 @@ const SOFT = {
 };
 
 const BUILD_ID = "2026-03-02-v20-soft-theme";
+// Build zamanı — Vite tarafından inject edilir (her npm run build'de güncellenir)
+const BUILD_TIME = (() => {
+  try {
+    const iso = __BUILD_TIME__;          // "2026-03-19T14:32:00.000Z"
+    const d = new Date(iso);
+    const pad = n => String(n).padStart(2,"0");
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+  } catch { return ""; }
+})();
 
 const dollar = (v) => v != null ? `$${Math.round(v)}` : "—";
 const isbn13to10 = (isbn) => {
@@ -4574,7 +4583,10 @@ function AppReal() {
             <span style={{fontFamily:"var(--sans)",fontWeight:600,fontSize:15}}>TrackerBundle</span>
             <span style={{color:C.muted3}}>/</span>
             <span style={{color:C.muted,fontSize:12}}>eBay Panel</span>
-            <span style={{fontSize:9,color:C.muted3,letterSpacing:"0.05em",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"1px 5px",fontFamily:"var(--mono)"}}>{BUILD_ID}</span>
+            <span style={{fontSize:9,color:C.muted3,letterSpacing:"0.05em",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:3,padding:"1px 5px",fontFamily:"var(--mono)",display:"flex",flexDirection:"column",gap:0,lineHeight:"14px"}}>
+  <span>{BUILD_ID}</span>
+  {BUILD_TIME&&<span style={{color:C.muted3,fontSize:8}}>{BUILD_TIME}</span>}
+</span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {status?.ok
@@ -4695,7 +4707,7 @@ function AppReal() {
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
                         <span style={{color:C.muted}}>Build</span>
-                        <span style={{color:C.text,fontFamily:"var(--mono)",fontSize:10}}>{BUILD_ID}</span>
+                        <span style={{color:C.text,fontFamily:"var(--mono)",fontSize:10}}>{BUILD_ID}{BUILD_TIME&&<span style={{color:C.muted,fontSize:9,marginLeft:6}}>{BUILD_TIME}</span>}</span>
                       </div>
                       <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
                         <span style={{color:C.muted}}>API</span>
