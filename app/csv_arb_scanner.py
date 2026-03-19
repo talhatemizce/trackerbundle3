@@ -140,6 +140,10 @@ class ArbResult:
     buyback_cash: Optional[float] = None        # en iyi buyback teklifi ($)
     buyback_trend: Optional[str] = None         # "rising"|"falling"|"stable"|"unknown"
     buyback_trend_note: Optional[str] = None    # açıklama
+    # eBay match metadata — stats counting için gerekli
+    match_quality: str = ""          # CONFIRMED | UNVERIFIED_SUPER_DEAL | UNVERIFIED_KEYWORD | UNVERIFIED_INPUT
+    match_reason: str = ""           # gtins_match | keyword_only | gtin_search | etc.
+    query_mode: str = ""             # gtin | keyword_fallback | csv_input
     # NYT Bestseller sinyali
     nyt_bestseller: bool = False                 # NYT listesinde yer aldı mı?
     nyt_weeks: int = 0                           # toplam liste haftası
@@ -700,6 +704,9 @@ async def _scan_one(
             ebay_description=o.get("description",""),
             ebay_seller_name=o.get("seller_name",""),
             ebay_seller_feedback=o.get("seller_feedback"),
+            match_quality=o.get("match_quality",""),
+            match_reason=o.get("match_reason",""),
+            query_mode=o.get("query_mode",""),
         )
 
         sell_price, bb_type, match_type, reason = _calc_profit_strict(
@@ -854,11 +861,14 @@ async def scan_isbn_list(
 
     # ── Observability counters ────────────────────────────────────────────────
     all_results = accepted + rejected
-    gtin_hits            = sum(1 for r in all_results if r.get("query_mode") == "gtin")
-    keyword_fallback_hits= sum(1 for r in all_results if r.get("query_mode") == "keyword_fallback")
-    confirmed_count      = sum(1 for r in all_results if r.get("match_quality") == "CONFIRMED")
-    unverified_count     = sum(1 for r in all_results if r.get("match_quality") in ("UNVERIFIED_SUPER_DEAL","UNVERIFIED_KEYWORD"))
-    invalid_input_count  = sum(1 for r in all_results if r.get("match_quality") == "UNVERIFIED_INPUT")
+    # match_quality / query_mode now on ArbResult dataclass fields (not only dicts)
+    def _mq(r): return r.match_quality if hasattr(r, "match_quality") else (r.get("match_quality","") if isinstance(r, dict) else "")
+    def _qm(r): return r.query_mode    if hasattr(r, "query_mode")    else (r.get("query_mode","")    if isinstance(r, dict) else "")
+    gtin_hits            = sum(1 for r in all_results if _qm(r) == "gtin")
+    keyword_fallback_hits= sum(1 for r in all_results if _qm(r) == "keyword_fallback")
+    confirmed_count      = sum(1 for r in all_results if _mq(r) == "CONFIRMED")
+    unverified_count     = sum(1 for r in all_results if _mq(r) in ("UNVERIFIED_SUPER_DEAL","UNVERIFIED_KEYWORD"))
+    invalid_input_count  = sum(1 for r in all_results if _mq(r) == "UNVERIFIED_INPUT")
 
     # Count amazon_unavailable
     amazon_unavailable = sum(

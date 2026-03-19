@@ -778,11 +778,38 @@ async def browse_search_isbn(
             gtin_items = await _browse_gtin_search(client, token, isbn13, limit)
             if gtin_items:
                 gtin_hit = True
-                # Tag items as GTIN-sourced (CONFIRMED quality)
+                # GTIN search returns catalog-matched items — but eBay catalog data
+                # can be wrong (wrong ISBN mapped to different book).
+                # Cross-check: if item has localizedAspects or product.gtins we can
+                # verify; if not, downgrade to UNVERIFIED_SUPER_DEAL (still kept,
+                # but not blindly trusted).
                 for it in gtin_items:
                     it["_query_mode"] = "gtin"
-                    it["_match_quality"] = "CONFIRMED"
-                    it["_verification_reason"] = "gtin_match"
+                    it["_verification_reason"] = "gtin_search"
+                    # Check if item carries any ISBN identifier we can verify
+                    item_isbns: set = set()
+                    for asp in (it.get("localizedAspects") or []):
+                        if asp.get("name", "").upper() in ("ISBN", "EAN", "GTIN", "ISBN-13", "ISBN-10"):
+                            item_isbns.add(str(asp.get("value", "")).replace("-", "").upper())
+                    # Also check product field if present
+                    for g in ((it.get("product") or {}).get("gtins") or []):
+                        item_isbns.add(str(g).replace("-", "").upper())
+
+                    if item_isbns:
+                        # Have ISBN evidence — verify it matches
+                        our_isbns = {v.replace("-","").upper() for v in variants}
+                        if item_isbns & our_isbns:
+                            it["_match_quality"] = "CONFIRMED"
+                            it["_verification_reason"] = "gtin_isbn_verified"
+                        else:
+                            # eBay returned item but identifiers don't match our ISBN
+                            it["_match_quality"] = "UNVERIFIED_SUPER_DEAL"
+                            it["_verification_reason"] = "gtin_isbn_mismatch"
+                    else:
+                        # No identifier evidence in summary — trust GTIN search but mark
+                        # as CONFIRMED since eBay filtered by gtin parameter
+                        it["_match_quality"] = "CONFIRMED"
+                        it["_verification_reason"] = "gtin_search_no_evidence"
                 combined = gtin_items
                 logger.info("isbn=%s GTIN search: %d items", isbn_clean, len(combined))
         except Exception as e:

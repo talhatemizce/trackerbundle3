@@ -197,7 +197,7 @@ def compute_confidence(result: dict) -> int:
         score += 8  # buybox suppressed ama fiyat var
 
     # Sub-condition netliği
-    sub = (result.get("ebay_sub_condition") or "").lower()
+    sub = (result.get("source_condition") or result.get("ebay_sub_condition") or "").lower()
     if sub in ("brand_new", "like_new", "very_good", "good", "acceptable"):
         score += 15
     elif sub == "used_all":
@@ -211,8 +211,9 @@ def compute_confidence(result: dict) -> int:
 
     # Amazon self-seller değil — SADECE veri varsa.
     # is_amazon_selling hiç set edilmemişse → bilinmiyor, puan yok.
-    if "is_amazon_selling" in result and result["is_amazon_selling"] is not None:
-        if not result["is_amazon_selling"]:
+    _amz_selling = result.get("amazon_is_sold_by_amazon") if "amazon_is_sold_by_amazon" in result else result.get("is_amazon_selling")
+    if _amz_selling is not None:
+        if not _amz_selling:
             score += 15
 
     # Cross-condition fallback yok
@@ -223,7 +224,12 @@ def compute_confidence(result: dict) -> int:
 
     # Rakip sayısı (ilgili kondisyon)
     cond = result.get("source_condition", "used")
+    # Support both field name contracts:
+    # Scanner emits: amazon_seller_count (total sellers)
+    # Legacy: amazon_used_count / amazon_new_count
     cnt_key = "amazon_used_count" if cond == "used" else "amazon_new_count"
+    if cnt_key not in result and "amazon_seller_count" in result:
+        cnt_key = "amazon_seller_count"
     cnt = result.get(cnt_key)
     if cnt is not None:  # None = bilinmiyor, 0 = gerçekten rakip yok
         if cnt == 0:

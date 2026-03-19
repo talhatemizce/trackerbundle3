@@ -1,24 +1,17 @@
 """
-TrackerBundle3 — Multi-LLM Router v3
-=====================================
+TrackerBundle3 — Multi-LLM Router
+==================================
 Görev tipine göre en iyi ücretsiz LLM provider'ı seç, kota dolunca geç.
 
-GÖREV → MODEL ATAMALARI (Mart 2026 — canlı API doğrulamalı):
-  reasoning   → Cerebras Qwen3-235B           (∞ kota, 30 RPM, ~2000 t/s)
-               → Groq Kimi K2 0905             (14.400/gün, 30 RPM, 262K ctx)
-               → Groq GPT-OSS-120B             (14.400/gün, 30 RPM, thinking)
-               → Groq Llama3.3-70B             (14.400/gün, 30 RPM)
-               → OR StepFun Step-3.5-Flash     (∞, 20 RPM, en güvenilir OR)
-               → OR Nemotron-3 Super 120B      (∞, 20 RPM, thinking model)
-               → Gemini Flash-Lite fallback
-
-  vision      → Gemini 2.5 Flash              (10 RPM, 500 RPD, %97 doğruluk)
-               → Gemini Flash-Lite             (15 RPM, 1500 RPD, hızlı)
-               → Groq Llama 4 Scout            (30 RPM, ⚠️ anti-contamination)
-
-  web_search  → Groq Compound                 (30 RPM, Groq hızı)
-               → Gemini 2.5 Flash              (Google Search grounding)
-               → Gemini Flash-Lite fallback
+GÖREV → MODEL ATAMALARI:
+  vision      → Gemini 2.5 Flash-Lite  (tek vision destekleyen)
+  web_search  → Gemini 2.5 Flash-Lite  (Google Search grounding)
+               → Perplexity Sonar      (web araması en iyi, $5 kredi ~5k istek)
+  reasoning   → Groq Llama3.3-70B      (14.400/gün, 30 RPM, hızlı)
+               → Cerebras Llama3.3-70B (sınırsız, 30 RPM)
+               → OpenRouter DeepSeek-V3:free  (sınırsız, 20 RPM)
+               → OpenRouter Qwen3-235B:free   (sınırsız, 20 RPM)
+               → Gemini fallback
 
 /llm/status endpoint → kota durumu, devre dışı providerlar
 """
@@ -49,69 +42,32 @@ class ProviderDef:
     priority: int             # düşük = yüksek öncelik
     supports_vision: bool = False
     extra_headers: Dict[str, str] = field(default_factory=dict)
-    timeout_s: int = 60       # provider-specific timeout (OpenRouter: 12s)
 
-
-# ── OpenRouter ortak headerlar ─────────────────────────────────────────────
-_OR_HEADERS = {"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"}
 
 PROVIDERS: List[ProviderDef] = [
-    # ══════════════════════════════════════════════════════════════════════════
-    # Strateji: GÜVENİLİRLİK × ZEKA (Mart 2026, canlı test sonuçları)
-    #
-    # Reasoning:  Cerebras 235B (∞, hızlı, en akıllı) → Groq K2 0905 (262K)
-    #             → Groq GPT-OSS 120B → Groq 70B → OR StepFun → OR Nemotron
-    #             → Gemini Lite fallback
-    # Vision:     Gemini 2.5 Flash (%97) → Gemini Lite (1500 RPD)
-    #             → Groq Scout (⚠️ training contamination)
-    # Web search: Groq Compound (30 RPM) → Gemini Flash (Google grounding)
-    #
-    # Önemli kararlar:
-    #   • Cerebras P1: Qwen3-235B ONLY model left (llama-3.3-70b REMOVED from Cerebras!)
-    #   • OpenRouter DEMOTED: 30-120s kuyruk + deprioritize @ peak
-    #   • OpenRouter timeout: 12s (60s yerine) — kuyruk tuzağını önle
-    #   • Gemini 2.5 Flash: thinking model, vision=800 max_tokens
-    #   • Groq Scout: anti-contamination prompt gerekli (listing_verifier)
-    #   • GPT-OSS-120B & Nemotron: thinking models, reasoning token overhead
-    #
-    # Para: $0.  Tüm providerlar ücretsiz tier.
-    # ══════════════════════════════════════════════════════════════════════════
-
-    # ── 1. REASONING ──────────────────────────────────────────────────────
-
-    # Cerebras Qwen3-235B — EN AKILLI + EN GÜVENİLİR (235B MoE, ∞ kota)
-    # NOT: Cerebras'tan llama-3.3-70b kaldırıldı (404). Sadece bu + 8B kaldı.
-    # Thinking model DEĞİL: reasoning_tokens=0, doğrudan content döner.
+    # Vision → sadece Gemini
     ProviderDef(
-        name="cerebras",
-        base_url="https://api.cerebras.ai/v1",
-        model="qwen-3-235b-a22b-instruct-2507",
-        tasks=["reasoning"],
-        rpm=30, rpd=None,
-        auth_env_key="cerebras_api_key",
+        name="gemini",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        model="gemini-2.5-flash-lite",
+        tasks=["vision", "web_search", "reasoning"],
+        rpm=15, rpd=1500,
+        auth_env_key="gemini_api_key",
+        priority=9,
+        supports_vision=True,
+    ),
+    # Groq — Llama 4 Scout (vision + reasoning, ücretsiz)
+    ProviderDef(
+        name="groq_vision",
+        base_url="https://api.groq.com/openai/v1",
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        tasks=["vision", "reasoning"],
+        rpm=30, rpd=14400,
+        auth_env_key="groq_api_key",
         priority=1,
+        supports_vision=True,
     ),
-    # Groq Kimi K2 0905 — hızlı + güçlü (8/10, 262K ctx, yeni versiyon)
-    ProviderDef(
-        name="groq_kimi",
-        base_url="https://api.groq.com/openai/v1",
-        model="moonshotai/kimi-k2-instruct-0905",
-        tasks=["reasoning"],
-        rpm=30, rpd=14400,
-        auth_env_key="groq_api_key",
-        priority=2,
-    ),
-    # Groq GPT-OSS-120B — 120B on Groq hardware (thinking model: reasoning tokens)
-    ProviderDef(
-        name="groq_gpt_oss",
-        base_url="https://api.groq.com/openai/v1",
-        model="openai/gpt-oss-120b",
-        tasks=["reasoning"],
-        rpm=30, rpd=14400,
-        auth_env_key="groq_api_key",
-        priority=3,
-    ),
-    # Groq Llama 3.3 70B — battle-tested hızlı fallback (7/10)
+    # Groq — Llama 3.3 70B (reasoning, hızlı, 14.4k/gün)
     ProviderDef(
         name="groq",
         base_url="https://api.groq.com/openai/v1",
@@ -119,90 +75,52 @@ PROVIDERS: List[ProviderDef] = [
         tasks=["reasoning"],
         rpm=30, rpd=14400,
         auth_env_key="groq_api_key",
+        priority=2,
+    ),
+    # Groq — GPT OSS 120B (daha büyük, reasoning fallback)
+    ProviderDef(
+        name="groq_120b",
+        base_url="https://api.groq.com/openai/v1",
+        model="moonshotai/kimi-k2-instruct",
+        tasks=["reasoning"],
+        rpm=30, rpd=14400,
+        auth_env_key="groq_api_key",
+        priority=3,
+    ),
+    # Cerebras (sınırsız, 30 RPM)
+    ProviderDef(
+        name="cerebras",
+        base_url="https://api.cerebras.ai/v1",
+        model="llama-3.3-70b",
+        tasks=["reasoning"],
+        rpm=30, rpd=None,
+        auth_env_key="cerebras_api_key",
         priority=4,
     ),
-    # OpenRouter StepFun Step-3.5-Flash — en güvenilir OR :free model (256K ctx)
-    # 12s timeout: OR kuyruk gecikmeleri 30-120s olabilir, tuzağa düşme
+    # OpenRouter DeepSeek-V3:free (sınırsız ücretsiz)
     ProviderDef(
-        name="openrouter_stepfun",
+        name="openrouter_deepseek",
         base_url="https://openrouter.ai/api/v1",
-        model="stepfun/step-3.5-flash:free",
-        tasks=["reasoning"],
+        model="deepseek/deepseek-chat-v3-0324:free",
+        tasks=["reasoning", "web_search"],
         rpm=20, rpd=None,
         auth_env_key="openrouter_api_key",
         priority=5,
-        extra_headers=_OR_HEADERS,
-        timeout_s=12,
+        extra_headers={"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"},
     ),
-    # OpenRouter Nemotron-3 Super 120B — thinking model, token overhead
+    # OpenRouter Qwen3-235B:free (en akıllı ücretsiz)
     ProviderDef(
-        name="openrouter_nemotron",
+        name="openrouter_qwen",
         base_url="https://openrouter.ai/api/v1",
-        model="nvidia/nemotron-3-super-120b-a12b:free",
+        model="qwen/qwen3-235b-a22b:free",
         tasks=["reasoning"],
         rpm=20, rpd=None,
         auth_env_key="openrouter_api_key",
         priority=6,
-        extra_headers=_OR_HEADERS,
-        timeout_s=12,
+        extra_headers={"HTTP-Referer": "https://trackerbundle3.app", "X-Title": "TrackerBundle3"},
     ),
-
-    # ── 2. VISION ─────────────────────────────────────────────────────────
-
-    # Gemini 2.5 Flash — EN İYİ vision (%97 title doğruluk, 0.75 mAP)
-    # Thinking model: vision için max_tokens=800 kullanılmalı
-    # 10 RPM, 500 RPD — kitap doğrulama için yeterli
-    ProviderDef(
-        name="gemini_flash",
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-        model="gemini-2.5-flash",
-        tasks=["vision", "web_search"],
-        rpm=10, rpd=500,
-        auth_env_key="gemini_api_key",
-        priority=1,
-        supports_vision=True,
-    ),
-    # Gemini Flash-Lite — yüksek hacim fallback (hızlı, düz çıktı)
-    # ⚠️ sources_checked field'ı fabrike edebilir — strip edilmeli
-    ProviderDef(
-        name="gemini_lite",
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-        model="gemini-2.5-flash-lite",
-        tasks=["vision", "web_search", "reasoning"],
-        rpm=15, rpd=1500,
-        auth_env_key="gemini_api_key",
-        priority=2,
-        supports_vision=True,
-    ),
-    # Groq Llama 4 Scout — hızlı ama ⚠️ training contamination
-    # Kitap kapağını eğitim verisinden tanımlayabilir (gerçek görselden değil)
-    # listing_verifier.py'de anti-contamination prompt eklenmeli
-    ProviderDef(
-        name="groq_vision",
-        base_url="https://api.groq.com/openai/v1",
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        tasks=["vision"],
-        rpm=30, rpd=14400,
-        auth_env_key="groq_api_key",
-        priority=3,
-        supports_vision=True,
-    ),
-
-    # ── 3. WEB SEARCH ─────────────────────────────────────────────────────
-
-    # Groq Compound — web search özellikli model (Groq hızı, 30 RPM)
-    # ~25% Perplexity Sonar'dan daha doğru (Groq iddiası)
-    # P0 çünkü web_search'te Gemini Flash'tan (P1) önce gelmeli
-    ProviderDef(
-        name="groq_compound",
-        base_url="https://api.groq.com/openai/v1",
-        model="groq/compound",
-        tasks=["web_search"],
-        rpm=30, rpd=14400,
-        auth_env_key="groq_api_key",
-        priority=0,
-    ),
-    # Gemini Flash + Lite zaten web_search task'ını da destekliyor (yukarıda tanımlı)
+    # Perplexity kaldırıldı — free tier yok, Pro aboneliği ($20/ay) şart
+    # SambaNova kaldırıldı — $5 expiring credit, gerçek free tier değil
 ]
 
 
@@ -288,8 +206,7 @@ async def _call_openai_compat(
     json_mode: bool = False,
 ) -> str:
     """OpenAI-uyumlu /chat/completions endpoint'i çağır, ham text döndür.
-    image_b64 varsa son user mesajına vision content ekler.
-    Provider-specific timeout kullanır (OpenRouter: 12s, diğerleri: 60s).
+    image_b64 varsa son user mesajına vision content ekler (Llama 4 Scout destekler).
     """
     # Vision: son user mesajını multimodal content'e çevir
     if image_b64 and messages:
@@ -321,8 +238,7 @@ async def _call_openai_compat(
     # Skip for vision calls — response_format conflicts with image input on some providers
     if json_mode and not image_b64:
         payload["response_format"] = {"type": "json_object"}
-    timeout = defn.timeout_s
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             f"{defn.base_url}/chat/completions",
             json=payload,
@@ -336,10 +252,7 @@ async def _call_openai_compat(
         if r.status_code != 200:
             raise RuntimeError(f"{defn.name} HTTP {r.status_code}: {r.text[:200]}")
     data = r.json()
-    msg = data["choices"][0]["message"]
-    # Thinking models (GPT-OSS-120B, Nemotron, Gemini Flash) may put
-    # chain-of-thought in "reasoning" and leave "content" null.
-    return msg.get("content") or msg.get("reasoning") or ""
+    return data["choices"][0]["message"]["content"]
 
 
 class _RateLimitError(Exception):
@@ -354,26 +267,23 @@ class _AuthError(Exception):
 
 async def _call_gemini_native(
     api_key: str,
-    model: str,
     system_prompt: str,
     user_prompt: str,
-    max_tokens: int = 1200,
     image_b64: Optional[str] = None,
     use_search: bool = False,
     json_mode: bool = False,
 ) -> str:
-    """Gemini native API — vision ve Google Search grounding destekli.
-    Model dinamik: gemini-2.5-flash (vision-primary) veya gemini-2.5-flash-lite (fallback).
-    """
+    """Gemini native API — vision ve Google Search grounding destekli."""
     GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-    url = f"{GEMINI_BASE}/{model}:generateContent?key={api_key}"
+    MODEL = "gemini-2.5-flash-lite"
+    url = f"{GEMINI_BASE}/{MODEL}:generateContent?key={api_key}"
 
     parts: List[Dict] = []
     if image_b64:
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64}})
     parts.append({"text": user_prompt})
 
-    gen_config: Dict[str, Any] = {"temperature": 0.1, "maxOutputTokens": max_tokens}
+    gen_config: Dict[str, Any] = {"temperature": 0.1, "maxOutputTokens": 1200}
     # JSON mode: Gemini enforces JSON output via responseMimeType (skip for vision+search)
     if json_mode and not image_b64 and not use_search:
         gen_config["responseMimeType"] = "application/json"
@@ -391,7 +301,7 @@ async def _call_gemini_native(
             retry_after = float(r.headers.get("Retry-After", 60))
             raise _RateLimitError(retry_after)
         if r.status_code != 200:
-            raise RuntimeError(f"Gemini({model}) {r.status_code}: {r.text[:200]}")
+            raise RuntimeError(f"Gemini {r.status_code}: {r.text[:200]}")
     # Extract text from Gemini response format
     data = r.json()
     try:
@@ -443,12 +353,9 @@ async def route(
 
             # json_mode only for reasoning tasks (not vision, not web_search)
             _json_mode = json_mode and task == "reasoning"
-            if defn.name.startswith("gemini"):
-                # Gemini 2.5 Flash = thinking model → vision için daha fazla token
-                _max = max(max_tokens, 800) if (task == "vision" and defn.model == "gemini-2.5-flash") else max_tokens
+            if defn.name == "gemini":
                 text = await _call_gemini_native(
-                    api_key, defn.model, system_prompt, user_prompt,
-                    max_tokens=_max,
+                    api_key, system_prompt, user_prompt,
                     image_b64=image_b64,
                     use_search=(task == "web_search"),
                     json_mode=_json_mode,
@@ -474,11 +381,6 @@ async def route(
             state.backoff_until = time.time() + 86400  # auth hatası → 24 saat devre dışı
             last_error = e
             logger.error("router: %s auth error — devre dışı: %s", defn.name, e)
-
-        except (httpx.TimeoutException, asyncio.TimeoutError) as e:
-            state.record_error()
-            last_error = e
-            logger.warning("router: %s timeout (%ds) — %s, next provider", defn.name, defn.timeout_s, e)
 
         except Exception as e:
             state.record_error()

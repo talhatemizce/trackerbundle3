@@ -25,11 +25,18 @@ def test_profit_with_used_buybox():
     assert r.profit > 0
 
 def test_profit_fallback_to_new_when_no_used():
-    """When no used buybox, falls back to new — this is by design for generic /alerts/details."""
+    """Legacy mode (source_condition='') falls back to new — used for /alerts/details."""
     amz = _make_amazon(new_bb=50.0)
-    r = calculate(10.0, amz, DEFAULT_FEES)
+    # Explicit legacy mode: empty source_condition enables used→new fallback
+    r = calculate(10.0, amz, DEFAULT_FEES, source_condition="")
     assert r is not None
     assert "new" in r.sell_source
+
+def test_profit_no_fallback_when_condition_aware():
+    """With source_condition='used' and no used buybox → None (no false ROI)."""
+    amz = _make_amazon(new_bb=50.0)  # only new buybox, no used
+    r = calculate(10.0, amz, DEFAULT_FEES, source_condition="used")
+    assert r is None  # P0-002 fix: used buy cannot fake ROI from new price
 
 def test_profit_returns_none_when_no_amazon():
     r = calculate(10.0, {}, DEFAULT_FEES)

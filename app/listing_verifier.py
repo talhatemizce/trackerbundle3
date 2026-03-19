@@ -394,18 +394,12 @@ async def _verify_image_vision(
             pass
 
         sys_prompt = """You are a book cover verification expert.
-
-CRITICAL: Base your answer ONLY on the visible text and visual elements in the provided image.
-Do NOT use your training data or prior knowledge about this ISBN/book.
-Look at what is ACTUALLY VISIBLE on the cover: title text, author name, edition info, cover art.
-If you cannot read the text clearly, say UNCERTAIN — do NOT guess from memory.
-
 Your job: examine the image and determine if it matches the expected book.
 Reply ONLY with this JSON (no markdown):
 {
   "verdict": "MATCH or MISMATCH or UNCERTAIN or STOCK_PHOTO",
   "confidence": 0-100,
-  "notes": "1-2 sentences about what you see IN THE IMAGE",
+  "notes": "1-2 sentences about what you see",
   "title_visible": true/false,
   "author_visible": true/false,
   "is_stock_photo": true/false,

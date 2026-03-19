@@ -60,17 +60,23 @@ def calculate(
     ebay_total: float,
     amazon_data: Optional[dict],
     fees: FeeConfig = DEFAULT_FEES,
+    source_condition: str = "used",   # "used" | "new" — cross-condition fallback kontrolü
 ) -> Optional[ProfitResult]:
     """
     amazon_data: /decide/asin veya /alerts/details'ten gelen amazon blob.
     Şema: {"used": {"buybox": {"total": X}, "top2": [...]}, "new": {...}}
-    
+
+    source_condition: eBay'deki satın alma kondisyonu.
+      "used" → önce used buybox, new'e fallback YAPMA (yanlış ROI önler)
+      "new"  → önce new buybox, used'a fallback YAPMA
+      Bu parametre verilmezse eski davranış (used→new fallback) korunur.
+
     Returns None if sell_price cannot be determined.
     """
     if ebay_total <= 0:
         return None
 
-    sell_price, sell_source = _extract_sell_price(amazon_data)
+    sell_price, sell_source = _extract_sell_price(amazon_data, source_condition)
     if sell_price is None:
         return None
 
@@ -95,11 +101,35 @@ def calculate(
     )
 
 
-def _extract_sell_price(amazon_data: Optional[dict]) -> tuple[Optional[float], str]:
-    """Priority: used buybox → used top1 → new buybox → new top1."""
+def _extract_sell_price(
+    amazon_data: Optional[dict],
+    source_condition: str = "used",
+) -> tuple[Optional[float], str]:
+    """
+    Sell price extraction — condition-aware.
+
+    source_condition="used": only used buybox/top1, NO new fallback
+    source_condition="new":  only new buybox/top1, NO used fallback
+    source_condition="":     legacy behavior — used first, then new fallback
+    """
     if not amazon_data:
         return None, "unknown"
 
+    # Condition-aware: sadece ilgili kondisyon
+    if source_condition in ("used", "new"):
+        section = source_condition
+        label_bb  = f"{section}_buybox"
+        label_top = f"{section}_top1"
+        s = amazon_data.get(section) or {}
+        bb = s.get("buybox")
+        if bb and bb.get("total"):
+            return float(bb["total"]), label_bb
+        top2 = s.get("top2") or []
+        if top2 and top2[0].get("total"):
+            return float(top2[0]["total"]), label_top
+        return None, "unknown"  # cross-condition fallback YOK
+
+    # Legacy fallback (source_condition="" veya bilinmiyor): used → new
     for section, label_bb, label_top in [
         ("used", "used_buybox", "used_top1"),
         ("new",  "new_buybox",  "new_top1"),
