@@ -91,10 +91,16 @@ const BUILD_ID = "2026-03-02-v20-soft-theme";
 // Build zamanı — Vite tarafından inject edilir (her npm run build'de güncellenir)
 const BUILD_TIME = (() => {
   try {
-    const iso = __BUILD_TIME__;          // "2026-03-19T14:32:00.000Z"
+    const iso = __BUILD_TIME__;
     const d = new Date(iso);
-    const pad = n => String(n).padStart(2,"0");
-    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+    // New York saati (ET — DST otomatik)
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+    const parts = Object.fromEntries(fmt.formatToParts(d).map(p => [p.type, p.value]));
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ET`;
   } catch { return ""; }
 })();
 
@@ -1093,6 +1099,50 @@ function ScanHistoryTab({ C, addCandidate, candidates=[] }) {
   );
 }
 
+
+// ── Rejection reason → okunabilir Türkçe ──────────────────────────────────
+const fmtReason = (raw) => {
+  if (!raw) return "—";
+  const LABELS = {
+    "no_ebay_listings":          "eBay'de ilan yok",
+    "amazon_unavailable":        "Amazon fiyatı alınamadı",
+    "missing_used_buybox":       "Amazon used buybox yok",
+    "missing_new_buybox":        "Amazon new buybox yok",
+    "roi_below":                 "ROI yetersiz",
+    "profit_below":              "Kâr yetersiz",
+    "buy_price_above":           "Alım fiyatı çok yüksek",
+    "amazon_price_below":        "Amazon fiyatı çok düşük",
+    "amazon_price_above":        "Amazon fiyatı çok yüksek",
+    "buy_ratio_above":           "Alım/satış oranı yüksek",
+    "invalid_isbn_or_not_978":   "Geçersiz ISBN",
+    "ebay_token_error":          "eBay token hatası",
+    "ebay_not_configured":       "eBay ayarlanmamış",
+    "no_viable_condition_match": "Kondisyon eşleşmesi yok",
+  };
+  // policy_filtered(recall):açıklama → sadece açıklama
+  const policyMatch = raw.match(/^policy_filtered\([^)]+\):(.+)$/);
+  if (policyMatch) return "Filtre: " + policyMatch[1].replace(/_/g," ");
+  // ebay_error:... → kısa
+  if (raw.startsWith("ebay_error:")) return "eBay hatası";
+  // invalid_isbn:... → kısa
+  if (raw.startsWith("invalid_isbn:")) return "Geçersiz ISBN";
+  // roi_below_X → ROI < X%
+  const roiM = raw.match(/roi_below_([\d.]+)/);
+  if (roiM) return `ROI < %${roiM[1]}`;
+  // profit_below_X
+  const profM = raw.match(/profit_below_([\d.]+)/);
+  if (profM) return `Kâr < $${profM[1]}`;
+  // buy_price_above_X
+  const buyM = raw.match(/buy_price_above_([\d.]+)/);
+  if (buyM) return `Alım > $${buyM[1]}`;
+  // amazon_price_below_X
+  const amzLM = raw.match(/amazon_price_below_([\d.]+)/);
+  if (amzLM) return `Amazon < $${amzLM[1]}`;
+  // Direct label lookup
+  if (LABELS[raw]) return LABELS[raw];
+  // Fallback: underscores → spaces, capitalize
+  return raw.replace(/_/g," ").replace(/^./,s=>s.toUpperCase());
+};
 function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[], addCandidate, removeCandidate, saveCandidates, push, isbns: watchlistIsbns=[], addIsbn }) {
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
@@ -2228,9 +2278,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                             </td>
                           )}
                           {activeView==="rejected"&&(
-                            <td style={{padding:"7px 10px", color:C.muted, fontSize:10, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}
+                            <td style={{padding:"7px 10px", color:C.muted, fontSize:10, maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}
                               title={r.reason}>
-                              {r.reason}
+                              {fmtReason(r.reason)}
                             </td>
                           )}
                           {activeView==="rejected"&&(
