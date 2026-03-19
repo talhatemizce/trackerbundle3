@@ -1294,14 +1294,30 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
       try {
         const pd = await req("/discover/csv-arb/progress/" + jid, {}, 10000);
         if (!pd.ok) return;
+        // progress güncelle
         setScanJob(p => ({...(p||{}), progress: {done:pd.progress, total:pd.total, eta_s:pd.eta_s,
           status:pd.status, accepted_count:pd.accepted_count, rejected_count:pd.rejected_count}}));
+        // Tarama devam ederken partial results'ı HEMEN göster
+        if (pd.accepted && pd.accepted.length > 0) {
+          setScanJob(p => ({...(p||{}),
+            results: {
+              ok: true,
+              accepted: pd.accepted,
+              rejected: pd.rejected || [],
+              partial: pd.status !== "done",
+              stats: pd.stats || {}
+            }
+          }));
+        }
         if (pd.status === "done") {
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          // Final sonuçlar için result endpoint'i çek (tam liste)
           const rd = await req("/discover/csv-arb/result/" + jid, {}, 30000);
           if (rd.ok) setScanJob(p => ({...(p||{}), results: rd, scanning: false}));
+          else setScanJob(p => ({...(p||{}), scanning: false}));
         } else if (pd.status === "error") {
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          // Hata olsa bile partial results kalsın
           setScanJob(p => ({...(p||{}), scanning: false}));
         }
       } catch(e) {}
@@ -1806,6 +1822,16 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
     {/* Sub-tab: Results */}
     {discoverSubTab==="results" && (
       <div style={{paddingTop:16}}>
+        {results?.partial && (
+          <div style={{
+            padding:"6px 12px", marginBottom:8, borderRadius:6,
+            background:"#f97316" + "20", border:"1px solid #f97316" + "40",
+            fontSize:11, color:"#f97316", display:"flex", alignItems:"center", gap:6
+          }}>
+            ⏳ Tarama devam ediyor — <b>{(results.accepted||[]).length}</b> sonuç şimdiye kadar.
+            Tarama tamamlandığında tam liste gelecek.
+          </div>
+        )}
         {!results && !scanning && (
           <div style={{textAlign:"center", paddingTop:80, color:C.muted3, fontSize:13}}>
             <div style={{fontSize:32, marginBottom:12}}>🔍</div>

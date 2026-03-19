@@ -91,7 +91,27 @@ def health():
 def status():
     isbns = isbn_store.list_isbns()
     from app.core.config import get_settings as _gs2
+    import time as _t
     s = _gs2()
+
+    # BookFinder IP block durumu
+    try:
+        from app.bookfinder_client import _bookfinder_ip_blocked, _bookfinder_block_until
+        bf_blocked = _bookfinder_ip_blocked and _t.time() < _bookfinder_block_until
+        bf_block_remaining = max(0, int(_bookfinder_block_until - _t.time())) if bf_blocked else 0
+    except Exception:
+        bf_blocked = False
+        bf_block_remaining = 0
+
+    # eBay Browse API backoff durumu
+    try:
+        from app.ebay_client import _browse_backoff_until
+        ebay_backoff = _t.time() < _browse_backoff_until
+        ebay_backoff_remaining = max(0, int(_browse_backoff_until - _t.time())) if ebay_backoff else 0
+    except Exception:
+        ebay_backoff = False
+        ebay_backoff_remaining = 0
+
     return {
         "ok": True,
         "service": "trackerbundle-api",
@@ -99,6 +119,11 @@ def status():
         "has_bot_token": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
         "isbn_count": len(isbns),
         "sched_tick_seconds": int(s.sched_tick_seconds),
+        "bookfinder_enabled": getattr(s, "bookfinder_enabled", True),
+        "bookfinder_ip_blocked": bf_blocked,
+        "bookfinder_block_remaining_s": bf_block_remaining,
+        "ebay_browse_backoff": ebay_backoff,
+        "ebay_browse_backoff_remaining_s": ebay_backoff_remaining,
     }
 
 
@@ -1073,10 +1098,15 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
 
     async def _run():
         import time as _t
-        from app.scan_job_store import _jobs
+        from app.scan_job_store import _jobs, append_result
         _jobs[job_id]["status"] = "running"
         _jobs[job_id]["started_at"] = _t.time()
         try:
+            def _on_isbn_done(done: int, total: int, new_accepted: list, new_rejected: list):
+                """Her ISBN bittikçe çağrılır — anlık sonuçlar job'a eklenir."""
+                update_progress(job_id, done)
+                append_result(job_id, new_accepted, new_rejected)
+
             result = await scan_isbn_list(
                 isbns=req.isbns,
                 filters=filters,
@@ -1084,7 +1114,7 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
                 concurrency=req.concurrency,
                 isbn_buy_prices=req.isbn_buy_prices or {},
                 isbn_amazon_prices=req.isbn_amazon_prices or {},
-                on_progress=lambda done, total: update_progress(job_id, done),
+                on_progress=_on_isbn_done,
             )
             # Post-filter: amazon_unavailable olanları göster ama ayrı tut
             all_accepted = result["accepted"]
@@ -1093,7 +1123,15 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
             stats["amazon_unavailable"] = sum(1 for r in all_rejected if r.get("reason","").startswith("amazon_unavailable"))
             finish_job(job_id, all_accepted, all_rejected, stats)
         except Exception as e:
-            fail_job(job_id, str(e))
+            # Tarama yarıda kalsın — partial_accepted/rejected korunur
+            from app.scan_job_store import _jobs
+            partial_acc = _jobs.get(job_id, {}).get("partial_accepted", [])
+            partial_rej = _jobs.get(job_id, {}).get("partial_rejected", [])
+            if partial_acc or partial_rej:
+                # Partial sonuçları final olarak kaydet — kullanıcı kaybetmesin
+                finish_job(job_id, partial_acc, partial_rej, {"partial": True, "error": str(e)[:200]})
+            else:
+                fail_job(job_id, str(e))
             logger.error("csv_arb job %s failed: %s", job_id, e)
 
     background_tasks.add_task(_run)

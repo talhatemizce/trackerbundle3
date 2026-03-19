@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     # Hardcover.app API — Goodreads alternatifi, ücretsiz GraphQL
     # Kayıt: hardcover.app → Settings → API → token kopyala
     hardcover_api_key: str | None = Field(default=None, validation_alias="HARDCOVER_API_KEY")
+    # BookFinder scraping (VPS IP'si engellenirse false yap)
+    bookfinder_enabled: bool = Field(default=True, validation_alias="BOOKFINDER_ENABLED")
     # ValoreBooks Sellback API (ücretsiz — APIsupport@valorebooks.com'dan credentials al)
     valore_access_key: str | None = Field(default=None, validation_alias="VALORE_ACCESS_KEY")
     valore_secret_key: str | None = Field(default=None, validation_alias="VALORE_SECRET_KEY")

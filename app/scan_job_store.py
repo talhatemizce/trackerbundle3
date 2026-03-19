@@ -39,6 +39,8 @@ def create_job(total: int) -> str:
         "total": total,
         "accepted": [],
         "rejected": [],
+        "partial_accepted": [],   # gerçek zamanlı — her ISBN bittikçe eklenir
+        "partial_rejected": [],   # gerçek zamanlı
         "stats": {},
         "error": None,
         "created_at": time.time(),
@@ -73,6 +75,15 @@ def fail_job(job_id: str, error: str) -> None:
     job["status"] = "error"
     job["error"] = error
 
+def append_result(job_id: str, accepted: list, rejected: list) -> None:
+    """Her ISBN tarandıkça çağrılır — partial results anlık güncellenir."""
+    job = _jobs.get(job_id)
+    if not job:
+        return
+    job["partial_accepted"].extend(accepted)
+    job["partial_rejected"].extend(rejected)
+
+
 def get_job(job_id: str) -> Optional[Dict]:
     return _jobs.get(job_id)
 
@@ -80,6 +91,14 @@ def get_job_progress(job_id: str) -> Optional[Dict]:
     """Poll endpoint için — heavy lists olmadan sadece progress."""
     job = _jobs.get(job_id)
     if not job: return None
+    # Tarama devam ederken partial results, bittikten sonra final results
+    if job["status"] == "done":
+        acc = job["accepted"]
+        rej = job["rejected"]
+    else:
+        acc = job["partial_accepted"]
+        rej = job["partial_rejected"]
+
     return {
         "id": job["id"],
         "status": job["status"],
@@ -87,10 +106,12 @@ def get_job_progress(job_id: str) -> Optional[Dict]:
         "total": job["total"],
         "eta_s": job["eta_s"],
         "error": job["error"],
-        "accepted_count": len(job["accepted"]),
-        "rejected_count": len(job["rejected"]),
-        # Done olunca küçük preview (ilk 5)
-        "preview": job["accepted"][:5] if job["status"] == "done" else [],
+        "accepted_count": len(acc),
+        "rejected_count": len(rej),
+        # Anlık sonuçlar — tarama devam ederken de dolu
+        "accepted": acc,
+        "rejected": rej[:50],  # rejected'ın ilk 50'si (çok büyük olabilir)
+        "preview": acc[:5],
     }
 
 # ── Scan history (disk) ───────────────────────────────────────────────────────

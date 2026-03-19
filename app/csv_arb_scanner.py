@@ -833,20 +833,42 @@ async def scan_isbn_list(
     accepted: List[Dict] = []
     rejected: List[Dict] = []
 
+    # eBay Browse API rate limit koruması: concurrency=1 ile bile
+    # peş peşe istekler 429 alabilir. ISBN başına minimum bekleme.
+    _isbn_delay = max(0.5, 1.5 / max(concurrency, 1))
+    _last_request_lock = asyncio.Lock()
+    _last_request_time: list = [0.0]
+
     async def _run(isbn: str):
         nonlocal done_count
         async with sem:
+            # eBay rate limit: ISBN'ler arası minimum bekleme
+            async with _last_request_lock:
+                elapsed = time.time() - _last_request_time[0]
+                if elapsed < _isbn_delay:
+                    await asyncio.sleep(_isbn_delay - elapsed)
+                _last_request_time[0] = time.time()
+
             results = await _scan_one(isbn.strip(), filters, fees, isbn_buy_prices=isbn_buy_prices, isbn_amazon_prices=isbn_amazon_prices)
+            new_acc: List[Dict] = []
+            new_rej: List[Dict] = []
             for r in results:
                 d = r.to_dict()
                 if r.accepted:
                     accepted.append(d)
+                    new_acc.append(d)
                 else:
                     rejected.append(d)
+                    new_rej.append(d)
             done_count += 1
             if on_progress:
                 try:
-                    on_progress(done_count, total)
+                    import inspect
+                    sig = inspect.signature(on_progress)
+                    if len(sig.parameters) >= 4:
+                        on_progress(done_count, total, new_acc, new_rej)
+                    else:
+                        on_progress(done_count, total)
                 except Exception:
                     pass
 

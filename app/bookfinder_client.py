@@ -196,11 +196,32 @@ def _bf_rsc(html: str) -> Optional[dict]:
         except Exception: continue
     return None
 
+# Global IP block flag — 403/block tespit edilince diğer ISBN'leri deneme
+_bookfinder_ip_blocked = False
+_bookfinder_block_until = 0.0
+
 async def _src_bookfinder(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
+    global _bookfinder_ip_blocked, _bookfinder_block_until
+    import time as _t
+
+    # IP block aktifse skip et (1 saatlik cooldown)
+    if _bookfinder_ip_blocked and _t.time() < _bookfinder_block_until:
+        return None
+
+    # Config flag: BOOKFINDER_ENABLED=false ile tamamen kapatılabilir
+    s = get_settings()
+    if not getattr(s, "bookfinder_enabled", True):
+        return None
+
     for url in [f"https://www.bookfinder.com/isbn/{isbn}/",
                 f"https://www.bookfinder.com/search/?keywords={isbn}&currency=USD&destination=us&mode=basic&lang=en&st=sh&ac=qr"]:
         try:
             r = await c.get(url, headers=_hdrs(), timeout=18)
+            if r.status_code in (403, 429, 503):
+                _bookfinder_ip_blocked = True
+                _bookfinder_block_until = _t.time() + 3600  # 1 saat
+                logger.warning("BookFinder IP engellendi (HTTP %d) — 1 saat skip edilecek", r.status_code)
+                return None
             if r.status_code != 200:
                 logger.warning("bookfinder non-200 url=%s status=%s", url, r.status_code)
                 continue
