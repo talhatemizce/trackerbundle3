@@ -216,7 +216,7 @@ async def _src_bookfinder(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     for url in [f"https://www.bookfinder.com/isbn/{isbn}/",
                 f"https://www.bookfinder.com/search/?keywords={isbn}&currency=USD&destination=us&mode=basic&lang=en&st=sh&ac=qr"]:
         try:
-            r = await c.get(url, headers=_hdrs(), timeout=18)
+            r = await c.get(url, headers=_hdrs(), timeout=8)
             if r.status_code in (403, 429, 503):
                 _bookfinder_ip_blocked = True
                 _bookfinder_block_until = _t.time() + 3600  # 1 saat
@@ -252,7 +252,7 @@ async def _src_bookfinder(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
 async def _src_abebooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     url = f"https://www.abebooks.com/servlet/SearchResults?isbn={isbn}&n=100121503"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.abebooks.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.abebooks.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = []
         m = re.search(r'window\.utag_data\s*=\s*(\{.*?\});\s*</script>', r.text, re.DOTALL)
@@ -280,7 +280,7 @@ async def _src_abebooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
 async def _src_thriftbooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     url = f"https://www.thriftbooks.com/isbn/{isbn}/"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.thriftbooks.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.thriftbooks.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "ThriftBooks", "THRIFTBOOKS")
         if not all_o: all_o = _price_regex(r.text, "ThriftBooks", "THRIFTBOOKS", 0)
@@ -294,7 +294,7 @@ async def _src_thriftbooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
 async def _src_bwb(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     url = f"https://www.betterworldbooks.com/search/results?q={isbn}"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.betterworldbooks.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.betterworldbooks.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "BetterWorldBooks", "BETTERWORLDBOOKS")
         if not all_o: all_o = _price_regex(r.text, "BetterWorldBooks", "BETTERWORLDBOOKS", 0)
@@ -308,7 +308,7 @@ async def _src_bwb(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
 async def _src_biblio(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     url = f"https://www.biblio.com/search/?q={isbn}&type=isbn"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.biblio.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.biblio.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "Biblio", "BIBLIO")
         if not all_o: all_o = _price_regex(r.text, "Biblio", "BIBLIO", 0.0)
@@ -322,7 +322,7 @@ async def _src_biblio(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
 async def _src_alibris(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     url = f"https://www.alibris.com/search/books/isbn/{isbn}"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.alibris.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.alibris.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "Alibris", "ALIBRIS")
         if not all_o: all_o = _price_regex(r.text, "Alibris", "ALIBRIS", 0)
@@ -336,7 +336,7 @@ async def _src_alibris(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
 async def _src_goodwill(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     url = f"https://www.goodwillbooks.com/search?query={isbn}"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.goodwillbooks.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.goodwillbooks.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "GoodwillBooks", "GOODWILL")
         if not all_o:
@@ -357,7 +357,7 @@ async def _src_goodwill(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
 async def _src_hpb(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     url = f"https://www.hpb.com/search?q={isbn}&type=product"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.hpb.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.hpb.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "HPB", "HPB")
         if not all_o:
@@ -381,7 +381,7 @@ async def _src_bookpal(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     """BookPal — bulk/wholesale new books, typically case-quantity discounts."""
     url = f"https://www.bookpal.com/search?q={isbn}"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.bookpal.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.bookpal.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "BookPal", "BOOKPAL")
         if not all_o:
@@ -399,7 +399,7 @@ async def _src_bookdepot(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     """BookDepot — Canadian bulk seller, deeply discounted remainders & overstock."""
     url = f"https://www.bookdepot.com/Store/Search.aspx?q={isbn}"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.bookdepot.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.bookdepot.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "BookDepot", "BOOKDEPOT")
         if not all_o:
@@ -422,7 +422,7 @@ async def _src_textbookrush(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     """TextbookRush — textbook buyback + used textbooks, good for academic ISBNs."""
     url = f"https://www.textbookrush.com/search?q={isbn}"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.textbookrush.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.textbookrush.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "TextbookRush", "TBR")
         if not all_o:
@@ -440,7 +440,7 @@ async def _src_campusbooks(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     """CampusBooks — price comparison aggregator for textbooks (new + used + rental)."""
     url = f"https://www.campusbooks.com/search/{isbn}"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.campusbooks.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.campusbooks.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "CampusBooks", "CB")
         if not all_o:
@@ -458,7 +458,7 @@ async def _src_chegg(c: httpx.AsyncClient, isbn: str) -> Optional[dict]:
     """Chegg — textbook rental + used sales, strong for college textbooks."""
     url = f"https://www.chegg.com/search?q={isbn}"
     try:
-        r = await c.get(url, headers=_hdrs("https://www.chegg.com/"), timeout=18)
+        r = await c.get(url, headers=_hdrs("https://www.chegg.com/"), timeout=8)
         if r.status_code != 200: return None
         all_o = _jsonld_offers(r.text, "Chegg", "CHEGG")
         if not all_o:
@@ -517,9 +517,9 @@ async def fetch_bookfinder(isbn: str, condition: str = "all", force: bool = Fals
                 result["total_offers"] = len(all_offers)
             return result
 
-    await asyncio.sleep(random.uniform(0.2, 0.5))
+    # rate limit sleep kaldırıldı — kaynaklar paralel çalışıyor
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=12) as client:
         tasks = await asyncio.gather(
             _src_bookfinder(client, isbn_clean),
             _src_abebooks(client, isbn_clean),

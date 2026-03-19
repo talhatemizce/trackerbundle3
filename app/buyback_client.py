@@ -258,7 +258,7 @@ async def fetch_buyback_prices(isbn: str, force: bool = False) -> Dict[str, Any]
             "cache_age_s": 0,
         }
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=8) as client:
         results = await asyncio.gather(
             _fetch_bookscouter(isbn13, client),
             _fetch_booksrun(isbn13, client),

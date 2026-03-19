@@ -1017,7 +1017,7 @@ class CsvArbRequest(BaseModel):
     condition_in: Optional[List[str]] = None   # ["new"] | ["used"] | ["new","used"]
     source_in: Optional[List[str]] = None      # ["ebay","thriftbooks","abebooks",...]
     only_viable: bool = True
-    concurrency: int = Field(default=1, ge=1, le=5)
+    concurrency: int = Field(default=5, ge=1, le=8)
     # ISBN match reliability policies
     isbn_match_policy: str = Field(default="balanced", description="precision|balanced|recall")
     invalid_isbn_policy: str = Field(default="best_effort", description="reject|best_effort")

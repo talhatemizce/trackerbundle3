@@ -343,7 +343,7 @@ async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
         return data
     except Exception as e:
         logger.warning("Amazon prices failed asin=%s: %s", asin, e)
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(0.3)  # kısa backoff, 2s değil
         return {}
 
 
@@ -382,8 +382,7 @@ async def _get_ebay_offers(isbn: str, filters: "ScanFilters | None" = None) -> L
                 client, isbn,
                 isbn_match_policy=str(match_policy),
             )
-        # eBay rate limit koruması: istekler arası min 1s bekle
-        await asyncio.sleep(1.0)
+        # eBay rate limit: scan_isbn_list._isbn_delay ile yönetiliyor
 
         if not items:
             logger.debug("eBay browse_search_isbn isbn=%s returned 0 items", isbn)
@@ -554,19 +553,19 @@ async def _scan_one(
     async def _get_buyback_trend_safe(isbn):
         try:
             from app.buyback_client import get_buyback_price_trend
-            return await get_buyback_price_trend(isbn)
+            return await asyncio.wait_for(get_buyback_price_trend(isbn), timeout=8.0)
         except Exception:
             return {}
 
     async def _get_book_meta_safe(isbn):
         """Book metadata + NYT bestseller check — OL Search, HathiTrust, LoC, NYT."""
         try:
-            async with httpx.AsyncClient(timeout=10) as _mc:
+            async with httpx.AsyncClient(timeout=5) as _mc:
                 from app.ai_analyst import _check_edition
                 from app.nyt_client import get_isbn_nyt_history
                 meta, nyt = await asyncio.gather(
-                    _check_edition(isbn, _mc),
-                    get_isbn_nyt_history(isbn),
+                    asyncio.wait_for(_check_edition(isbn, _mc), timeout=5.0),
+                    asyncio.wait_for(get_isbn_nyt_history(isbn), timeout=5.0),
                     return_exceptions=True,
                 )
                 if isinstance(meta, Exception): meta = {}
@@ -815,7 +814,7 @@ async def scan_isbn_list(
     isbns: List[str],
     filters: ScanFilters,
     fees: FeeConfig = DEFAULT_FEES,
-    concurrency: int = 3,
+    concurrency: int = 5,
     on_progress: Any = None,  # optional callback(done, total)
     isbn_buy_prices: Dict[str, float] = {},     # opsiyonel: kullanıcı alım fiyatları (generic CSV)
     isbn_amazon_prices: Dict[str, float] = {},  # opsiyonel: Amazon Business Report ortalama satış fiyatı
@@ -837,7 +836,7 @@ async def scan_isbn_list(
 
     # eBay Browse API rate limit koruması: concurrency=1 ile bile
     # peş peşe istekler 429 alabilir. ISBN başına minimum bekleme.
-    _isbn_delay = max(0.5, 1.5 / max(concurrency, 1))
+    _isbn_delay = max(0.15, 0.5 / max(concurrency, 1))  # eBay Browse API toleranslı
     _last_request_lock = asyncio.Lock()
     _last_request_time: list = [0.0]
 

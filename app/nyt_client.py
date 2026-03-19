@@ -81,7 +81,7 @@ async def get_isbn_nyt_history(isbn: str) -> Dict[str, Any]:
             return data
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(
                 f"{NYT_BASE}/lists/best-sellers/history.json",
                 params={"isbn": isbn13, "api-key": key},
