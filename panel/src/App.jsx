@@ -1794,24 +1794,88 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           )}
         </div>
 
-        {/* Scan button */}
-        <button
-          onClick={runScan}
-          disabled={scanning || !isbns.length}
-          style={{width:"100%", padding:"12px 0", fontSize:13, fontWeight:700,
-            background: scanning||!isbns.length ? C.border : C.accent,
-            color: scanning||!isbns.length ? C.muted : "#fff",
-            border:"none", borderRadius:8, cursor: scanning||!isbns.length?"not-allowed":"pointer"}}
-        >
-          {scanning ? (() => {
-          const done = progress?.done||0, total = progress?.total||0;
-          const pct = total > 0 ? Math.round(done/total*100) : 0;
-          const eta = progress?.eta_s;
-          const etaStr = eta ? (eta>60 ? `~${Math.ceil(eta/60)}dk` : `~${eta}s`) : "";
-          const accepted = progress?.accepted_count||0;
-          return `⏳ ${done}/${total} (${pct}%) · ✅${accepted} ${etaStr}`;
-        })() : `🔍 ${isbns.length} ISBN Tara`}
-        </button>
+        {/* Scan button / Pause+Stop */}
+        {!scanning ? (
+          <button
+            onClick={runScan}
+            disabled={!isbns.length}
+            style={{width:"100%", padding:"12px 0", fontSize:13, fontWeight:700,
+              background: !isbns.length ? C.border : C.accent,
+              color: !isbns.length ? C.muted : "#fff",
+              border:"none", borderRadius:8, cursor: !isbns.length?"not-allowed":"pointer"}}
+          >
+            🔍 {isbns.length} ISBN Tara
+          </button>
+        ) : (
+          <div style={{display:"flex", flexDirection:"column", gap:8}}>
+            {/* Progress bar */}
+            <div style={{background:C.surface2, borderRadius:8, padding:"10px 14px",
+              border:`1px solid ${scanJob?.paused ? "#f97316" : C.accent}55`}}>
+              <div style={{display:"flex", justifyContent:"space-between", marginBottom:6, alignItems:"center"}}>
+                <span style={{fontSize:12, fontWeight:700, color: scanJob?.paused ? "#f97316" : C.accent}}>
+                  {scanJob?.paused ? "⏸ Duraklatıldı" : "⏳ Taranıyor..."}
+                </span>
+                <span style={{fontSize:11, color:C.muted}}>
+                  {(() => {
+                    const done = progress?.done||0, total = progress?.total||0;
+                    const pct = total > 0 ? Math.round(done/total*100) : 0;
+                    const eta = progress?.eta_s;
+                    const etaStr = eta && !scanJob?.paused ? (eta>60 ? ` · ~${Math.ceil(eta/60)}dk` : ` · ~${eta}s`) : "";
+                    const accepted = progress?.accepted_count||0;
+                    return `${done}/${total} (${pct}%) · ✅ ${accepted} fırsat${etaStr}`;
+                  })()}
+                </span>
+              </div>
+              <div style={{height:6, background:C.border, borderRadius:3, overflow:"hidden"}}>
+                <div style={{
+                  height:"100%", borderRadius:3,
+                  background: scanJob?.paused ? "#f97316" : C.accent,
+                  width:`${progress?.total > 0 ? Math.round((progress?.done||0)/progress.total*100) : 0}%`,
+                  transition:"width 0.4s ease"
+                }}/>
+              </div>
+            </div>
+            {/* Pause + Stop */}
+            <div style={{display:"flex", gap:8}}>
+              <button
+                onClick={async () => {
+                  if (!jobId) return;
+                  if (scanJob?.paused) {
+                    await fetch("/discover/csv-arb/resume/" + jobId, {method:"POST"});
+                    setScanJob(p => ({...p, paused:false}));
+                  } else {
+                    await fetch("/discover/csv-arb/pause/" + jobId, {method:"POST"});
+                    setScanJob(p => ({...p, paused:true}));
+                  }
+                }}
+                style={{flex:1, padding:"9px 0", fontSize:12, fontWeight:700,
+                  background: scanJob?.paused ? "#16a34a22" : "#f9731622",
+                  color: scanJob?.paused ? "#16a34a" : "#f97316",
+                  border:`1px solid ${scanJob?.paused ? "#16a34a55" : "#f9731655"}`,
+                  borderRadius:7, cursor:"pointer"}}
+              >
+                {scanJob?.paused ? "▶ Devam Et" : "⏸ Duraklat"}
+              </button>
+              <button
+                onClick={async () => {
+                  if (!jobId) return;
+                  await fetch("/discover/csv-arb/cancel/" + jobId, {method:"POST"});
+                  setScanJob(p => ({...p, scanning:false, paused:false}));
+                  try {
+                    const rd = await fetch("/discover/csv-arb/result/" + jobId).then(r=>r.json());
+                    if (rd.ok) setScanJob(p => ({...p, results:{...rd, cancelled:true}}));
+                  } catch(e) {}
+                }}
+                style={{flex:1, padding:"9px 0", fontSize:12, fontWeight:700,
+                  background:"#ef444422", color:"#ef4444",
+                  border:"1px solid #ef444455",
+                  borderRadius:7, cursor:"pointer"}}
+              >
+                ⏹ Durdur & Sonuçları Getir
+              </button>
+            </div>
+          </div>
+        )}
 
         {error && <div style={{marginTop:8, color:C.red||"#ef4444", fontSize:11, padding:"6px 8px",
           background:C.surface2, borderRadius:6}}>{error}</div>}
@@ -4980,6 +5044,87 @@ function AppReal() {
                 onBfFetch={fetchWlBookfinder}
                 onLightbox={setWlLightbox}
               />
+            )}
+
+{/* ── Global scan status bar — Discover dışındaki her tab'da görünür ── */}
+            {scanJob?.scanning && tab !== "discover" && (
+              <div style={{
+                background: scanJob?.paused ? "#431407" : "#0c1a2e",
+                borderRadius:10, marginBottom:16,
+                border:`1px solid ${scanJob?.paused ? "#f97316" : "#2563eb"}`,
+                overflow:"hidden",
+              }}>
+                {/* Progress bar track */}
+                <div style={{height:3, background:"#1e3a5f"}}>
+                  <div style={{
+                    height:"100%",
+                    background: scanJob?.paused ? "#f97316" : "#2563eb",
+                    width:`${scanJob?.progress?.total>0 ? Math.round((scanJob?.progress?.done||0)/scanJob.progress.total*100) : 0}%`,
+                    transition:"width 0.4s ease"
+                  }}/>
+                </div>
+                <div style={{display:"flex", alignItems:"center", gap:10, padding:"8px 14px"}}>
+                  <span style={{fontSize:12, fontWeight:700, flexShrink:0,
+                    color: scanJob?.paused ? "#f97316" : "#60a5fa"}}>
+                    {scanJob?.paused ? "⏸ Duraklatıldı" : "⏳ Taranıyor..."}
+                  </span>
+                  <span style={{fontSize:11, color:"#94a3b8", flex:1}}>
+                    {(() => {
+                      const done = scanJob?.progress?.done||0;
+                      const total = scanJob?.progress?.total||0;
+                      const pct = total>0 ? Math.round(done/total*100) : 0;
+                      const acc = scanJob?.progress?.accepted_count||0;
+                      const eta = scanJob?.progress?.eta_s;
+                      const etaStr = eta && !scanJob?.paused ? (eta>60?` · ~${Math.ceil(eta/60)}dk`:` · ~${eta}s`) : "";
+                      return `${done}/${total} · %${pct} · ✅ ${acc} fırsat${etaStr}`;
+                    })()}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      const jid = scanJob?.jobId;
+                      if (!jid) return;
+                      if (scanJob?.paused) {
+                        await fetch("/discover/csv-arb/resume/" + jid, {method:"POST"});
+                        setScanJob(p => ({...p, paused:false}));
+                      } else {
+                        await fetch("/discover/csv-arb/pause/" + jid, {method:"POST"});
+                        setScanJob(p => ({...p, paused:true}));
+                      }
+                    }}
+                    style={{flexShrink:0, padding:"4px 12px", fontSize:11, fontWeight:700,
+                      background: scanJob?.paused ? "#16a34a22" : "#f9731622",
+                      color: scanJob?.paused ? "#22c55e" : "#f97316",
+                      border:`1px solid ${scanJob?.paused ? "#22c55e55" : "#f9731655"}`,
+                      borderRadius:5, cursor:"pointer"}}>
+                    {scanJob?.paused ? "▶ Devam Et" : "⏸ Duraklat"}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const jid = scanJob?.jobId;
+                      if (!jid) return;
+                      await fetch("/discover/csv-arb/cancel/" + jid, {method:"POST"});
+                      setScanJob(p => ({...p, scanning:false, paused:false}));
+                      setTab("discover");
+                      try {
+                        const rd = await fetch("/discover/csv-arb/result/" + jid).then(r=>r.json()).catch(()=>null);
+                        if (rd?.ok) setScanJob(p => ({...p, results:{...rd, cancelled:true}}));
+                      } catch(e) {}
+                    }}
+                    style={{flexShrink:0, padding:"4px 12px", fontSize:11, fontWeight:700,
+                      background:"#ef444422", color:"#ef4444",
+                      border:"1px solid #ef444455",
+                      borderRadius:5, cursor:"pointer"}}>
+                    ⏹ Durdur
+                  </button>
+                  <button onClick={() => setTab("discover")}
+                    style={{flexShrink:0, padding:"4px 12px", fontSize:11,
+                      background:"transparent", color:"#60a5fa",
+                      border:"1px solid #2563eb44",
+                      borderRadius:5, cursor:"pointer"}}>
+                    → Discover
+                  </button>
+                </div>
+              </div>
             )}
 
 {tab==="alerts"&&<AlertsFeedTab C={C} theme={theme} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}

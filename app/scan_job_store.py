@@ -29,12 +29,45 @@ def _evict_old_jobs() -> None:
         import logging
         logging.getLogger("trackerbundle.scan_jobs").debug("evicted %d old jobs", len(stale))
 
+# ── Pause / Cancel events ─────────────────────────────────────────────────────
+# Her job için asyncio.Event — scanner her ISBN'den önce kontrol eder
+_pause_events:  Dict[str, asyncio.Event] = {}   # set = paused
+_cancel_events: Dict[str, asyncio.Event] = {}   # set = cancel requested
+
+def get_pause_event(job_id: str) -> asyncio.Event:
+    return _pause_events.setdefault(job_id, asyncio.Event())
+
+def get_cancel_event(job_id: str) -> asyncio.Event:
+    return _cancel_events.setdefault(job_id, asyncio.Event())
+
+def pause_job(job_id: str) -> bool:
+    job = _jobs.get(job_id)
+    if not job or job["status"] not in ("running", "pending"): return False
+    get_pause_event(job_id).set()
+    job["status"] = "paused"
+    return True
+
+def resume_job(job_id: str) -> bool:
+    job = _jobs.get(job_id)
+    if not job or job["status"] != "paused": return False
+    get_pause_event(job_id).clear()
+    job["status"] = "running"
+    return True
+
+def cancel_job(job_id: str) -> bool:
+    job = _jobs.get(job_id)
+    if not job or job["status"] not in ("running", "paused", "pending"): return False
+    get_cancel_event(job_id).set()
+    get_pause_event(job_id).clear()   # unpause so scanner loop can see cancel
+    job["status"] = "cancelled"
+    return True
+
 def create_job(total: int) -> str:
     _evict_old_jobs()  # her yeni job öncesi eski job'ları temizle
     job_id = str(uuid.uuid4())[:8]
     _jobs[job_id] = {
         "id": job_id,
-        "status": "pending",   # pending → running → done | error
+        "status": "pending",   # pending → running → paused → done | error | cancelled
         "progress": 0,
         "total": total,
         "accepted": [],
@@ -47,6 +80,9 @@ def create_job(total: int) -> str:
         "eta_s": None,
         "started_at": None,
     }
+    # Pre-create events (clear state)
+    _pause_events[job_id] = asyncio.Event()
+    _cancel_events[job_id] = asyncio.Event()
     return job_id
 
 def update_progress(job_id: str, done: int) -> None:
@@ -102,6 +138,7 @@ def get_job_progress(job_id: str) -> Optional[Dict]:
     return {
         "id": job["id"],
         "status": job["status"],
+        "paused": job["status"] == "paused",
         "progress": job["progress"],
         "total": job["total"],
         "eta_s": job["eta_s"],

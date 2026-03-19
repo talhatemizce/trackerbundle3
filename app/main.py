@@ -1107,6 +1107,7 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
                 update_progress(job_id, done)
                 append_result(job_id, new_accepted, new_rejected)
 
+            from app.scan_job_store import get_pause_event, get_cancel_event
             result = await scan_isbn_list(
                 isbns=req.isbns,
                 filters=filters,
@@ -1115,6 +1116,8 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
                 isbn_buy_prices=req.isbn_buy_prices or {},
                 isbn_amazon_prices=req.isbn_amazon_prices or {},
                 on_progress=_on_isbn_done,
+                pause_event=get_pause_event(job_id),
+                cancel_event=get_cancel_event(job_id),
             )
             # Post-filter: amazon_unavailable olanları göster ama ayrı tut
             all_accepted = result["accepted"]
@@ -1161,6 +1164,38 @@ async def csv_arb_result(job_id: str):
         raise HTTPException(status_code=409, detail=f"Job henüz bitmedi: {job['status']}")
     return {"ok": True, "accepted": job["accepted"], "rejected": job["rejected"], "stats": job["stats"]}
 
+
+@app.post("/discover/csv-arb/pause/{job_id}")
+async def csv_arb_pause(job_id: str):
+    from app.scan_job_store import pause_job
+    ok = pause_job(job_id)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Job duraklatılamadı (bulunamadı veya zaten bitti)")
+    return {"ok": True, "status": "paused"}
+
+@app.post("/discover/csv-arb/resume/{job_id}")
+async def csv_arb_resume(job_id: str):
+    from app.scan_job_store import resume_job
+    ok = resume_job(job_id)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Job devam ettirilemedi (bulunamadı veya paused değil)")
+    return {"ok": True, "status": "running"}
+
+@app.post("/discover/csv-arb/cancel/{job_id}")
+async def csv_arb_cancel(job_id: str):
+    from app.scan_job_store import cancel_job, _jobs
+    ok = cancel_job(job_id)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Job iptal edilemedi")
+    # Partial sonuçları döndür
+    job = _jobs.get(job_id, {})
+    return {
+        "ok": True,
+        "status": "cancelled",
+        "accepted": job.get("partial_accepted", []),
+        "rejected": job.get("partial_rejected", [])[:50],
+        "stats": {"cancelled": True, "done": job.get("progress", 0), "total": job.get("total", 0)},
+    }
 
 @app.get("/discover/history")
 async def scan_history():

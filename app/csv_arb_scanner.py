@@ -819,6 +819,8 @@ async def scan_isbn_list(
     on_progress: Any = None,  # optional callback(done, total)
     isbn_buy_prices: Dict[str, float] = {},     # opsiyonel: kullanıcı alım fiyatları (generic CSV)
     isbn_amazon_prices: Dict[str, float] = {},  # opsiyonel: Amazon Business Report ortalama satış fiyatı
+    pause_event: Any = None,   # asyncio.Event — set iken scanner bekler (pause)
+    cancel_event: Any = None,  # asyncio.Event — set iken scanner durur (cancel)
 ) -> Dict[str, Any]:
     """
     ISBN listesini paralel tara (max `concurrency` aynı anda).
@@ -848,6 +850,19 @@ async def scan_isbn_list(
                 if elapsed < _isbn_delay:
                     await asyncio.sleep(_isbn_delay - elapsed)
                 _last_request_time[0] = time.time()
+
+            # Cancel check — hemen çık
+            if cancel_event and cancel_event.is_set():
+                return
+
+            # Pause check — resume gelene kadar bekle
+            if pause_event and pause_event.is_set():
+                logger.info("scan_isbn_list: paused, waiting for resume...")
+                while pause_event.is_set():
+                    if cancel_event and cancel_event.is_set():
+                        return
+                    await asyncio.sleep(0.5)
+                logger.info("scan_isbn_list: resumed")
 
             results = await _scan_one(isbn.strip(), filters, fees, isbn_buy_prices=isbn_buy_prices, isbn_amazon_prices=isbn_amazon_prices)
             new_acc: List[Dict] = []
