@@ -247,10 +247,14 @@ def item_total_price(
       - calc_ship_est > 0 → heuristic kullan (env CALCULATED_SHIP_ESTIMATE_USD)
       - calc_ship_est == 0 veya None → None döner, item skip edilir
     """
+    import logging as _log
+    _logger = _log.getLogger("trackerbundle.ebay_price")
+
     try:
         price_field = item.get("price") or {}
         price = float((price_field.get("value") if isinstance(price_field, dict) else price_field) or 0)
     except (TypeError, ValueError, AttributeError):
+        _logger.debug("item_total_price: price parse failed item=%s", item.get("itemId","?"))
         return None
 
     opts = item.get("shippingOptions")
@@ -258,6 +262,8 @@ def item_total_price(
     # shippingOptions field tamamen yok veya null → bilinmiyor
     # calc_ship_est varsa heuristic kullan, yoksa skip
     if opts is None:
+        _logger.debug("item_total_price: shippingOptions=None item=%s calc_est=%s price=%s",
+                      item.get("itemId","?"), calc_ship_est, price)
         if calc_ship_est and calc_ship_est > 0:
             item["_shipping_estimated"] = True
             return round(price + calc_ship_est, 2) if price > 0 else None
@@ -269,21 +275,27 @@ def item_total_price(
         opt = opts[0]
         # Browse API uses shippingCostType; shippingServiceType/shippingType are fallbacks
         ship_type = (opt.get("shippingCostType") or opt.get("shippingServiceType") or opt.get("shippingType") or "").upper()
+        _logger.debug("item_total_price: item=%s ship_type=%r calc_est=%s cost_val=%s",
+                      item.get("itemId","?"), ship_type, calc_ship_est,
+                      opt.get("shippingCost",{}).get("value") if isinstance(opt.get("shippingCost"),dict) else opt.get("shippingCost"))
         if "CALCULATED" in ship_type or "LOCAL" in ship_type or "PICKUP" in ship_type or "NOT_SPECIFIED" in ship_type:
             if calc_ship_est and calc_ship_est > 0:
                 ship = calc_ship_est
                 ship_estimated = True
             else:
+                _logger.warning("item_total_price: CALCULATED shipping but calc_est=0/None — item SKIPPED item=%s", item.get("itemId","?"))
                 return None
 
         if not ship_estimated:
-            cost_val = opt.get("shippingCost", {}).get("value")
+            sc = opt.get("shippingCost")
+            cost_val = sc.get("value") if isinstance(sc, dict) else sc
             if cost_val is None:
                 # No cost value + no type info → treat as unknown/CALCULATED
                 if calc_ship_est and calc_ship_est > 0:
                     ship = calc_ship_est
                     ship_estimated = True
                 else:
+                    _logger.warning("item_total_price: no cost_val, no calc_est — SKIPPED item=%s", item.get("itemId","?"))
                     return None
             else:
                 try:
