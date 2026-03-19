@@ -1341,7 +1341,14 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
     try {
       // 1. Job başlat — hemen job_id döner
       const data = await req("/discover/csv-arb", {method:"POST", body:JSON.stringify(body)}, 30000);
-      if (!data.ok) { setError(data.detail || "Başlatılamadı"); setScanning(false); return; }
+      if (!data.ok) {
+        if (data.queued) {
+          setError(`⏳ Başka bir tarama devam ediyor (Job: ${data.active_job_id} — ${data.active_job_progress}). Bitmesini bekle.`);
+        } else {
+          setError(data.message || data.detail || "Başlatılamadı");
+        }
+        setScanning(false); return;
+      }
 
       const jid = data.job_id;
       setJobId(jid);
@@ -1523,9 +1530,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
     {/* Sub-tab: Scan */}
     {discoverSubTab==="scan" && (
 
-    <div style={{display:"flex", gap:16, alignItems:"flex-start", paddingTop:16}}>
-      {/* Left panel — fixed narrow sidebar */}
-      <div style={{width:210, flexShrink:0}}>
+    <div style={{display:"flex", gap:20, alignItems:"flex-start", paddingTop:16}}>
+      {/* Left panel */}
+      <div style={{width:300, flexShrink:0}}>
 
         {/* Upload */}
         <div style={{background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:16, marginBottom:12}}>

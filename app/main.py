@@ -1056,6 +1056,19 @@ async def csv_arb_scan(req: CsvArbRequest, background_tasks: BackgroundTasks):
         max_buy_price=req.max_buy_price,
     )
 
+    # Aynı anda sadece 1 aktif job — 2. istek "queued" olarak döner
+    from app.scan_job_store import _jobs as _all_jobs
+    active = [j for j in _all_jobs.values() if j.get("status") == "running"]
+    if active:
+        return {
+            "ok": False,
+            "queued": True,
+            "message": f"Şu an aktif bir tarama var ({active[0]['id']}). "
+                       f"Tamamlanmasını bekle veya farklı bir sekme aç.",
+            "active_job_id": active[0]["id"],
+            "active_job_progress": f"{active[0].get('progress',0)}/{active[0].get('total',0)}",
+        }
+
     job_id = create_job(len(req.isbns))
 
     async def _run():
