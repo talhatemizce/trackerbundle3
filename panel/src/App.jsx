@@ -1859,12 +1859,15 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
               <button
                 onClick={async () => {
                   if (!jobId) return;
-                  await fetch("/discover/csv-arb/cancel/" + jobId, {method:"POST"});
-                  setScanJob(p => ({...p, scanning:false, paused:false}));
                   try {
-                    const rd = await fetch("/discover/csv-arb/result/" + jobId).then(r=>r.json());
-                    if (rd.ok) setScanJob(p => ({...p, results:{...rd, cancelled:true}}));
-                  } catch(e) {}
+                    // Cancel POST zaten partial sonuçları döndürür
+                    const rd = await fetch("/discover/csv-arb/cancel/" + jobId, {method:"POST"}).then(r=>r.json());
+                    setScanJob(p => ({...p, scanning:false, paused:false,
+                      results: rd.ok !== false ? {...rd, cancelled:true, partial:true} : p?.results}));
+                    setDiscoverSubTab("results");  // otomatik sonuçlara geç
+                  } catch(e) {
+                    setScanJob(p => ({...p, scanning:false, paused:false}));
+                  }
                 }}
                 style={{flex:1, padding:"9px 0", fontSize:12, fontWeight:700,
                   background:"#ef444422", color:"#ef4444",
@@ -1886,7 +1889,18 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
     {/* Sub-tab: Results */}
     {discoverSubTab==="results" && (
       <div style={{paddingTop:16}}>
-        {results?.partial && (
+        {results?.cancelled && (
+          <div style={{
+            padding:"8px 14px", marginBottom:8, borderRadius:6,
+            background:"#ef444420", border:"1px solid #ef444450",
+            fontSize:12, color:"#ef4444", display:"flex", alignItems:"center", gap:8
+          }}>
+            <span>⏹</span>
+            <span>Tarama durduruldu — <b>{(results.accepted||[]).length}</b> fırsat bulundu
+            ({results.stats?.done||0}/{results.stats?.total||0} ISBN tarandı)</span>
+          </div>
+        )}
+        {results?.partial && !results?.cancelled && (
           <div style={{
             padding:"6px 12px", marginBottom:8, borderRadius:6,
             background:"#f97316" + "20", border:"1px solid #f97316" + "40",
@@ -5102,13 +5116,14 @@ function AppReal() {
                     onClick={async () => {
                       const jid = scanJob?.jobId;
                       if (!jid) return;
-                      await fetch("/discover/csv-arb/cancel/" + jid, {method:"POST"});
-                      setScanJob(p => ({...p, scanning:false, paused:false}));
-                      setTab("discover");
                       try {
-                        const rd = await fetch("/discover/csv-arb/result/" + jid).then(r=>r.json()).catch(()=>null);
-                        if (rd?.ok) setScanJob(p => ({...p, results:{...rd, cancelled:true}}));
-                      } catch(e) {}
+                        const rd = await fetch("/discover/csv-arb/cancel/" + jid, {method:"POST"}).then(r=>r.json());
+                        setScanJob(p => ({...p, scanning:false, paused:false,
+                          results: rd.ok !== false ? {...rd, cancelled:true, partial:true} : p?.results}));
+                      } catch(e) {
+                        setScanJob(p => ({...p, scanning:false, paused:false}));
+                      }
+                      setTab("discover");
                     }}
                     style={{flexShrink:0, padding:"4px 12px", fontSize:11, fontWeight:700,
                       background:"#ef444422", color:"#ef4444",
