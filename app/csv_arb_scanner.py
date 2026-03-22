@@ -93,6 +93,13 @@ class ArbResult:
     amazon_sell_price: Optional[float] = None
     buybox_type: Optional[str] = None    # "new" | "used"
     match_type: Optional[str] = None     # "NEW→NEW" | "USED→USED" | "NEW→USED(fallback)" etc.
+    # Condition upgrade signal — used eBay → new Amazon fırsatı
+    amazon_new_price: Optional[float] = None    # Amazon NEW buybox fiyatı
+    amazon_used_price: Optional[float] = None   # Amazon USED buybox fiyatı
+    new_used_gap: Optional[float] = None        # new_price - used_price ($)
+    new_used_gap_pct: Optional[float] = None    # gap yüzdesi (%)
+    upgrade_profit: Optional[float] = None      # used eBay buy → new Amazon sell kârı
+    upgrade_roi: Optional[float] = None         # upgrade path ROI %
     referral_fee: float = 0.0
     closing_fee: float = 0.0
     fulfillment: float = 0.0
@@ -730,6 +737,33 @@ async def _scan_one(
             r.reason = reason
         else:
             _apply_profit(r, sell_price, bb_type, match_type, fees)
+
+            # ── New/Used fiyat gap + condition upgrade fırsatı ───────
+            _new_bb  = (amazon_data.get("new")  or {}).get("buybox") or {}
+            _used_bb = (amazon_data.get("used") or {}).get("buybox") or {}
+            _new_p   = float(_new_bb.get("total"))  if _new_bb.get("total")  else None
+            _used_p  = float(_used_bb.get("total")) if _used_bb.get("total") else None
+            r.amazon_new_price  = _new_p
+            r.amazon_used_price = _used_p
+
+            if _new_p and _used_p and _new_p > _used_p:
+                gap = round(_new_p - _used_p, 2)
+                gap_pct = round(gap / _used_p * 100, 1)
+                r.new_used_gap     = gap
+                r.new_used_gap_pct = gap_pct
+
+                # Upgrade kâr: eBay used alım → Amazon NEW satış
+                # Sadece gap büyükse (>%30) ve eBay condition uygunsa göster
+                # like_new/very_good → Amazon'da NEW olarak listelenebilir
+                _ebay_cond = o.get("source_condition", "")
+                _norm_cond = o.get("_norm_condition", "")
+                _upgradeable = _ebay_cond == "used"  # used eBay item upgrade candidate
+                if _upgradeable and gap_pct >= 30:
+                    from app.profit_calc import calculate as _calc, DEFAULT_FEES as _DF
+                    _upg = _calc(o["buy_price"], amazon_data, fees, source_condition="new")
+                    if _upg and _upg.profit > 0:
+                        r.upgrade_profit = _upg.profit
+                        r.upgrade_roi    = _upg.roi_pct
 
             # ── Analitik Layer ────────────────────────────────────────
             # BSR → velocity → days_to_sell (amazon_data'dan BSR gelebilir)
