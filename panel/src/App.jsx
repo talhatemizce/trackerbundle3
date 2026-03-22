@@ -87,7 +87,7 @@ const SOFT = {
   green: "#2d8a5e", blue: "#2e6da4", purple: "#6b4fa8", orange: "#c2620a", red: "#b83232",
 };
 
-const BUILD_ID = "2026-03-02-v20-soft-theme";
+const BUILD_ID = "2026-03-22-v21-upgrade-signals";
 // Build zamanı — Vite tarafından inject edilir (her npm run build'de güncellenir)
 const BUILD_TIME = (() => {
   try {
