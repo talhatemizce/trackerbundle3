@@ -413,15 +413,15 @@ function SourceLinks({ isbn, asin, C, bookTitle="", bookAuthor="" }) {
   ];
   const resale = [
     // Resale marketplaces — title+author araması (varsa) ISBN'den çok daha iyi sonuç verir
-    {label:"MCR",title:"Mercari",     url:`https://www.mercari.com/search/?keyword=${titleQuery}`,          bg:"#FF0211"},
-    {label:"DEP",title:"Depop",       url:`https://www.depop.com/search/?q=${titleQuery}`,                  bg:"#FF4040"},
-    {label:"PSH",title:"Poshmark",    url:`https://poshmark.com/search?query=${titleQuery}&type=listings`,  bg:"#C2185B"},
-    {label:"ETY",title:"Etsy",        url:`https://www.etsy.com/search?q=${titleQuery}`,                   bg:"#F45800"},
-    {label:"BPL",title:"BookPal",     url:`https://www.bookpal.com/search?q=${isbn13}`,                    bg:"#0277BD"},
-    {label:"BDP",title:"BookDepot",   url:`https://www.bookdepot.com/Store/Search.aspx?q=${isbn13}`,       bg:"#37474F"},
-    {label:"TBR",title:"TextbookRush",url:`https://www.textbookrush.com/search?q=${isbn13}`,               bg:"#1B5E20"},
-    {label:"CHG",title:"Chegg",       url:`https://www.chegg.com/search?q=${isbn13}`,                      bg:"#E85E00"},
-    {label:"VLR",title:"ValoreBooks Sellback",url:`https://www.valore.com/sellback?isbn=${isbn13}`,        bg:"#1A237E"},
+    {label:"MCR",title:"Mercari",        url:`https://www.mercari.com/search/?keyword=${titleQuery}`,              bg:"#FF0211"},
+    {label:"DEP",title:"Depop",          url:`https://www.depop.com/search/?q=${titleQuery}`,                      bg:"#FF4040"},
+    {label:"PSH",title:"Poshmark",       url:`https://poshmark.com/search?query=${titleQuery}&type=listings`,      bg:"#C2185B"},
+    {label:"ETY",title:"Etsy",           url:`https://www.etsy.com/search?q=${titleQuery}`,                        bg:"#F45800"},
+    {label:"BPL",title:"BookPal",        url:`https://www.bookpal.com/search?q=${isbn13}`,                         bg:"#0277BD"},
+    {label:"BDP",title:"BookDepot",      url:`https://www.bookdepot.com/Store/Search.aspx?q=${isbn13}`,            bg:"#37474F"},
+    {label:"TBR",title:"TextbookRush",   url:`https://www.textbookrush.com/search/?q=${isbn13}`,                   bg:"#1B5E20"},
+    {label:"GTB",title:"GoTextbooks (Chegg buyback)",url:`https://www.gotextbooks.com/?q=${isbn13}`,               bg:"#E85E00"},
+    {label:"VLR",title:"ValoreBooks Sellback",url:`https://www.valore.com/sellback?isbn=${isbn13}`,                bg:"#1A237E"},
   ];
   const A = ({label,title,url,bg,dim}) => (
     <a key={label} href={url} target="_blank" rel="noreferrer" title={title}
@@ -1180,6 +1180,8 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   // Filters
   const [strictMode, setStrictMode] = useState(true);
   const [onlyViable, setOnlyViable] = useState(true);
+  // Condition upgrade filter: eBay condition → Amazon price channel seçimi
+  const [upgradeFilter, setUpgradeFilter] = useState("off"); // off | any | very_good | good | acceptable
   const [isbnMatchPolicy, setIsbnMatchPolicy] = useState("recall");
   const [invalidIsbnPolicy, setInvalidIsbnPolicy] = useState("best_effort");
   const [verifiedOnlyFilter, setVerifiedOnlyFilter] = useState(false);
@@ -1698,6 +1700,21 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
             <span>Sadece Kârlı <span style={{fontSize:9,color:C.muted}}>(profit &gt; 0)</span></span>
           </label>
 
+          {/* Condition Upgrade Filter */}
+          <div style={{marginBottom:8}}>
+            <span style={{fontSize:9,color:C.muted,display:"block",marginBottom:4}}>🔼 Upgrade Fırsatı (eBay used → Amazon NEW)</span>
+            <select value={upgradeFilter} onChange={e=>setUpgradeFilter(e.target.value)}
+              style={{width:"100%",fontSize:11,padding:"4px 6px",borderRadius:5,
+                border:`1px solid ${upgradeFilter!=="off"?"#7c3aed":C.border}`,
+                background:C.surface2,color:upgradeFilter!=="off"?"#7c3aed":C.text,fontWeight:upgradeFilter!=="off"?700:400}}>
+              <option value="off">Kapalı</option>
+              <option value="any">🔼 Herhangi used → NEW gap ≥30%</option>
+              <option value="very_good">⭐ Very Good → NEW gap ≥30%</option>
+              <option value="good">✅ Good → NEW gap ≥30%</option>
+              <option value="acceptable">📦 Acceptable → NEW gap ≥50%</option>
+            </select>
+          </div>
+
           {/* ISBN Match Policy */}
           <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:8}}>
             <div>
@@ -2112,6 +2129,16 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                       {(activeView==="accepted" ? results.accepted : results.rejected)
                         .filter(r => !verifiedOnlyFilter || r.match_quality === "CONFIRMED")
                         .filter(r => !buybackOnlyFilter || (r.buyback_profit != null && r.buyback_profit > 0))
+                        .filter(r => {
+                          if (upgradeFilter === "off") return true;
+                          if (!r.amazon_new_price || !r.amazon_used_price) return false;
+                          const gap = r.new_used_gap_pct || 0;
+                          if (upgradeFilter === "any")        return gap >= 30;
+                          if (upgradeFilter === "very_good")  return gap >= 30 && r.source_condition === "used";
+                          if (upgradeFilter === "good")       return gap >= 30 && r.source_condition === "used";
+                          if (upgradeFilter === "acceptable") return gap >= 50 && r.source_condition === "used";
+                          return true;
+                        })
                         .map((r,i)=>(
                         <tr key={i} style={{borderBottom:`1px solid ${C.border}`, background: selectedRows.has(i)?(C.accent+"18"):i%2===0?C.surface:C.surface2, transition:"background .1s"}}>
                           {activeView==="accepted"&&(
