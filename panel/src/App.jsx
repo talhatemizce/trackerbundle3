@@ -418,10 +418,10 @@ function SourceLinks({ isbn, asin, C, bookTitle="", bookAuthor="" }) {
     {label:"PSH",title:"Poshmark",       url:`https://poshmark.com/search?query=${titleQuery}&type=listings`,      bg:"#C2185B"},
     {label:"ETY",title:"Etsy",           url:`https://www.etsy.com/search?q=${titleQuery}`,                        bg:"#F45800"},
     {label:"BPL",title:"BookPal",        url:`https://www.bookpal.com/search?q=${isbn13}`,                         bg:"#0277BD"},
-    {label:"BDP",title:"BookDepot",      url:`https://www.bookdepot.com/Store/Search.aspx?q=${isbn13}`,            bg:"#37474F"},
+    {label:"BDP",title:"BookDepot",      url:`https://www.bookdepot.com/Store/Search?qf=All&q=${isbn13}`,          bg:"#37474F"},
     {label:"TBR",title:"TextbookRush",   url:`https://www.textbookrush.com/search/?q=${isbn13}`,                   bg:"#1B5E20"},
-    {label:"GTB",title:"GoTextbooks (Chegg buyback)",url:`https://www.gotextbooks.com/?q=${isbn13}`,               bg:"#E85E00"},
-    {label:"VLR",title:"ValoreBooks Sellback",url:`https://www.valore.com/sellback?isbn=${isbn13}`,                bg:"#1A237E"},
+    {label:"GTB",title:"GoTextbooks",    url:`https://www.gotextbooks.com/search?q=${isbn13}`,                     bg:"#E85E00"},
+    {label:"VLR",title:"ValoreBooks Sellback",url:`https://www.valore.com/sellback`,                               bg:"#1A237E"},
   ];
   const A = ({label,title,url,bg,dim}) => (
     <a key={label} href={url} target="_blank" rel="noreferrer" title={title}
