@@ -417,9 +417,9 @@ function SourceLinks({ isbn, asin, C, bookTitle="", bookAuthor="" }) {
     {label:"DEP",title:"Depop",          url:`https://www.depop.com/search/?q=${titleQuery}`,                      bg:"#FF4040"},
     {label:"PSH",title:"Poshmark",       url:`https://poshmark.com/search?query=${titleQuery}&type=listings`,      bg:"#C2185B"},
     {label:"ETY",title:"Etsy",           url:`https://www.etsy.com/search?q=${titleQuery}`,                        bg:"#F45800"},
+    {label:"BST",title:"Bookstores.com (= TextbookRush) — alım + buyback", url:`https://www.bookstores.com/books/${isbn13}`,                    bg:"#1B5E20"},
     {label:"BPL",title:"BookPal",        url:`https://www.bookpal.com/search?q=${isbn13}`,                         bg:"#0277BD"},
     {label:"BDP",title:"BookDepot",      url:`https://www.bookdepot.com/Store/Search?qf=All&q=${isbn13}`,          bg:"#37474F"},
-    {label:"TBR",title:"TextbookRush",   url:`https://www.textbookrush.com/search/?q=${isbn13}`,                   bg:"#1B5E20"},
     {label:"GTB",title:"GoTextbooks",    url:`https://www.gotextbooks.com/search?q=${isbn13}`,                     bg:"#E85E00"},
     {label:"VLR",title:"ValoreBooks Sellback",url:`https://www.valore.com/sellback`,                               bg:"#1A237E"},
   ];
