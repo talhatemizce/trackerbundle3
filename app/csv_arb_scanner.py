@@ -501,48 +501,111 @@ async def _get_buyback_prices(isbn: str) -> Dict:
 
 
 async def _get_bookfinder_offers(isbn: str) -> List[Dict]:
-    """BookFinder kaynaklarından (AbeBooks, ThriftBooks...) fiyat çek."""
+    """
+    BooksRun Buy Price API — BookFinder yerine.
+    BookFinder: 403/IP block nedeniyle neredeyse hiç çalışmıyor.
+    BooksRun: resmi API, ücretsiz, BOOKSRUN_API_KEY ile çalışır.
+
+    GET https://booksrun.com/api/price/buy/{isbn}?key={key}
+    Response: {"result": {"status": "success", "text": {"Used": 12.50, "New": 28.99}}}
+    """
     try:
-        from app.bookfinder_client import fetch_bookfinder
-        result = await fetch_bookfinder(isbn, condition="all")
-        if not result.get("ok"):
+        from app.core.config import get_settings
+        s = get_settings()
+        key = s.booksrun_api_key
+        if not key:
+            logger.debug("BOOKSRUN_API_KEY yok — buy price atlandı")
             return []
 
-        offers = []
-        for cond_key, cond_label in [("new", "new"), ("used", "used")]:
-            block = result.get(cond_key)
-            if not block:
-                continue
-            for o in (block.get("offers") or []):
-                buy = o.get("total", 0)
-                if buy <= 0:
-                    continue
-                source_raw = o.get("seller", "bookfinder").lower()
-                source = "abebooks" if "abe" in source_raw else \
-                         "thriftbooks" if "thrift" in source_raw else \
-                         "betterworldbooks" if "better" in source_raw else \
-                         source_raw
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=12) as client:
+            r = await client.get(
+                f"https://booksrun.com/api/price/buy/{isbn}",
+                params={"key": key},
+                headers={"Accept": "application/json"},
+            )
+            if r.status_code != 200:
+                logger.debug("BooksRun buy HTTP %d isbn=%s", r.status_code, isbn)
+                return []
+
+            data = r.json()
+            result = data.get("result", {})
+            if result.get("status") != "success":
+                return []
+
+            prices = result.get("text", {})
+            offers = []
+
+            # Used condition
+            used_price = None
+            for key_name in ("Used", "used", "Average", "average"):
+                val = prices.get(key_name)
+                if val:
+                    try:
+                        used_price = float(val)
+                        break
+                    except (TypeError, ValueError):
+                        pass
+
+            if used_price and used_price > 0:
                 offers.append({
-                    "source": source,
-                    "source_condition": cond_label,
-                    "buy_price": round(float(buy), 2),
-                    "item_id": o.get("sid", ""),
+                    "source": "booksrun",
+                    "source_condition": "used",
+                    "buy_price": round(used_price, 2),
+                    "item_id": f"booksrun_used_{isbn}",
                     "title": "",
-                    "url": o.get("url", ""),
+                    "url": f"https://booksrun.com/books/{isbn}",
+                    "image_url": "",
+                    "description": "BooksRun Used",
+                    "seller_name": "BooksRun",
+                    "seller_feedback": None,
+                    "match_quality": "CONFIRMED",
+                    "match_reason": "booksrun_api",
+                    "query_mode": "api",
+                    "isbn_normalized": isbn,
+                    "isbn_valid": True,
+                    "isbn_validation_reason": "VALID_ISBN13",
                 })
-        # Her source × condition için en ucuz
-        best: Dict[Tuple[str, str], Dict] = {}
-        for o in sorted(offers, key=lambda x: x["buy_price"]):
-            key = (o["source"], o["source_condition"])
-            if key not in best:
-                best[key] = o
-        return list(best.values())
+
+            # New condition
+            new_price = None
+            for key_name in ("New", "new"):
+                val = prices.get(key_name)
+                if val:
+                    try:
+                        new_price = float(val)
+                        break
+                    except (TypeError, ValueError):
+                        pass
+
+            if new_price and new_price > 0:
+                offers.append({
+                    "source": "booksrun",
+                    "source_condition": "new",
+                    "buy_price": round(new_price, 2),
+                    "item_id": f"booksrun_new_{isbn}",
+                    "title": "",
+                    "url": f"https://booksrun.com/books/{isbn}",
+                    "image_url": "",
+                    "description": "BooksRun New",
+                    "seller_name": "BooksRun",
+                    "seller_feedback": None,
+                    "match_quality": "CONFIRMED",
+                    "match_reason": "booksrun_api",
+                    "query_mode": "api",
+                    "isbn_normalized": isbn,
+                    "isbn_valid": True,
+                    "isbn_validation_reason": "VALID_ISBN13",
+                })
+
+            if offers:
+                logger.debug("BooksRun buy isbn=%s → %d offers", isbn, len(offers))
+            return offers
+
     except Exception as e:
-        logger.warning("BookFinder offers failed isbn=%s: %s", isbn, e)
+        logger.warning("BooksRun buy error isbn=%s: %s", isbn, e)
         return []
 
-
-# ── Ana tarayıcı ─────────────────────────────────────────────────────────────
 
 async def _scan_one(
     isbn: str,
