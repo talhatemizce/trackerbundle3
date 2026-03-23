@@ -1,0 +1,11 @@
+{
+  "itemId": "v1|111000000009|0",
+  "title": "Test Book Zero Price",
+  "price": {"value": "0.00", "currency": "USD"},
+  "condition": "Good",
+  "conditionId": "3000",
+  "shippingOptions": [
+    {"shippingCostType": "FLAT", "shippingCost": {"value": "0.00", "currency": "USD"}}
+  ],
+  "itemWebUrl": "https://www.ebay.com/itm/111000000009"
+}

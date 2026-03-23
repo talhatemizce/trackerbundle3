@@ -1,0 +1,9 @@
+{
+  "itemId": "v1|111000000010|0",
+  "title": "Test Book Price As String",
+  "price": "19.99",
+  "condition": "Good",
+  "conditionId": "3000",
+  "shippingOptions": [],
+  "itemWebUrl": "https://www.ebay.com/itm/111000000010"
+}

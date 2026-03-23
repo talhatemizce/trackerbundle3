@@ -1,0 +1,18 @@
+{
+  "itemId": "v1|123456789012|0",
+  "title": "Introduction to Algorithms, 3rd Edition",
+  "price": {"value": "8.99", "currency": "USD"},
+  "condition": "Good",
+  "conditionId": "3000",
+  "shippingOptions": [
+    {"shippingCostType": "CALCULATED", "shippingCost": {"value": null, "currency": "USD"}}
+  ],
+  "itemWebUrl": "https://www.ebay.com/itm/123456789012",
+  "image": {"imageUrl": "https://i.ebayimg.com/full_real.jpg"},
+  "thumbnailImages": [{"imageUrl": "https://i.ebayimg.com/full_real_thumb.jpg"}],
+  "seller": {"username": "usedbooks_warehouse", "feedbackPercentage": "99.1"},
+  "shortDescription": "Good condition, minor wear",
+  "_match_quality": "UNVERIFIED_KEYWORD",
+  "_verification_reason": "",
+  "_query_mode": "keyword_fallback"
+}

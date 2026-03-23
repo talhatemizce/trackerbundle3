@@ -1,0 +1,9 @@
+{
+  "itemId": "v1|111000000004|0",
+  "title": "Test Book Shipping Null",
+  "price": {"value": "15.00", "currency": "USD"},
+  "condition": "Good",
+  "conditionId": "3000",
+  "shippingOptions": null,
+  "itemWebUrl": "https://www.ebay.com/itm/111000000004"
+}

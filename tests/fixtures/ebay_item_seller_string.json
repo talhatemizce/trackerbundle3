@@ -1,0 +1,12 @@
+{
+  "itemId": "v1|111000000012|0",
+  "title": "Test Book Seller String",
+  "price": {"value": "9.99", "currency": "USD"},
+  "condition": "Good",
+  "conditionId": "3000",
+  "shippingOptions": [
+    {"shippingCostType": "FLAT", "shippingCost": {"value": "3.99", "currency": "USD"}}
+  ],
+  "itemWebUrl": "https://www.ebay.com/itm/111000000012",
+  "seller": "some_seller_name"
+}

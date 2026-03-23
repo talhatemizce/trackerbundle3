@@ -1,0 +1,8 @@
+{
+  "itemId": "v1|111000000005|0",
+  "title": "Test Book No Shipping Key",
+  "price": {"value": "10.00", "currency": "USD"},
+  "condition": "Good",
+  "conditionId": "3000",
+  "itemWebUrl": "https://www.ebay.com/itm/111000000005"
+}

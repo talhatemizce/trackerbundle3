@@ -1,0 +1,15 @@
+{
+  "itemId": "v1|111000000013|0",
+  "title": "Test Book Thumbnail List",
+  "price": {"value": "11.00", "currency": "USD"},
+  "condition": "Good",
+  "conditionId": "3000",
+  "shippingOptions": [
+    {"shippingCostType": "FLAT", "shippingCost": {"value": "3.99", "currency": "USD"}}
+  ],
+  "itemWebUrl": "https://www.ebay.com/itm/111000000013",
+  "thumbnailImages": [
+    {"imageUrl": "https://i.ebayimg.com/thumb.jpg"},
+    {"imageUrl": "https://i.ebayimg.com/thumb2.jpg"}
+  ]
+}
