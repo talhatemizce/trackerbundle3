@@ -535,6 +535,30 @@ async def _get_bookfinder_offers(isbn: str) -> List[Dict]:
         return []
 
 
+async def _get_bookdepot_offers(isbn: str) -> List[Dict]:
+    """BookDepot envanterinden alım fiyatı çek (lokal JSON store)."""
+    try:
+        from app.core.json_store import _read_unsafe
+        from app.core.config import get_settings
+        p = get_settings().resolved_data_dir() / "bookdepot_inventory.json"
+        data = _read_unsafe(p, default={"items": {}})
+        store = data.get("items", {})
+        item = store.get(isbn)
+        if not item or not item.get("price") or item["price"] <= 0:
+            return []
+        return [{
+            "source": "bookdepot",
+            "source_condition": "used",
+            "buy_price": round(float(item["price"]), 2),
+            "item_id": f"bd_{isbn}",
+            "title": item.get("title", "")[:120],
+            "url": item.get("url", ""),
+        }]
+    except Exception as e:
+        logger.warning("BookDepot offers failed isbn=%s: %s", isbn, e)
+        return []
+
+
 # ── Ana tarayıcı ─────────────────────────────────────────────────────────────
 
 async def _scan_one(
@@ -581,10 +605,11 @@ async def _scan_one(
         except Exception:
             return {}
 
-    amazon_data, ebay_offers, bf_offers, buyback_data, buyback_trend_data, book_meta = await asyncio.gather(
+    amazon_data, ebay_offers, bf_offers, bd_offers, buyback_data, buyback_trend_data, book_meta = await asyncio.gather(
         _get_amazon_prices(asin),
         _get_ebay_offers(isbn, filters=filters),
         _get_bookfinder_offers(isbn),
+        _get_bookdepot_offers(isbn),
         _get_buyback_prices(isbn),
         _get_buyback_trend_safe(isbn),
         _get_book_meta_safe(isbn),
@@ -597,6 +622,8 @@ async def _scan_one(
         ebay_offers = []
     if isinstance(bf_offers, Exception):
         bf_offers = []
+    if isinstance(bd_offers, Exception):
+        bd_offers = []
     if isinstance(buyback_data, Exception):
         buyback_data = {}
     if isinstance(buyback_trend_data, Exception):
@@ -607,7 +634,7 @@ async def _scan_one(
     # Hata itemlarını filtrele ama reason kaydet
     ebay_error = next((o["_error"] for o in (ebay_offers or []) if "_error" in o), None)
     bf_error   = next((o["_error"] for o in (bf_offers   or []) if "_error" in o), None)
-    all_offers = [o for o in (ebay_offers or []) + (bf_offers or []) if "_error" not in o]
+    all_offers = [o for o in (ebay_offers or []) + (bf_offers or []) + (bd_offers or []) if "_error" not in o]
 
     # Kullanıcı alım fiyatı (generic CSV) → sentetik offer ekle
     csv_price = isbn_buy_prices.get(isbn) or isbn_buy_prices.get(asin)
