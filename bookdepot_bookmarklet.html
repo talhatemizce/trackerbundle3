@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>BookDepot → TB3 Bookmarklet Kurulumu</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f1a; color: #e0e0e0; min-height: 100vh; padding: 40px 20px; }
+  .container { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 26px; color: #7c5cbf; margin-bottom: 6px; }
+  .subtitle { color: #888; font-size: 14px; margin-bottom: 28px; }
+  .step { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 22px; margin-bottom: 16px; }
+  .step-header { display: flex; align-items: center; font-weight: 600; font-size: 15px; margin-bottom: 14px; }
+  .num { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: #7c5cbf; border-radius: 50%; font-weight: bold; font-size: 13px; margin-right: 10px; flex-shrink: 0; }
+  .info { background: #0d2a1a; border: 1px solid #1a5a2a; border-radius: 8px; padding: 14px; margin-bottom: 16px; color: #66bb6a; font-size: 13px; line-height: 1.7; }
+  .warn { background: #2a1a00; border: 1px solid #5a3a00; border-radius: 8px; padding: 14px; margin-bottom: 16px; color: #ffa726; font-size: 13px; line-height: 1.7; }
+  .code-wrap { position: relative; margin: 10px 0; }
+  .code { background: #0a0a15; border: 1px solid #2a2a4a; border-radius: 6px; padding: 12px 14px; padding-right: 70px; font-family: 'Courier New', monospace; font-size: 12px; color: #a0cfff; white-space: pre; overflow-x: auto; }
+  .cp { position: absolute; top: 8px; right: 8px; padding: 4px 10px; background: #2a2a4a; border: 1px solid #3a3a6a; border-radius: 4px; color: #ccc; cursor: pointer; font-size: 11px; user-select: none; }
+  .cp:hover { background: #3a3a6a; color: #fff; }
+  .bm-btn { display: inline-block; padding: 13px 24px; background: linear-gradient(135deg, #7c5cbf, #5a3f9e); color: white; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 15px; cursor: grab; user-select: none; box-shadow: 0 4px 15px rgba(124,92,191,0.4); transition: transform .1s; }
+  .bm-btn:active { cursor: grabbing; transform: scale(0.97); }
+  .drag-hint { color: #888; font-size: 12px; margin-top: 12px; }
+  .drag-hint b { color: #7c5cbf; }
+  .url-row { display: flex; gap: 8px; margin-top: 8px; }
+  .url-in { flex: 1; padding: 10px 13px; background: #0a0a15; border: 1px solid #2a2a4a; border-radius: 6px; color: #e0e0e0; font-size: 13px; }
+  .url-in:focus { outline: none; border-color: #7c5cbf; }
+  .gen-btn { padding: 10px 16px; background: #7c5cbf; border: none; border-radius: 6px; color: white; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .gen-btn:hover { background: #9370db; }
+  #bm-area { display: none; margin-top: 16px; padding: 16px; background: #0d0d20; border: 2px dashed #7c5cbf; border-radius: 8px; text-align: center; }
+  ol { padding-left: 20px; line-height: 2.4; color: #aaa; font-size: 14px; }
+  li b { color: #e0e0e0; }
+  .tag { display: inline-block; background: #1a2a1a; color: #4caf50; border: 1px solid #2a4a2a; border-radius: 4px; padding: 1px 7px; font-size: 11px; margin-left: 4px; }
+  .status-box { margin-top: 10px; padding: 10px; background: #0a0a15; border-radius: 6px; font-family: monospace; font-size: 12px; color: #66bb6a; min-height: 30px; }
+  .check-btn { padding: 8px 16px; background: #1a3a1a; border: 1px solid #2a5a2a; border-radius: 6px; color: #66bb6a; cursor: pointer; font-size: 12px; margin-top: 8px; }
+  .check-btn:hover { background: #2a4a2a; }
+  h3 { color: #aaa; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📚 BookDepot → TrackerBundle3</h1>
+  <p class="subtitle">bookdepot.com'daki kitapları tek tıkla TrackerBundle3 envanterine aktar</p>
+
+  <div class="info">
+    <b>✅ Backend endpoint'leri hazır!</b><br>
+    <code>POST /bookdepot/import</code> ve <code>GET /bookdepot/inventory</code> endpoint'leri app/main.py'e eklendi.<br>
+    Sadece VPS URL'ini gir ve bookmarklet'i bookmark çubuğuna sürükle.
+  </div>
+
+  <!-- ADIM 1: URL -->
+  <div class="step">
+    <div class="step-header"><span class="num">1</span> VPS API URL'ini Gir</div>
+    <p style="font-size:13px;color:#aaa;margin-bottom:10px;">
+      VPS'in HTTP URL'si (Cloudflare tunnel varsa HTTPS URL'si):
+    </p>
+    <div class="url-row">
+      <input type="text" class="url-in" id="apiUrl" placeholder="http://129.153.161.88:8000  veya  https://abc.trycloudflare.com">
+      <button class="gen-btn" onclick="gen()">🔄 Bookmarklet Oluştur</button>
+    </div>
+    <p style="font-size:11px;color:#666;margin-top:6px;">
+      bookdepot.com HTTPS kullandığı için HTTP URL ile çalışmaz. Cloudflare Tunnel gerekiyorsa 2. adıma bak.
+    </p>
+  </div>
+
+  <!-- ADIM 2: BOOKMARKLET -->
+  <div class="step">
+    <div class="step-header"><span class="num">2</span> Bookmarklet'i Sürükle</div>
+    <div id="bm-area">
+      <a id="bmLink" href="#" class="bm-btn">📦 BookDepot → TB3</a>
+      <p class="drag-hint">👆 Bu butonu <b>tarayıcının yer imi/bookmark çubuğuna</b> sürükle<br>
+      (Yer imi çubuğu yoksa: Chrome → <b>Ctrl+Shift+B</b>)</p>
+    </div>
+    <div id="no-bm-area" style="color:#888;font-size:13px;">
+      ← Önce URL gir ve "Bookmarklet Oluştur"a tıkla
+    </div>
+  </div>
+
+  <!-- ADIM 3: CLOUDFLARE (OPTIONAL) -->
+  <div class="step">
+    <div class="step-header"><span class="num">3</span> Cloudflare Tunnel (Sadece HTTPS Gerekiyorsa)</div>
+    <p style="font-size:13px;color:#aaa;margin-bottom:8px;">
+      bookdepot.com HTTPS → VPS HTTP bağlantısı tarayıcı tarafından bloklanır.<br>
+      Eğer VPS'te zaten HTTPS/nginx yoksa bu komutu çalıştır:
+    </p>
+    <div class="code-wrap">
+      <div class="code" id="cf-cmd">curl -L -o ~/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x ~/cloudflared
+nohup ~/cloudflared tunnel --url http://localhost:8000 > /tmp/cf.log 2>&1 &
+sleep 5 && grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/cf.log | head -1</div>
+      <button class="cp" onclick="doCopy('cf-cmd',this)">Kopyala</button>
+    </div>
+    <p style="font-size:12px;color:#888;">Son satırda çıkan <code>https://xxx.trycloudflare.com</code> URL'ini 1. adıma yapıştır.</p>
+  </div>
+
+  <!-- ADIM 4: KULLANIM -->
+  <div class="step">
+    <div class="step-header"><span class="num">4</span> Nasıl Kullanılır</div>
+    <ol>
+      <li><b>bookdepot.com</b>'da herhangi bir arama veya kategori sayfasına git</li>
+      <li>Yer imi çubuğundaki <b>📦 BookDepot → TB3</b>'e tıkla</li>
+      <li>Sayfadaki tüm kitaplar otomatik taranır ve VPS'e gönderilir</li>
+      <li>Sağ üstte <b>yeşil ✅ bildirim</b> kaç kitap eklendiğini gösterir</li>
+      <li>Birden fazla sayfa varsa her sayfada tekrar tıkla</li>
+    </ol>
+  </div>
+
+  <!-- ADIM 5: TEST -->
+  <div class="step">
+    <div class="step-header"><span class="num">5</span> Bağlantıyı Test Et</div>
+    <button class="check-btn" onclick="testConn()">🔌 Bağlantıyı Test Et</button>
+    <div class="status-box" id="statusBox">API URL'i gir ve test et...</div>
+
+    <div style="margin-top:16px;">
+      <h3>Terminalde test:</h3>
+      <div class="code-wrap">
+        <div class="code" id="curl-test">curl http://129.153.161.88:8000/bookdepot/inventory</div>
+        <button class="cp" onclick="doCopy('curl-test',this)">Kopyala</button>
+      </div>
+      <p style="font-size:12px;color:#888;margin-top:4px;">
+        Beklenen: <code style="color:#4caf50">{"ok":true,"count":0,"items":[]}</code>
+      </p>
+    </div>
+  </div>
+
+  <!-- ADIM 6: ENVANTERİ GÖR -->
+  <div class="step">
+    <div class="step-header"><span class="num">6</span> Envanteri Görüntüle</div>
+    <div class="code-wrap">
+      <div class="code" id="inv-cmd"># Tüm envanter
+curl http://129.153.161.88:8000/bookdepot/inventory
+
+# Fiyat filtreli (max $5)
+curl "http://129.153.161.88:8000/bookdepot/inventory?max_price=5"
+
+# Envanteri temizle
+curl -X DELETE http://129.153.161.88:8000/bookdepot/inventory</div>
+      <button class="cp" onclick="doCopy('inv-cmd',this)">Kopyala</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+var BASE_URL = "http://129.153.161.88:8000";
+
+function gen() {
+  var url = document.getElementById('apiUrl').value.trim().replace(/\/+$/, '');
+  if (!url) { alert('URL gir!'); return; }
+  if (url.startsWith('http://') && !url.includes('localhost') && !url.includes('127.0.0.1')) {
+    if (!confirm('HTTP URL girdin. bookdepot.com HTTPS kullandığı için tarayıcı bu isteği bloke edebilir.\nCloudflare tunnel HTTPS URL\'i kullanmanı öneririm.\n\nYine de devam et?')) return;
+  }
+  BASE_URL = url;
+
+  // curl test komutlarını güncelle
+  document.getElementById('curl-test').textContent = 'curl ' + url + '/bookdepot/inventory';
+  document.getElementById('inv-cmd').textContent =
+    '# Tüm envanter\ncurl ' + url + '/bookdepot/inventory\n\n' +
+    '# Fiyat filtreli (max $5)\ncurl "' + url + '/bookdepot/inventory?max_price=5"\n\n' +
+    '# Envanteri temizle\ncurl -X DELETE ' + url + '/bookdepot/inventory';
+
+  // Bookmarklet kodu oluştur
+  var code = '(function(){' +
+    'var items=[];' +
+    'document.querySelectorAll(".grid-item").forEach(function(el){' +
+      'var isbnEl=Array.from(el.querySelectorAll("span.small")).find(function(s){return s.textContent.includes("ISBN:");});' +
+      'var isbn=isbnEl?isbnEl.textContent.replace("ISBN:","").trim():null;' +
+      'if(!isbn)return;' +
+      'var titleEl=el.querySelector("h2");' +
+      'var title=titleEl?titleEl.textContent.trim():"";' +
+      'var redEl=el.querySelector("span[style*=\\"d1282f\\"]");' +
+      'var allSpans=el.querySelectorAll("strong span");' +
+      'var plainEl=null;' +
+      'for(var i=0;i<allSpans.length;i++){if(!allSpans[i].style.textDecoration&&!allSpans[i].style.color){plainEl=allSpans[i];break;}}' +
+      'var priceStr=redEl?redEl.textContent:(plainEl?plainEl.textContent:null);' +
+      'var price=priceStr?parseFloat(priceStr.replace("$","")):null;' +
+      'var smallDiv=el.querySelector(".clearfix .small");' +
+      'var qty=null;' +
+      'if(smallDiv){var m=smallDiv.textContent.match(/Qty:\\s*([\\d+]+)/);if(m)qty=m[1];}' +
+      'var linkEl=el.querySelector("a[href*=\\"/Store/Details/\\"]");' +
+      'var bookUrl=linkEl?"https://www.bookdepot.com"+linkEl.getAttribute("href"):"";' +
+      'if(isbn&&price)items.push({isbn:isbn,title:title,price:price,qty:qty,url:bookUrl});' +
+    '});' +
+    'if(!items.length){alert("Sayfada kitap bulunamadı! .grid-item elementleri yok.");return;}' +
+    'var n=document.createElement("div");' +
+    'n.style.cssText="position:fixed;top:20px;right:20px;background:#1a1a2e;border:2px solid #7c5cbf;color:#e0e0e0;padding:14px 18px;border-radius:10px;z-index:99999;font-family:sans-serif;font-size:14px;box-shadow:0 4px 20px rgba(0,0,0,.5);min-width:220px;";' +
+    'n.textContent="⏳ "+items.length+" kitap gönderiliyor...";' +
+    'document.body.appendChild(n);' +
+    'fetch("' + url + '/bookdepot/import",{' +
+      'method:"POST",' +
+      'headers:{"Content-Type":"application/json"},' +
+      'body:JSON.stringify({items:items,page_url:location.href})' +
+    '}).then(function(r){return r.json();}).then(function(d){' +
+      'n.style.borderColor=d.ok?"#4caf50":"#f44336";' +
+      'n.textContent=d.ok?"✅ "+d.inserted+" kitap eklendi (toplam: "+d.total+")":"❌ Hata: "+(d.error||"bilinmiyor");' +
+      'setTimeout(function(){n.remove();},4000);' +
+    '}).catch(function(e){' +
+      'n.style.borderColor="#f44336";' +
+      'n.style.color="#ff6b6b";' +
+      'n.textContent="❌ Bağlantı hatası: "+e.message;' +
+      'setTimeout(function(){n.remove();},6000);' +
+    '});' +
+  '})();';
+
+  document.getElementById('bmLink').href = 'javascript:' + encodeURIComponent(code);
+  document.getElementById('bm-area').style.display = 'block';
+  document.getElementById('no-bm-area').style.display = 'none';
+}
+
+function testConn() {
+  var url = document.getElementById('apiUrl').value.trim().replace(/\/+$/, '') || BASE_URL;
+  var box = document.getElementById('statusBox');
+  box.style.color = '#888';
+  box.textContent = '⏳ Bağlantı test ediliyor: ' + url + '/bookdepot/inventory ...';
+  fetch(url + '/bookdepot/inventory')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      box.style.color = '#4caf50';
+      box.textContent = '✅ Bağlantı başarılı! Envanterde ' + d.count + ' kitap var.';
+    })
+    .catch(function(e) {
+      box.style.color = '#f44336';
+      box.textContent = '❌ Bağlantı hatası: ' + e.message + '\nCORS veya mixed-content sorunu olabilir — Cloudflare tunnel dene.';
+    });
+}
+
+function doCopy(id, btn) {
+  var text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    var old = btn.textContent;
+    btn.textContent = '✓ Kopyalandı';
+    btn.style.color = '#4caf50';
+    setTimeout(function() { btn.textContent = old; btn.style.color = ''; }, 1800);
+  }).catch(function() {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = '✓';
+    setTimeout(function() { btn.textContent = 'Kopyala'; }, 1500);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('apiUrl').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') gen();
+  });
+});
+</script>
+</body>
+</html>
