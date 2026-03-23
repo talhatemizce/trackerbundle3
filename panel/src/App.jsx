@@ -2550,7 +2550,7 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
             ? <>
                 <R label="Durum" val={
                   market.reason==="ip_blocked"
-                    ? <span style={{color:"#f97316",fontWeight:600}}>⚠️ IP engellendi</span>
+                    ? <span style={{color:"#f97316",fontWeight:600}}>⚠️ Fiyat bulunamadı</span>
                     : <span style={{color:"#94a3b8"}}>{market.reason||"no_prices_found"}</span>
                 }/>
                 {market.hint && <R label="Açıklama" val={market.hint}/>}
@@ -2558,7 +2558,7 @@ function VerifyDetailDrawer({ C, data, onClose, row }) {
                   <div style={{margin:"4px 16px 6px",padding:"6px 10px",borderRadius:6,
                     borderLeft:"3px solid #f97316",background:"#f9731610",
                     fontSize:10,color:"#f97316",lineHeight:1.5}}>
-                    BookFinder/AbeBooks sunucu IP'nizi engelliyor. Piyasa fiyatı doğrulaması yapılamıyor.
+                    BooksRun API ile piyasa fiyatı kontrol edildi. BOOKSRUN_API_KEY eksikse doğrulama yapılamaz.
                   </div>
                 )}
               </>
@@ -3665,7 +3665,7 @@ function DetailDrawer({
                           <div style={{fontSize:12,fontWeight:700,color:C.purple||"#7c3aed",marginBottom:6}}>
                             ⏳ Fiyatlar çekiliyor…
                           </div>
-                          <div style={{fontSize:9,color:C.muted3,lineHeight:1.6}}>AbeBooks · ThriftBooks · BetterWorldBooks<br/>Biblio · Alibris · GoodwillBooks · HPB · BookFinder</div>
+                          <div style={{fontSize:9,color:C.muted3,lineHeight:1.6}}>BooksRun Buy API (Used + New fiyatları)</div>
                           <div style={{fontSize:9,color:C.muted3,marginTop:4}}>8 kaynak paralel · 10-20 saniye</div>
                         </div>
                       )}

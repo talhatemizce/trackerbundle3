@@ -5,7 +5,7 @@ AI olmadan saf HTTP/API ile ilan doğrulama.
 
 Her fırsat için kontrol eder:
   1. eBay → item hâlâ aktif mi? fiyat değişti mi? ISBN uyuşuyor mu?
-  2. AbeBooks/BookFinder → kaynak fiyat gerçek mi?
+  2. BooksRun Buy API → kaynak fiyat gerçek mi?
 
 Sonuç:
   VERIFIED         — her şey tutarlı, ilan geçerli
@@ -260,78 +260,62 @@ async def _verify_abebooks_price(
     expected_price: float,
     client: httpx.AsyncClient,
 ) -> Dict[str, Any]:
-    """AbeBooks ve BookFinder üzerinden mevcut piyasa tabanını doğrula.
-
-    Strateji:
-      1. Önce cache'e bak (force=False).
-      2. Cache'de veri yoksa veya fiyat çıkmadıysa → live fetch (force=True).
-      3. Her iki girişim de başarısızsa → ERROR döndür.
     """
-    from app.bookfinder_client import fetch_bookfinder
+    BooksRun Buy API üzerinden piyasa fiyatı doğrula.
+    BookFinder/AbeBooks VPS IP'sini engelliyor — BooksRun resmi API kullanıyor.
 
-    def _extract_cheapest(result: dict):
-        """Sonuç dict'inden en ucuz fiyat + kaynağı çıkar."""
-        cheapest = None
-        source = None
-        for cond_key in ("used", "new"):
-            block = result.get(cond_key)
-            if not block:
-                continue
-            for offer in (block.get("offers") or []):
-                # Bookfinder offers use "total" (price+shipping), fallback to "price"
-                p = offer.get("total") or offer.get("total_price") or offer.get("price")
-                if p is not None:
-                    try:
-                        pf = float(p)
-                        if cheapest is None or pf < cheapest:
-                            cheapest = pf
-                            source = offer.get("seller") or offer.get("source", "")
-                    except (TypeError, ValueError):
-                        pass
-        return cheapest, source
+    GET https://booksrun.com/api/price/buy/{isbn}?key={key}
+    Response: {"result": {"status": "success", "text": {"Used": 12.50, "New": 28.99}}}
+    """
+    from app.core.config import get_settings
+    s = get_settings()
+    key = s.booksrun_api_key
+    if not key:
+        return {
+            "status": "ERROR",
+            "reason": "no_api_key",
+            "hint": "BOOKSRUN_API_KEY eksik — booksrun.com/page/api-reference'den ücretsiz al",
+            "data_source": "BooksRun",
+        }
 
     try:
-        # Adım 1: cache
-        result = await fetch_bookfinder(isbn, condition="all", force=False)
-        from_cache = result.get("cached", False)
-        cache_age_s = result.get("cache_age_s", 0)
+        r = await client.get(
+            f"https://booksrun.com/api/price/buy/{isbn}",
+            params={"key": key},
+            headers={"Accept": "application/json"},
+            timeout=12,
+        )
 
-        cheapest, source = (None, None)
-        if result.get("ok"):
-            cheapest, source = _extract_cheapest(result)
-            # Fast path: bookfinder already computed cheapest at top level
-            if cheapest is None and result.get("cheapest"):
-                cheapest = float(result["cheapest"])
-                source = (result.get("sources") or [""])[0]
+        if r.status_code == 429:
+            return {"status": "ERROR", "reason": "rate_limited", "hint": "BooksRun rate limit", "data_source": "BooksRun"}
+        if r.status_code != 200:
+            return {"status": "ERROR", "reason": f"http_{r.status_code}", "data_source": "BooksRun"}
 
-        # Adım 2: cache'de fiyat çıkmadıysa live fetch yap
-        live_result = None
+        data = r.json()
+        result = data.get("result", {})
+        if result.get("status") != "success":
+            return {"status": "ERROR", "reason": "no_data", "hint": "ISBN BooksRun'da bulunamadı", "data_source": "BooksRun"}
+
+        prices = result.get("text", {})
+
+        # En ucuz fiyatı bul: Used → Average → New öncelik sırası
+        cheapest = None
+        cheapest_source = None
+        for label in ("Used", "used", "Average", "average", "New", "new"):
+            val = prices.get(label)
+            if val:
+                try:
+                    pf = float(val)
+                    if pf > 0 and (cheapest is None or pf < cheapest):
+                        cheapest = pf
+                        cheapest_source = f"BooksRun ({label})"
+                except (TypeError, ValueError):
+                    pass
+
         if cheapest is None:
-            logger.info("bookfinder isbn=%s cache miss/empty — live fetch", isbn)
-            live_result = await fetch_bookfinder(isbn, condition="all", force=True)
-            from_cache = False
-            cache_age_s = 0
-            if live_result.get("ok"):
-                cheapest, source = _extract_cheapest(live_result)
-                if cheapest is None and live_result.get("cheapest"):
-                    cheapest = float(live_result["cheapest"])
-                    source = (live_result.get("sources") or [""])[0]
+            return {"status": "ERROR", "reason": "no_prices_found", "hint": "BooksRun fiyat verisi yok", "data_source": "BooksRun"}
 
-        if cheapest is None:
-            # Surface blocked/hint info if available
-            err_result = live_result or result
-            hint = err_result.get("hint", "")
-            is_blocked = "engel" in hint.lower() or "403" in str(err_result.get("error", ""))
-            reason = "ip_blocked" if is_blocked else "no_prices_found"
-            return {
-                "status": "ERROR",
-                "reason": reason,
-                "hint": hint or ("Sunucu IP'si BookFinder tarafından engelleniyor (403)" if is_blocked else "Fiyat verisi bulunamadı"),
-                "from_cache": from_cache,
-                "data_source": "BookFinder/AbeBooks",
-            }
-
-        delta = round(cheapest - expected_price, 2)
+        delta     = round(cheapest - expected_price, 2)
         delta_pct = round(delta / expected_price * 100, 1) if expected_price else 0
 
         if cheapest > expected_price * 1.10:
@@ -341,25 +325,25 @@ async def _verify_abebooks_price(
         else:
             status = "VERIFIED"
 
+        logger.debug("BooksRun market check isbn=%s cheapest=%.2f expected=%.2f → %s",
+                     isbn, cheapest, expected_price, status)
+
         return {
             "status": status,
             "cheapest_found": cheapest,
             "expected_price": expected_price,
             "price_delta": delta,
             "price_delta_pct": delta_pct,
-            "cheapest_source": source,
-            "from_cache": from_cache,
-            "cache_age_s": cache_age_s,
-            "data_source": "BookFinder/AbeBooks",
+            "cheapest_source": cheapest_source,
+            "from_cache": False,
+            "cache_age_s": 0,
+            "data_source": "BooksRun",
         }
 
     except Exception as e:
-        logger.warning("_verify_abebooks isbn=%s error: %s", isbn, e)
-        return {"status": "ERROR", "reason": str(e)[:100]}
+        logger.warning("BooksRun market check error isbn=%s: %s", isbn, e)
+        return {"status": "ERROR", "reason": str(e)[:100], "data_source": "BooksRun"}
 
-
-
-# ─── Görsel doğrulama (Gemini Vision) ────────────────────────────────────────
 
 async def _verify_image_vision(
     image_url: str,
@@ -491,7 +475,7 @@ async def verify_listing(
 ) -> Dict[str, Any]:
     """
     Tek bir arbitraj fırsatını doğrula.
-    Paralel: eBay check + AbeBooks/BookFinder check.
+    Paralel: eBay check + BooksRun Buy API check.
 
     candidate dict beklenen alanlar:
       source, buy_price, item_id (eBay item_id), ebay_url, ebay_title
