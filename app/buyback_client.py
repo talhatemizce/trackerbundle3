@@ -196,7 +196,7 @@ async def _fetch_booksrun(isbn: str, client: httpx.AsyncClient) -> List[Dict]:
                 "good": float(prices.get("Good", 0) or 0),
                 "new": float(prices.get("New", 0) or 0),
             },
-            "url": f"https://booksrun.com/books/sell#{isbn}",
+            "url": f"https://booksrun.com/books/sell#{isbn}?afk=28794",
             "source": "booksrun_api",
         }]
 
