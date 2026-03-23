@@ -1378,7 +1378,11 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
           // Final sonuçlar için result endpoint'i çek (tam liste)
           const rd = await req("/discover/csv-arb/result/" + jid, {}, 30000);
-          if (rd.ok) setScanJob(p => ({...(p||{}), results: rd, scanning: false}));
+          if (rd.ok) {
+            const next = {...(scanJob||{}), results: rd, scanning: false};
+            setScanJob(next);
+            try { localStorage.setItem("tb3_last_scan", JSON.stringify(next)); } catch {}
+          }
           else setScanJob(p => ({...(p||{}), scanning: false}));
         } else if (pd.status === "error") {
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -1394,6 +1398,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
     if (!isbns.length) return;
     stopPolling();
     setScanning(true); setResults(null); setError(""); setJobId(null);
+    try { localStorage.removeItem("tb3_last_scan"); } catch {}
     setProgress({done:0, total:isbns.length, eta_s:null, status:"pending"});
 
     const body = {
@@ -4421,7 +4426,14 @@ function AppReal() {
   }, [blueFilter]);
   const [tab, setTab] = useState("dashboard");
   // ── Global scan state — tab değişince kaybolmaz ──────────────────
-  const [scanJob, setScanJob] = useState(null);       // {jobId, progress, results, error, scanning}
+  const [scanJob, setScanJob] = useState(() => {
+    // Sayfa yenilenince son tarama sonuçlarını geri yükle
+    try {
+      const saved = localStorage.getItem("tb3_last_scan");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null;
+  });       // {jobId, progress, results, error, scanning}
   const scanPollRef = useRef(null);
 
   // ── Watchlist Adayları ───────────────────────────────────────────────────
