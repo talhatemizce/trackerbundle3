@@ -4415,6 +4415,13 @@ function BookstoresTab({ C, theme, push }) {
   const [minPrice, setMinPrice] = useState("");
   const [importing, setImporting] = useState(false);
 
+  // Scan state
+  const [scanJobId, setScanJobId] = useState(null);
+  const [scanProgress, setScanProgress] = useState(null);
+  const [scanResults, setScanResults] = useState(null);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanSort, setScanSort] = useState("roi_desc"); // roi_desc | profit_desc | price_asc
+
   const fetchInventory = useCallback(async () => {
     setLoading(true);
     try {
@@ -4474,6 +4481,56 @@ function BookstoresTab({ C, theme, push }) {
     setImporting(false);
   };
 
+  // Scan functions
+  const startScan = async () => {
+    setScanLoading(true);
+    setScanResults(null);
+    try {
+      const res = await req("/bookdepot/scan", {
+        method: "POST",
+        body: JSON.stringify({ only_viable: true, concurrency: 5 }),
+      });
+      if (res.ok) {
+        setScanJobId(res.job_id);
+        push(`Tarama başladı — ${res.total} ISBN`, "success");
+      } else {
+        push(res.message || "Tarama başlatılamadı", "error");
+        setScanLoading(false);
+      }
+    } catch (e) {
+      push("Tarama hatası: " + e.message, "error");
+      setScanLoading(false);
+    }
+  };
+
+  // Poll scan progress
+  useEffect(() => {
+    if (!scanJobId) return;
+    let alive = true;
+    const poll = async () => {
+      try {
+        const p = await req(`/discover/csv-arb/progress/${scanJobId}`);
+        if (!alive) return;
+        setScanProgress(p);
+        if (p.status === "done" || p.status === "error" || p.status === "cancelled") {
+          setScanLoading(false);
+          setScanResults({ accepted: p.accepted || [], rejected: p.rejected || [] });
+          setScanJobId(null);
+        }
+      } catch {}
+    };
+    poll();
+    const iv = setInterval(poll, 2000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [scanJobId]);
+
+  const scanFiltered = (scanResults?.accepted || [])
+    .sort((a, b) => {
+      if (scanSort === "profit_desc") return (b.profit || 0) - (a.profit || 0);
+      if (scanSort === "price_asc") return (a.buy_price || 0) - (b.buy_price || 0);
+      return (b.roi_pct || 0) - (a.roi_pct || 0);
+    });
+
   // Filter & sort
   const filtered = items
     .filter(i => {
@@ -4492,6 +4549,7 @@ function BookstoresTab({ C, theme, push }) {
 
   const SUB_TABS = [
     { id: "bookdepot", label: "📦 BookDepot", count: items.length },
+    { id: "scan", label: "🔍 Amazon Tarama", count: scanResults?.accepted?.length || 0 },
   ];
 
   return (
@@ -4647,6 +4705,130 @@ function BookstoresTab({ C, theme, push }) {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === "scan" && (
+        <div>
+          {/* Scan controls */}
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+            <button className="add-btn" onClick={startScan}
+              disabled={scanLoading || items.length === 0}
+              style={{ fontSize: 12, padding: "8px 20px" }}>
+              {scanLoading ? "⏳ Taranıyor…" : `🔍 Amazon'da Tara (${items.length} ISBN)`}
+            </button>
+            {scanResults && (
+              <span style={{ fontSize: 11, color: C.muted }}>
+                ✅ {scanResults.accepted.length} karlı · ❌ {scanResults.rejected.length} reddedildi
+              </span>
+            )}
+            {scanResults && (
+              <select className="inp" value={scanSort} onChange={e => setScanSort(e.target.value)}
+                style={{ width: 140 }}>
+                <option value="roi_desc">ROI ↓</option>
+                <option value="profit_desc">Kar ↓</option>
+                <option value="price_asc">Alış ↑</option>
+              </select>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          {scanLoading && scanProgress && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                <span style={{ fontSize: 11, color: C.muted }}>
+                  {scanProgress.progress || 0} / {scanProgress.total || 0} ISBN
+                </span>
+                <span style={{ fontSize: 11, color: C.muted }}>
+                  {scanProgress.eta_s ? `~${Math.ceil(scanProgress.eta_s)}s kaldı` : ""}
+                </span>
+              </div>
+              <div style={{ height: 6, background: C.surface2, borderRadius: 3, overflow: "hidden" }}>
+                <div style={{
+                  width: `${scanProgress.total ? (scanProgress.progress / scanProgress.total * 100) : 0}%`,
+                  height: "100%", background: C.accent, borderRadius: 3, transition: "width .3s",
+                }} />
+              </div>
+              {scanProgress.accepted_count > 0 && (
+                <div style={{ fontSize: 10, color: C.green, marginTop: 4 }}>
+                  Şu ana kadar {scanProgress.accepted_count} karlı bulundu
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* No items warning */}
+          {items.length === 0 && !scanResults && (
+            <div style={{ textAlign: "center", padding: 60, color: C.muted3 }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>📦</div>
+              <div style={{ fontSize: 13 }}>Önce BookDepot sekmesinden kitap ekleyin</div>
+            </div>
+          )}
+
+          {/* Results table */}
+          {scanFiltered.length > 0 && (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "var(--mono)" }}>
+                <thead>
+                  <tr style={{ borderBottom: `2px solid ${C.border}`, textAlign: "left" }}>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}>ISBN</th>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}>Kaynak</th>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Alış $</th>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Amazon $</th>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Kar $</th>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>ROI %</th>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}>Tier</th>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>BSR</th>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scanFiltered.map((r, idx) => {
+                    const tierColor = r.roi_tier === "fire" ? C.orange : r.roi_tier === "good" ? C.green : r.roi_tier === "low" ? C.yellow : C.red;
+                    const tierIcon = r.roi_tier === "fire" ? "🔥" : r.roi_tier === "good" ? "✅" : r.roi_tier === "low" ? "⚠️" : "❌";
+                    return (
+                      <tr key={r.isbn + r.source + idx}
+                        style={{ borderBottom: `1px solid ${C.border}22`, background: idx % 2 === 0 ? "transparent" : C.surface }}>
+                        <td style={{ padding: "7px 6px", color: C.text }}>{r.isbn}</td>
+                        <td style={{ padding: "7px 6px", color: C.muted }}>{r.source}</td>
+                        <td style={{ padding: "7px 6px", color: C.text, textAlign: "right" }}>${(r.buy_price || 0).toFixed(2)}</td>
+                        <td style={{ padding: "7px 6px", color: C.blue, textAlign: "right" }}>${(r.sell_price || r.amazon_sell_price || 0).toFixed(2)}</td>
+                        <td style={{ padding: "7px 6px", color: (r.profit || 0) > 0 ? C.green : C.red, textAlign: "right", fontWeight: 600 }}>
+                          ${(r.profit || 0).toFixed(2)}
+                        </td>
+                        <td style={{ padding: "7px 6px", color: tierColor, textAlign: "right", fontWeight: 600 }}>
+                          {(r.roi_pct || 0).toFixed(1)}%
+                        </td>
+                        <td style={{ padding: "7px 6px" }}>{tierIcon}</td>
+                        <td style={{ padding: "7px 6px", color: C.muted, textAlign: "right" }}>
+                          {r.bsr ? r.bsr.toLocaleString() : "-"}
+                        </td>
+                        <td style={{ padding: "7px 6px" }}>
+                          <button onClick={() => importToWatchlist(r.isbn)}
+                            style={{ padding: "2px 6px", borderRadius: 3, border: `1px solid ${C.accent}44`,
+                              background: "transparent", color: C.accent, fontSize: 10,
+                              cursor: "pointer", fontFamily: "var(--mono)" }}>
+                            +WL
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Scan done but no results */}
+          {scanResults && scanFiltered.length === 0 && (
+            <div style={{ textAlign: "center", padding: 40, color: C.muted3 }}>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>😔</div>
+              <div style={{ fontSize: 12 }}>Karlı arbitrage bulunamadı</div>
+              <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>
+                {scanResults.rejected.length} ISBN reddedildi (düşük ROI, fiyat bulunamadı vb.)
+              </div>
             </div>
           )}
         </div>

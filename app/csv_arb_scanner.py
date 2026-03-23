@@ -93,13 +93,6 @@ class ArbResult:
     amazon_sell_price: Optional[float] = None
     buybox_type: Optional[str] = None    # "new" | "used"
     match_type: Optional[str] = None     # "NEW→NEW" | "USED→USED" | "NEW→USED(fallback)" etc.
-    # Condition upgrade signal — used eBay → new Amazon fırsatı
-    amazon_new_price: Optional[float] = None    # Amazon NEW buybox fiyatı
-    amazon_used_price: Optional[float] = None   # Amazon USED buybox fiyatı
-    new_used_gap: Optional[float] = None        # new_price - used_price ($)
-    new_used_gap_pct: Optional[float] = None    # gap yüzdesi (%)
-    upgrade_profit: Optional[float] = None      # used eBay buy → new Amazon sell kârı
-    upgrade_roi: Optional[float] = None         # upgrade path ROI %
     referral_fee: float = 0.0
     closing_fee: float = 0.0
     fulfillment: float = 0.0
@@ -501,112 +494,72 @@ async def _get_buyback_prices(isbn: str) -> Dict:
 
 
 async def _get_bookfinder_offers(isbn: str) -> List[Dict]:
-    """
-    BooksRun Buy Price API — BookFinder yerine.
-    BookFinder: 403/IP block nedeniyle neredeyse hiç çalışmıyor.
-    BooksRun: resmi API, ücretsiz, BOOKSRUN_API_KEY ile çalışır.
-
-    GET https://booksrun.com/api/price/buy/{isbn}?key={key}
-    Response: {"result": {"status": "success", "text": {"Used": 12.50, "New": 28.99}}}
-    """
+    """BookFinder kaynaklarından (AbeBooks, ThriftBooks...) fiyat çek."""
     try:
-        from app.core.config import get_settings
-        s = get_settings()
-        key = s.booksrun_api_key
-        if not key:
-            logger.debug("BOOKSRUN_API_KEY yok — buy price atlandı")
+        from app.bookfinder_client import fetch_bookfinder
+        result = await fetch_bookfinder(isbn, condition="all")
+        if not result.get("ok"):
             return []
 
-        import httpx as _httpx
-        async with _httpx.AsyncClient(timeout=12) as client:
-            r = await client.get(
-                f"https://booksrun.com/api/price/buy/{isbn}",
-                params={"key": key},
-                headers={"Accept": "application/json"},
-            )
-            if r.status_code != 200:
-                logger.debug("BooksRun buy HTTP %d isbn=%s", r.status_code, isbn)
-                return []
-
-            data = r.json()
-            result = data.get("result", {})
-            if result.get("status") != "success":
-                return []
-
-            prices = result.get("text", {})
-            offers = []
-
-            # Buy endpoint response: {'Average': {'Buy': 31.68, 'Rent': ...}, 'Good': {'Buy': ...}}
-            def _br_price(val):
-                if isinstance(val, dict):
-                    v = val.get("Buy")
-                    if v and v != "Not available":
-                        try: return float(v)
-                        except: pass
-                    return None
-                try:
-                    pf = float(val)
-                    return pf if pf > 0 else None
-                except: return None
-
-            used_price = None
-            for key_name in ("Good", "Average", "Used", "used", "average"):
-                pf = _br_price(prices.get(key_name))
-                if pf:
-                    used_price = pf
-                    break
-
-            if used_price and used_price > 0:
+        offers = []
+        for cond_key, cond_label in [("new", "new"), ("used", "used")]:
+            block = result.get(cond_key)
+            if not block:
+                continue
+            for o in (block.get("offers") or []):
+                buy = o.get("total", 0)
+                if buy <= 0:
+                    continue
+                source_raw = o.get("seller", "bookfinder").lower()
+                source = "abebooks" if "abe" in source_raw else \
+                         "thriftbooks" if "thrift" in source_raw else \
+                         "betterworldbooks" if "better" in source_raw else \
+                         source_raw
                 offers.append({
-                    "source": "booksrun",
-                    "source_condition": "used",
-                    "buy_price": round(used_price, 2),
-                    "item_id": f"booksrun_used_{isbn}",
+                    "source": source,
+                    "source_condition": cond_label,
+                    "buy_price": round(float(buy), 2),
+                    "item_id": o.get("sid", ""),
                     "title": "",
-                    "url": f"https://booksrun.com/books/{isbn}?afk=28794",
-                    "image_url": "",
-                    "description": "BooksRun Used",
-                    "seller_name": "BooksRun",
-                    "seller_feedback": None,
-                    "match_quality": "CONFIRMED",
-                    "match_reason": "booksrun_api",
-                    "query_mode": "api",
-                    "isbn_normalized": isbn,
-                    "isbn_valid": True,
-                    "isbn_validation_reason": "VALID_ISBN13",
+                    "url": o.get("url", ""),
                 })
-
-            # New condition
-            new_price = _br_price(prices.get("New") or prices.get("new"))
-
-            if new_price and new_price > 0:
-                offers.append({
-                    "source": "booksrun",
-                    "source_condition": "new",
-                    "buy_price": round(new_price, 2),
-                    "item_id": f"booksrun_new_{isbn}",
-                    "title": "",
-                    "url": f"https://booksrun.com/books/{isbn}?afk=28794",
-                    "image_url": "",
-                    "description": "BooksRun New",
-                    "seller_name": "BooksRun",
-                    "seller_feedback": None,
-                    "match_quality": "CONFIRMED",
-                    "match_reason": "booksrun_api",
-                    "query_mode": "api",
-                    "isbn_normalized": isbn,
-                    "isbn_valid": True,
-                    "isbn_validation_reason": "VALID_ISBN13",
-                })
-
-            if offers:
-                logger.debug("BooksRun buy isbn=%s → %d offers", isbn, len(offers))
-            return offers
-
+        # Her source × condition için en ucuz
+        best: Dict[Tuple[str, str], Dict] = {}
+        for o in sorted(offers, key=lambda x: x["buy_price"]):
+            key = (o["source"], o["source_condition"])
+            if key not in best:
+                best[key] = o
+        return list(best.values())
     except Exception as e:
-        logger.warning("BooksRun buy error isbn=%s: %s", isbn, e)
+        logger.warning("BookFinder offers failed isbn=%s: %s", isbn, e)
         return []
 
+
+async def _get_bookdepot_offers(isbn: str) -> List[Dict]:
+    """BookDepot envanterinden alım fiyatı çek (lokal JSON store)."""
+    try:
+        from app.core.json_store import _read_unsafe
+        from app.core.config import get_settings
+        p = get_settings().resolved_data_dir() / "bookdepot_inventory.json"
+        data = _read_unsafe(p, default={"items": {}})
+        store = data.get("items", {})
+        item = store.get(isbn)
+        if not item or not item.get("price") or item["price"] <= 0:
+            return []
+        return [{
+            "source": "bookdepot",
+            "source_condition": "used",
+            "buy_price": round(float(item["price"]), 2),
+            "item_id": f"bd_{isbn}",
+            "title": item.get("title", "")[:120],
+            "url": item.get("url", ""),
+        }]
+    except Exception as e:
+        logger.warning("BookDepot offers failed isbn=%s: %s", isbn, e)
+        return []
+
+
+# ── Ana tarayıcı ─────────────────────────────────────────────────────────────
 
 async def _scan_one(
     isbn: str,
@@ -652,10 +605,11 @@ async def _scan_one(
         except Exception:
             return {}
 
-    amazon_data, ebay_offers, bf_offers, buyback_data, buyback_trend_data, book_meta = await asyncio.gather(
+    amazon_data, ebay_offers, bf_offers, bd_offers, buyback_data, buyback_trend_data, book_meta = await asyncio.gather(
         _get_amazon_prices(asin),
         _get_ebay_offers(isbn, filters=filters),
         _get_bookfinder_offers(isbn),
+        _get_bookdepot_offers(isbn),
         _get_buyback_prices(isbn),
         _get_buyback_trend_safe(isbn),
         _get_book_meta_safe(isbn),
@@ -668,6 +622,8 @@ async def _scan_one(
         ebay_offers = []
     if isinstance(bf_offers, Exception):
         bf_offers = []
+    if isinstance(bd_offers, Exception):
+        bd_offers = []
     if isinstance(buyback_data, Exception):
         buyback_data = {}
     if isinstance(buyback_trend_data, Exception):
@@ -678,7 +634,7 @@ async def _scan_one(
     # Hata itemlarını filtrele ama reason kaydet
     ebay_error = next((o["_error"] for o in (ebay_offers or []) if "_error" in o), None)
     bf_error   = next((o["_error"] for o in (bf_offers   or []) if "_error" in o), None)
-    all_offers = [o for o in (ebay_offers or []) + (bf_offers or []) if "_error" not in o]
+    all_offers = [o for o in (ebay_offers or []) + (bf_offers or []) + (bd_offers or []) if "_error" not in o]
 
     # Kullanıcı alım fiyatı (generic CSV) → sentetik offer ekle
     csv_price = isbn_buy_prices.get(isbn) or isbn_buy_prices.get(asin)
@@ -801,33 +757,6 @@ async def _scan_one(
             r.reason = reason
         else:
             _apply_profit(r, sell_price, bb_type, match_type, fees)
-
-            # ── New/Used fiyat gap + condition upgrade fırsatı ───────
-            _new_bb  = (amazon_data.get("new")  or {}).get("buybox") or {}
-            _used_bb = (amazon_data.get("used") or {}).get("buybox") or {}
-            _new_p   = float(_new_bb.get("total"))  if _new_bb.get("total")  else None
-            _used_p  = float(_used_bb.get("total")) if _used_bb.get("total") else None
-            r.amazon_new_price  = _new_p
-            r.amazon_used_price = _used_p
-
-            if _new_p and _used_p and _new_p > _used_p:
-                gap = round(_new_p - _used_p, 2)
-                gap_pct = round(gap / _used_p * 100, 1)
-                r.new_used_gap     = gap
-                r.new_used_gap_pct = gap_pct
-
-                # Upgrade kâr: eBay used alım → Amazon NEW satış
-                # Sadece gap büyükse (>%30) ve eBay condition uygunsa göster
-                # like_new/very_good → Amazon'da NEW olarak listelenebilir
-                _ebay_cond = o.get("source_condition", "")
-                _norm_cond = o.get("_norm_condition", "")
-                _upgradeable = _ebay_cond == "used"  # used eBay item upgrade candidate
-                if _upgradeable and gap_pct >= 30:
-                    from app.profit_calc import calculate as _calc, DEFAULT_FEES as _DF
-                    _upg = _calc(o["buy_price"], amazon_data, fees, source_condition="new")
-                    if _upg and _upg.profit > 0:
-                        r.upgrade_profit = _upg.profit
-                        r.upgrade_roi    = _upg.roi_pct
 
             # ── Analitik Layer ────────────────────────────────────────
             # BSR → velocity → days_to_sell (amazon_data'dan BSR gelebilir)

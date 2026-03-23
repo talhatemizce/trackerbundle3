@@ -1483,6 +1483,96 @@ async def bookdepot_inventory(min_price: Optional[float] = None, max_price: Opti
     return {"ok": True, "count": len(items), "items": items}
 
 
+class BookDepotScanRequest(BaseModel):
+    min_roi_pct: Optional[float] = None
+    min_profit_usd: Optional[float] = None
+    condition_in: Optional[List[str]] = None
+    only_viable: bool = True
+    concurrency: int = Field(default=5, ge=1, le=8)
+
+@app.post("/bookdepot/scan")
+async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: BackgroundTasks):
+    """BookDepot envanterindeki ISBN'leri Amazon fiyatlarıyla karşılaştır."""
+    from app.core.json_store import _read_unsafe
+    from app.core.config import get_settings
+    from app.scan_job_store import create_job, update_progress, finish_job, fail_job, _jobs as _all_jobs
+    from app.csv_arb_scanner import scan_isbn_list, ScanFilters, IsbnMatchPolicy, InvalidIsbnPolicy
+    from app.profit_calc import FeeConfig, DEFAULT_FEES
+
+    p = get_settings().resolved_data_dir() / "bookdepot_inventory.json"
+    data = _read_unsafe(p, default={"items": {}})
+    items = data.get("items", {})
+    if not items:
+        raise HTTPException(status_code=422, detail="BookDepot envanteri boş — önce bookmarklet ile kitap kazıyın")
+
+    isbns = list(items.keys())
+    if len(isbns) > 1000:
+        isbns = isbns[:1000]
+
+    # Build buy prices from bookdepot inventory
+    isbn_buy_prices = {}
+    for isbn, item in items.items():
+        if item.get("price") and item["price"] > 0:
+            isbn_buy_prices[isbn] = item["price"]
+
+    # Check for active jobs
+    active = [j for j in _all_jobs.values() if j.get("status") == "running"]
+    if active:
+        return {
+            "ok": False,
+            "queued": True,
+            "message": f"Aktif tarama var ({active[0]['id']}). Bitmesini bekleyin.",
+            "active_job_id": active[0]["id"],
+        }
+
+    filters = ScanFilters(
+        min_roi_pct=req.min_roi_pct,
+        min_profit_usd=req.min_profit_usd,
+        condition_in=req.condition_in,
+        only_viable=req.only_viable,
+        strict_mode=True,
+        isbn_match_policy=IsbnMatchPolicy.BALANCED,
+        invalid_isbn_policy=InvalidIsbnPolicy.BEST_EFFORT,
+    )
+
+    job_id = create_job(len(isbns))
+
+    async def _run():
+        import time as _t
+        from app.scan_job_store import _jobs, append_result, get_pause_event, get_cancel_event
+        _jobs[job_id]["status"] = "running"
+        _jobs[job_id]["started_at"] = _t.time()
+        try:
+            def _on_done(done, total, new_acc, new_rej):
+                update_progress(job_id, done)
+                append_result(job_id, new_acc, new_rej)
+
+            result = await scan_isbn_list(
+                isbns=isbns,
+                filters=filters,
+                fees=DEFAULT_FEES,
+                concurrency=req.concurrency,
+                isbn_buy_prices=isbn_buy_prices,
+                on_progress=_on_done,
+                pause_event=get_pause_event(job_id),
+                cancel_event=get_cancel_event(job_id),
+            )
+            finish_job(job_id, result["accepted"], result["rejected"], result["stats"])
+        except Exception as e:
+            from app.scan_job_store import _jobs
+            partial_acc = _jobs.get(job_id, {}).get("partial_accepted", [])
+            partial_rej = _jobs.get(job_id, {}).get("partial_rejected", [])
+            if partial_acc or partial_rej:
+                finish_job(job_id, partial_acc, partial_rej, {"partial": True, "error": str(e)[:200]})
+            else:
+                fail_job(job_id, str(e))
+            logger.error("bookdepot_scan job %s failed: %s", job_id, e)
+
+    background_tasks.add_task(_run)
+    est = round(len(isbns) * 4 / req.concurrency)
+    return {"ok": True, "job_id": job_id, "total": len(isbns), "estimated_seconds": est}
+
+
 @app.delete("/bookdepot/inventory")
 async def bookdepot_clear():
     """Tüm BookDepot envanterini temizler."""
