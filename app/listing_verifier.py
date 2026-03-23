@@ -298,19 +298,56 @@ async def _verify_abebooks_price(
 
         prices = result.get("text", {})
 
-        # En ucuz fiyatı bul: Used → Average → New öncelik sırası
+        # Buy endpoint: {'Average': {'Buy': 31.68, 'Rent': ...}, 'Good': {'Buy': ...}}
+        # Sell endpoint: {'Average': 11.49, 'Good': 14.36, 'New': 14.65}
+        def _extract_price(val):
+            """Her iki format için fiyat çıkar."""
+            if val is None:
+                return None
+            if isinstance(val, dict):
+                # Buy endpoint: {'Buy': 31.68, 'Rent': ...}
+                buy_val = val.get("Buy")
+                if buy_val and buy_val != "Not available":
+                    try: return float(buy_val)
+                    except: pass
+                return None
+            try:
+                pf = float(val)
+                return pf if pf > 0 else None
+            except (TypeError, ValueError):
+                return None
+
         cheapest = None
         cheapest_source = None
-        for label in ("Used", "used", "Average", "average", "New", "new"):
-            val = prices.get(label)
-            if val:
-                try:
-                    pf = float(val)
-                    if pf > 0 and (cheapest is None or pf < cheapest):
-                        cheapest = pf
-                        cheapest_source = f"BooksRun ({label})"
-                except (TypeError, ValueError):
-                    pass
+        for label in ("Good", "Average", "New", "good", "average", "new"):
+            pf = _extract_price(prices.get(label))
+            if pf and pf > 0 and (cheapest is None or pf < cheapest):
+                cheapest = pf
+                cheapest_source = f"BooksRun ({label})"
+
+        if cheapest is None:
+            # Buy endpoint boşsa sell (buyback) fiyatını fallback olarak dene
+            # sell endpoint = BooksRun'ın kitaptan ödediği fiyat → piyasa alt tabanı
+            try:
+                r2 = await client.get(
+                    f"https://booksrun.com/api/price/sell/{isbn}",
+                    params={"key": key},
+                    headers={"Accept": "application/json"},
+                    timeout=10,
+                )
+                if r2.status_code == 200:
+                    d2 = r2.json().get("result", {})
+                    if d2.get("status") == "success":
+                        p2 = d2.get("text", {})
+                        for lbl in ("Good", "Average", "New"):
+                            try:
+                                pf = float(p2.get(lbl) or 0)
+                                if pf > 0:
+                                    cheapest = pf
+                                    cheapest_source = f"BooksRun sell/{lbl} (buyback fiyatı)"
+                                    break
+                            except: pass
+            except Exception: pass
 
         if cheapest is None:
             return {"status": "ERROR", "reason": "no_prices_found", "hint": "BooksRun fiyat verisi yok", "data_source": "BooksRun"}

@@ -536,16 +536,25 @@ async def _get_bookfinder_offers(isbn: str) -> List[Dict]:
             prices = result.get("text", {})
             offers = []
 
-            # Used condition
+            # Buy endpoint response: {'Average': {'Buy': 31.68, 'Rent': ...}, 'Good': {'Buy': ...}}
+            def _br_price(val):
+                if isinstance(val, dict):
+                    v = val.get("Buy")
+                    if v and v != "Not available":
+                        try: return float(v)
+                        except: pass
+                    return None
+                try:
+                    pf = float(val)
+                    return pf if pf > 0 else None
+                except: return None
+
             used_price = None
-            for key_name in ("Used", "used", "Average", "average"):
-                val = prices.get(key_name)
-                if val:
-                    try:
-                        used_price = float(val)
-                        break
-                    except (TypeError, ValueError):
-                        pass
+            for key_name in ("Good", "Average", "Used", "used", "average"):
+                pf = _br_price(prices.get(key_name))
+                if pf:
+                    used_price = pf
+                    break
 
             if used_price and used_price > 0:
                 offers.append({
@@ -568,15 +577,7 @@ async def _get_bookfinder_offers(isbn: str) -> List[Dict]:
                 })
 
             # New condition
-            new_price = None
-            for key_name in ("New", "new"):
-                val = prices.get(key_name)
-                if val:
-                    try:
-                        new_price = float(val)
-                        break
-                    except (TypeError, ValueError):
-                        pass
+            new_price = _br_price(prices.get("New") or prices.get("new"))
 
             if new_price and new_price > 0:
                 offers.append({
