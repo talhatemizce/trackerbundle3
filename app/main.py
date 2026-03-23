@@ -1414,6 +1414,87 @@ async def verify_batch_endpoint(req: VerifyBatchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── BookDepot Inventory ───────────────────────────────────────────────────────
+
+class BookDepotItem(BaseModel):
+    isbn: str
+    title: str = ""
+    price: Optional[float] = None
+    qty: Optional[str] = None
+    url: str = ""
+
+class BookDepotImportPayload(BaseModel):
+    items: List[BookDepotItem]
+    page_url: str = ""
+
+@app.post("/bookdepot/import")
+async def bookdepot_import(payload: BookDepotImportPayload):
+    """BookDepot bookmarklet'ten gelen scraped data'yı JSON store'a kaydeder."""
+    from app.core.json_store import file_lock, _read_unsafe, _write_unsafe
+    from app.core.config import get_settings
+
+    items = payload.items
+    if not items:
+        return {"ok": False, "error": "no_items"}
+
+    p = get_settings().resolved_data_dir() / "bookdepot_inventory.json"
+    inserted = 0
+    now = int(_time.time())
+
+    with file_lock(p):
+        data = _read_unsafe(p, default={"items": {}, "updated_at": 0})
+        store = data.get("items", {})
+        for item in items:
+            isbn = item.isbn.replace("-", "").replace(" ", "").strip()
+            if len(isbn) < 10:
+                continue
+            store[isbn] = {
+                "isbn": isbn,
+                "title": item.title,
+                "price": item.price,
+                "qty": item.qty,
+                "url": item.url,
+                "scraped_at": now,
+            }
+            inserted += 1
+        data["items"] = store
+        data["updated_at"] = now
+        _write_unsafe(p, data)
+
+    return {"ok": True, "inserted": inserted, "total": len(store)}
+
+
+@app.get("/bookdepot/inventory")
+async def bookdepot_inventory(min_price: Optional[float] = None, max_price: Optional[float] = None):
+    """Kayıtlı BookDepot envanterini döndürür. Opsiyonel fiyat filtreleri."""
+    from app.core.json_store import _read_unsafe
+    from app.core.config import get_settings
+
+    p = get_settings().resolved_data_dir() / "bookdepot_inventory.json"
+    data = _read_unsafe(p, default={"items": {}})
+    items = list(data.get("items", {}).values())
+
+    if min_price is not None:
+        items = [i for i in items if i.get("price") is not None and i["price"] >= min_price]
+    if max_price is not None:
+        items = [i for i in items if i.get("price") is not None and i["price"] <= max_price]
+
+    items.sort(key=lambda x: x.get("scraped_at", 0), reverse=True)
+    return {"ok": True, "count": len(items), "items": items}
+
+
+@app.delete("/bookdepot/inventory")
+async def bookdepot_clear():
+    """Tüm BookDepot envanterini temizler."""
+    from app.core.json_store import file_lock, _write_unsafe
+    from app.core.config import get_settings
+
+    p = get_settings().resolved_data_dir() / "bookdepot_inventory.json"
+    with file_lock(p):
+        _write_unsafe(p, {"items": {}, "updated_at": int(_time.time())})
+    return {"ok": True, "message": "Envanter temizlendi"}
+
+
 # ---- Static files: serve React panel build (production) ----
 from pathlib import Path as _Path
 from fastapi.staticfiles import StaticFiles
