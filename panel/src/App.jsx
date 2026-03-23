@@ -4403,9 +4403,262 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
 }
 
 
+// ─── Bookstores Tab ──────────────────────────────────────────────────────────
+
+function BookstoresTab({ C, theme, push }) {
+  const [subTab, setSubTab] = useState("bookdepot");
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("date");  // date | price_asc | price_desc | title
+  const [maxPrice, setMaxPrice] = useState("");
+  const [minPrice, setMinPrice] = useState("");
+  const [importing, setImporting] = useState(false);
+
+  const fetchInventory = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (minPrice) params.set("min_price", minPrice);
+      if (maxPrice) params.set("max_price", maxPrice);
+      const qs = params.toString();
+      const data = await req(`/bookdepot/inventory${qs ? "?" + qs : ""}`);
+      setItems(data.items || []);
+    } catch (e) {
+      push("Envanter yüklenemedi: " + e.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [minPrice, maxPrice, push]);
+
+  useEffect(() => { fetchInventory(); }, [fetchInventory]);
+
+  const clearInventory = async () => {
+    if (!confirm("Tüm BookDepot envanterini silmek istediğine emin misin?")) return;
+    try {
+      await req("/bookdepot/inventory", { method: "DELETE" });
+      setItems([]);
+      push("Envanter temizlendi", "success");
+    } catch (e) {
+      push("Silinemedi: " + e.message, "error");
+    }
+  };
+
+  const importToWatchlist = async (isbn) => {
+    setImporting(true);
+    try {
+      const res = await req("/isbns", { method: "POST", body: JSON.stringify({ isbn }) });
+      if (res.added) {
+        push(isbn + " watchlist'e eklendi", "success");
+      } else {
+        push("Zaten watchlist'te", "info");
+      }
+    } catch (e) {
+      push("Eklenemedi: " + e.message, "error");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const importAllToWatchlist = async () => {
+    if (!confirm(`${filtered.length} ISBN'i watchlist'e eklemek istediğine emin misin?`)) return;
+    setImporting(true);
+    let added = 0;
+    for (const item of filtered) {
+      try {
+        const res = await req("/isbns", { method: "POST", body: JSON.stringify({ isbn: item.isbn }) });
+        if (res.added) added++;
+      } catch {}
+    }
+    push(`${added} ISBN watchlist'e eklendi`, "success");
+    setImporting(false);
+  };
+
+  // Filter & sort
+  const filtered = items
+    .filter(i => {
+      if (!search) return true;
+      const q = search.toLowerCase();
+      return (i.isbn || "").toLowerCase().includes(q) || (i.title || "").toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      if (sortBy === "price_asc") return (a.price || 0) - (b.price || 0);
+      if (sortBy === "price_desc") return (b.price || 0) - (a.price || 0);
+      if (sortBy === "title") return (a.title || "").localeCompare(b.title || "");
+      return (b.scraped_at || 0) - (a.scraped_at || 0);
+    });
+
+  const totalValue = items.reduce((s, i) => s + (i.price || 0), 0);
+
+  const SUB_TABS = [
+    { id: "bookdepot", label: "📦 BookDepot", count: items.length },
+  ];
+
+  return (
+    <div>
+      {/* Sub-tab bar */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+        {SUB_TABS.map(st => (
+          <button key={st.id} onClick={() => setSubTab(st.id)} style={{
+            padding: "7px 16px", borderRadius: 6, fontSize: 12, cursor: "pointer",
+            fontFamily: "var(--mono)", fontWeight: subTab === st.id ? 600 : 400,
+            background: subTab === st.id ? C.accent : "transparent",
+            color: subTab === st.id ? C.accentText : C.muted,
+            border: `1px solid ${subTab === st.id ? C.accent : C.border}`,
+            transition: "all .15s",
+          }}>
+            {st.label} {st.count > 0 && <span style={{
+              marginLeft: 6, padding: "1px 6px", borderRadius: 8, fontSize: 10,
+              background: subTab === st.id ? "rgba(255,255,255,.2)" : C.surface2,
+              color: subTab === st.id ? C.accentText : C.muted,
+            }}>{st.count}</span>}
+          </button>
+        ))}
+      </div>
+
+      {subTab === "bookdepot" && (
+        <div>
+          {/* Stats bar */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Toplam Kitap</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{items.length}</div>
+            </div>
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Toplam Değer</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: C.green }}>${totalValue.toFixed(2)}</div>
+            </div>
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Ort. Fiyat</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: C.accent }}>${items.length ? (totalValue / items.length).toFixed(2) : "0.00"}</div>
+            </div>
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Gösterilen</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: C.blue }}>{filtered.length}</div>
+            </div>
+          </div>
+
+          {/* Toolbar */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+            <input className="inp" placeholder="ISBN veya başlık ara…" value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ flex: 1, minWidth: 180 }} />
+            <input className="inp" type="number" placeholder="Min $" value={minPrice}
+              onChange={e => setMinPrice(e.target.value)}
+              onBlur={fetchInventory}
+              style={{ width: 80 }} />
+            <input className="inp" type="number" placeholder="Max $" value={maxPrice}
+              onChange={e => setMaxPrice(e.target.value)}
+              onBlur={fetchInventory}
+              style={{ width: 80 }} />
+            <select className="inp" value={sortBy} onChange={e => setSortBy(e.target.value)}
+              style={{ width: 130 }}>
+              <option value="date">Yeni eklenen</option>
+              <option value="price_asc">Fiyat ↑</option>
+              <option value="price_desc">Fiyat ↓</option>
+              <option value="title">Başlık A-Z</option>
+            </select>
+            <button className="icon-btn" onClick={fetchInventory} title="Yenile"
+              style={{ fontSize: 16 }}>↻</button>
+            {filtered.length > 0 && (
+              <button className="add-btn" onClick={importAllToWatchlist} disabled={importing}
+                style={{ fontSize: 11, padding: "6px 14px" }}>
+                {importing ? "⏳" : `📋 Tümünü Watchlist'e (${filtered.length})`}
+              </button>
+            )}
+            {items.length > 0 && (
+              <button onClick={clearInventory}
+                style={{ background: "none", border: `1px solid ${C.red}44`, borderRadius: 6,
+                  color: C.red, fontSize: 11, padding: "6px 12px", cursor: "pointer",
+                  fontFamily: "var(--mono)" }}>
+                🗑
+              </button>
+            )}
+          </div>
+
+          {/* Items list */}
+          {loading ? (
+            <div style={{ textAlign: "center", padding: 40, color: C.muted3 }}>Yükleniyor…</div>
+          ) : filtered.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 60, color: C.muted3 }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>📦</div>
+              <div style={{ fontSize: 13, marginBottom: 6 }}>
+                {items.length === 0 ? "Henüz kitap yok" : "Filtre sonucu boş"}
+              </div>
+              <div style={{ fontSize: 11, color: C.muted }}>
+                BookDepot bookmarklet ile kitap ekle
+              </div>
+            </div>
+          ) : (
+            <div>
+              {filtered.map((item, idx) => (
+                <div key={item.isbn + idx} className="row-item"
+                  style={{ background: C.rowBg, border: `1px solid ${C.rowBorder}`, display: "flex", alignItems: "center", gap: 10 }}>
+                  {/* Cover */}
+                  <div style={{ flexShrink: 0, width: 32, height: 44, borderRadius: 3, overflow: "hidden", background: C.surface2 }}>
+                    <img src={`https://covers.openlibrary.org/b/isbn/${item.isbn}-S.jpg`}
+                      loading="lazy" alt=""
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      onError={e => { e.target.style.opacity = "0"; }} />
+                  </div>
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 12, fontFamily: "var(--mono)", color: C.text }}>{item.isbn}</span>
+                      {item.qty && <span className="badge" style={{ background: C.surface2, color: C.muted, fontSize: 9 }}>Stok: {item.qty}</span>}
+                    </div>
+                    {item.title && (
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.title}
+                      </div>
+                    )}
+                  </div>
+                  {/* Price */}
+                  <div style={{ flexShrink: 0, textAlign: "right" }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: C.green, fontFamily: "var(--mono)" }}>
+                      ${(item.price || 0).toFixed(2)}
+                    </div>
+                  </div>
+                  {/* Actions */}
+                  <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                    {item.url && (
+                      <a href={item.url} target="_blank" rel="noopener"
+                        style={{ padding: "4px 8px", borderRadius: 4, border: `1px solid ${C.border}`,
+                          color: C.muted, fontSize: 11, textDecoration: "none",
+                          fontFamily: "var(--mono)" }}
+                        title="BookDepot'ta aç">
+                        🔗
+                      </a>
+                    )}
+                    <button onClick={() => importToWatchlist(item.isbn)} disabled={importing}
+                      style={{ padding: "4px 8px", borderRadius: 4, border: `1px solid ${C.accent}44`,
+                        background: "transparent", color: C.accent, fontSize: 11,
+                        cursor: "pointer", fontFamily: "var(--mono)" }}
+                      title="Watchlist'e ekle">
+                      + WL
+                    </button>
+                    <button onClick={() => { navigator.clipboard.writeText(item.isbn); push("Kopyalandı", "info"); }}
+                      style={{ padding: "4px 8px", borderRadius: 4, border: `1px solid ${C.border}`,
+                        background: "transparent", color: C.muted, fontSize: 11,
+                        cursor: "pointer", fontFamily: "var(--mono)" }}
+                      title="ISBN kopyala">
+                      📋
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ─── Settings Tab ─────────────────────────────────────────────────────────────
 
-const TABS = ["dashboard","watchlist","discover","alerts","pricing"];
+const TABS = ["dashboard","watchlist","discover","alerts","pricing","bookstores"];
 
 export default function App() {
   return <ErrorBoundary><AppReal /></ErrorBoundary>;
@@ -4703,7 +4956,7 @@ function AppReal() {
         <div style={{display:"flex"}}>
           {TABS.map(t=>{
             const isScanning = t==="discover" && scanJob?.scanning;
-            const discoverLabel = isScanning ? `⏳ ${scanJob?.progress?.done||0}/${scanJob?.progress?.total||0}` : (candidates.length>0 ? `🔍 Discover ⭐${candidates.length}` : "🔍 Discover"); const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",discover:discoverLabel,alerts:"🔔 Alerts",pricing:"💰 Pricing"}[t]||t;
+            const discoverLabel = isScanning ? `⏳ ${scanJob?.progress?.done||0}/${scanJob?.progress?.total||0}` : (candidates.length>0 ? `🔍 Discover ⭐${candidates.length}` : "🔍 Discover"); const label = {dashboard:"📊 Dashboard",watchlist:"👁 Watchlist",discover:discoverLabel,alerts:"🔔 Alerts",pricing:"💰 Pricing",bookstores:"🏪 Bookstores"}[t]||t;
             return <button key={t} className="tab-btn" onClick={()=>setTab(t)} style={{padding:"10px 20px",fontSize:12,color:tab===t?C.accent:C.muted,borderBottom:tab===t?`2px solid ${C.accent}`:"2px solid transparent",fontWeight:tab===t?600:400,letterSpacing:"0.01em"}}>{label}</button>;
           })}
         </div>
@@ -5248,6 +5501,7 @@ function AppReal() {
             )}
 
 {tab==="alerts"&&<AlertsFeedTab C={C} theme={theme} push={push} isbns={isbns} titles={titles} bookMeta={bookMeta}/>}
+            {tab==="bookstores"&&<BookstoresTab C={C} theme={theme} push={push}/>}
             {tab==="discover"&&<DiscoverTab C={C} theme={theme} scanJob={scanJob} setScanJob={setScanJob} scanPollRef={scanPollRef} candidates={candidates} addCandidate={addCandidate} removeCandidate={removeCandidate} saveCandidates={saveCandidates} push={push} isbns={isbns} addIsbn={async(isbn,secs)=>{const res=await req("/isbns",{method:"POST",body:JSON.stringify({isbn})});if(res.added){setIsbns(p=>[...p,isbn]);if(secs){await req(`/rules/${isbn}/interval`,{method:"PUT",body:JSON.stringify({interval_seconds:secs})});}push(isbn+" watchlist'e eklendi","success");}else{push("Zaten watchlist'te","info");}}}/>}
             {/* candidates, history, settings are now sub-tabs inside Discover */}
           </>
