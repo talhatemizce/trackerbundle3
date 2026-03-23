@@ -323,18 +323,23 @@ async def get_catalog_item(asin: str) -> Dict[str, Any]:
             bsr_books = None
             bsr_all   = None
             for rank_obj in (data.get("salesRanks") or []):
-                # rank_obj: {"marketplaceId": ..., "classificationRanks": [...], "displayGroupRanks": [...]}
-                for rank in (rank_obj.get("classificationRanks") or []) + (rank_obj.get("displayGroupRanks") or []):
+                for rank in (rank_obj.get("displayGroupRanks") or []):
+                    title_lower = (rank.get("title") or "").lower().strip()
+                    rk = rank.get("rank")
+                    if rk is None: continue
+                    rk = int(rk)
+                    if bsr_all is None or rk < bsr_all: bsr_all = rk
+                    if title_lower == "books": bsr_books = rk
+                _class_best = None
+                for rank in (rank_obj.get("classificationRanks") or []):
                     title_lower = (rank.get("title") or "").lower()
                     rk = rank.get("rank")
-                    if rk is None:
-                        continue
+                    if rk is None: continue
                     rk = int(rk)
-                    if bsr_all is None or rk < bsr_all:
-                        bsr_all = rk
+                    if bsr_all is None or rk < bsr_all: bsr_all = rk
                     if "book" in title_lower:
-                        if bsr_books is None or rk < bsr_books:
-                            bsr_books = rk
+                        if _class_best is None or rk > _class_best: _class_best = rk
+                if bsr_books is None and _class_best is not None: bsr_books = _class_best
 
             # ── Attributes ───────────────────────────────────────────────────
             attrs = data.get("attributes") or {}
