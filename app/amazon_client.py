@@ -102,6 +102,7 @@ def _parse_offers(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         total = lp + ship
         fba = bool(o.get("IsFulfilledByAmazon"))
 
+        sub_cond = (o.get("ConditionInfo") or {}).get("SubCondition", "").lower().replace(" ", "_")
         rows.append({
             "total": round(total, 2),
             "total_int": _safe_int(total),
@@ -112,6 +113,7 @@ def _parse_offers(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             "buybox": bool(o.get("IsBuyBoxWinner")),
             "prime": bool((o.get("PrimeInformation") or {}).get("IsPrime")),
             "seller_id": o.get("SellerId"),
+            "sub_condition": sub_cond,  # "like_new" | "very_good" | "good" | "acceptable"
         })
 
     rows.sort(key=lambda x: x["total"])
@@ -320,21 +322,31 @@ async def get_catalog_item(asin: str) -> Dict[str, Any]:
             data = r.json()
 
             # ── Sales Ranks ──────────────────────────────────────────────────
-            bsr_books = None
-            bsr_all   = None
+            bsr_books = None  # Ana "Books" displayGroup BSR (en geniş kategori)
+            bsr_all   = None  # Tüm kategorilerdeki en iyi (minimum) rank
             for rank_obj in (data.get("salesRanks") or []):
-                # rank_obj: {"marketplaceId": ..., "classificationRanks": [...], "displayGroupRanks": [...]}
-                for rank in (rank_obj.get("classificationRanks") or []) + (rank_obj.get("displayGroupRanks") or []):
+                # displayGroupRanks: ana kategori (örn. "Books" → #12,560,721)
+                for rank in (rank_obj.get("displayGroupRanks") or []):
                     title_lower = (rank.get("title") or "").lower()
+                    rk = rank.get("rank")
+                    if rk is None:
+                        continue
+                    rk = int(rk)
+                    # Ana "Books" kategorisi (tam eşleşme ya da başlıkta sadece "books")
+                    if title_lower in ("books", "kindle store"):
+                        if bsr_books is None or rk < bsr_books:
+                            bsr_books = rk
+                    if bsr_all is None or rk < bsr_all:
+                        bsr_all = rk
+                # classificationRanks: alt kategoriler (örn. "Children's Programming Books" → #569)
+                # bsr_books için kullanma — sadece bsr_all'a yansıt
+                for rank in (rank_obj.get("classificationRanks") or []):
                     rk = rank.get("rank")
                     if rk is None:
                         continue
                     rk = int(rk)
                     if bsr_all is None or rk < bsr_all:
                         bsr_all = rk
-                    if "book" in title_lower:
-                        if bsr_books is None or rk < bsr_books:
-                            bsr_books = rk
 
             # ── Attributes ───────────────────────────────────────────────────
             attrs = data.get("attributes") or {}

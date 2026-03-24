@@ -1484,8 +1484,15 @@ async def bookdepot_inventory(min_price: Optional[float] = None, max_price: Opti
 
 
 class BookDepotScanRequest(BaseModel):
+    isbns: Optional[List[str]] = None                    # manuel override — envanter yerine bu listeyi tara
+    isbn_buy_prices: Optional[Dict[str, float]] = None   # manuel fiyatlar (isbns ile birlikte kullan)
     min_roi_pct: Optional[float] = None
+    max_roi_pct: Optional[float] = None
     min_profit_usd: Optional[float] = None
+    min_amazon_price: Optional[float] = None
+    max_amazon_price: Optional[float] = None
+    compare_with: str = "used"                           # "new" | "used" — Amazon hangi fiyatla karşılaştır
+    amazon_condition_in: Optional[List[str]] = None      # ["acceptable","good","very_good","like_new"]
     condition_in: Optional[List[str]] = None
     only_viable: bool = True
     concurrency: int = Field(default=5, ge=1, le=8)
@@ -1501,19 +1508,29 @@ async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: Background
 
     p = get_settings().resolved_data_dir() / "bookdepot_inventory.json"
     data = _read_unsafe(p, default={"items": {}})
-    items = data.get("items", {})
-    if not items:
-        raise HTTPException(status_code=422, detail="BookDepot envanteri boş — önce bookmarklet ile kitap kazıyın")
+    inv_items = data.get("items", {})
 
-    isbns = list(items.keys())
-    if len(isbns) > 1000:
-        isbns = isbns[:1000]
+    # Manuel ISBN listesi varsa onu kullan, yoksa envanterden al
+    if req.isbns:
+        isbns = [i.strip() for i in req.isbns if i.strip()][:1000]
+        # Manuel fiyatlar varsa kullan, yoksa envanterdeki fiyatlara bak
+        isbn_buy_prices = dict(req.isbn_buy_prices) if req.isbn_buy_prices else {}
+        for isbn in isbns:
+            if isbn not in isbn_buy_prices and isbn in inv_items:
+                price = inv_items[isbn].get("price")
+                if price and price > 0:
+                    isbn_buy_prices[isbn] = price
+    else:
+        if not inv_items:
+            raise HTTPException(status_code=422, detail="BookDepot envanteri boş — önce bookmarklet ile kitap kazıyın veya manuel ISBN girin")
+        isbns = list(inv_items.keys())[:1000]
+        isbn_buy_prices = {}
+        for isbn, item in inv_items.items():
+            if item.get("price") and item["price"] > 0:
+                isbn_buy_prices[isbn] = item["price"]
 
-    # Build buy prices from bookdepot inventory
-    isbn_buy_prices = {}
-    for isbn, item in items.items():
-        if item.get("price") and item["price"] > 0:
-            isbn_buy_prices[isbn] = item["price"]
+    if not isbns:
+        raise HTTPException(status_code=422, detail="Taranacak ISBN bulunamadı")
 
     # Check for active jobs
     active = [j for j in _all_jobs.values() if j.get("status") == "running"]
@@ -1525,12 +1542,19 @@ async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: Background
             "active_job_id": active[0]["id"],
         }
 
+    # compare_with: "new" → strict_mode=False (USED kitap → NEW Amazon fiyatıyla karşılaştır)
+    strict_mode = req.compare_with != "new"
+
     filters = ScanFilters(
         min_roi_pct=req.min_roi_pct,
+        max_roi_pct=req.max_roi_pct,
         min_profit_usd=req.min_profit_usd,
+        min_amazon_price=req.min_amazon_price,
+        max_amazon_price=req.max_amazon_price,
         condition_in=req.condition_in,
+        amazon_condition_in=req.amazon_condition_in,
         only_viable=req.only_viable,
-        strict_mode=True,
+        strict_mode=strict_mode,
         isbn_match_policy=IsbnMatchPolicy.BALANCED,
         invalid_isbn_policy=InvalidIsbnPolicy.BEST_EFFORT,
     )
@@ -1557,13 +1581,15 @@ async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: Background
                 pause_event=get_pause_event(job_id),
                 cancel_event=get_cancel_event(job_id),
             )
-            finish_job(job_id, result["accepted"], result["rejected"], result["stats"])
+            stats = result["stats"]
+            stats["source"] = "bookdepot"
+            finish_job(job_id, result["accepted"], result["rejected"], stats)
         except Exception as e:
             from app.scan_job_store import _jobs
             partial_acc = _jobs.get(job_id, {}).get("partial_accepted", [])
             partial_rej = _jobs.get(job_id, {}).get("partial_rejected", [])
             if partial_acc or partial_rej:
-                finish_job(job_id, partial_acc, partial_rej, {"partial": True, "error": str(e)[:200]})
+                finish_job(job_id, partial_acc, partial_rej, {"partial": True, "error": str(e)[:200], "source": "bookdepot"})
             else:
                 fail_job(job_id, str(e))
             logger.error("bookdepot_scan job %s failed: %s", job_id, e)
@@ -1583,6 +1609,45 @@ async def bookdepot_clear():
     with file_lock(p):
         _write_unsafe(p, {"items": {}, "updated_at": int(_time.time())})
     return {"ok": True, "message": "Envanter temizlendi"}
+
+
+@app.delete("/bookdepot/inventory/unprofitable")
+async def bookdepot_delete_unprofitable(job_id: str):
+    """Verilen tarama job'undaki reddedilen ISBN'leri envanterden sil."""
+    from app.scan_job_store import _jobs
+    from app.core.json_store import file_lock, _read_unsafe, _write_unsafe
+    from app.core.config import get_settings
+
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job bulunamadı veya süresi doldu")
+
+    rejected = job.get("rejected") or job.get("partial_rejected") or []
+    rejected_isbns = {r.get("isbn") for r in rejected if r.get("isbn")}
+    if not rejected_isbns:
+        return {"ok": True, "deleted": 0, "message": "Silinecek ISBN yok"}
+
+    p = get_settings().resolved_data_dir() / "bookdepot_inventory.json"
+    with file_lock(p):
+        data = _read_unsafe(p, default={"items": {}})
+        items = data.get("items", {})
+        before = len(items)
+        items = {k: v for k, v in items.items() if k not in rejected_isbns}
+        data["items"] = items
+        data["updated_at"] = int(_time.time())
+        _write_unsafe(p, data)
+
+    deleted = before - len(items)
+    return {"ok": True, "deleted": deleted, "remaining": len(items)}
+
+
+@app.get("/bookdepot/history")
+async def bookdepot_history():
+    """BookDepot tarama geçmişi."""
+    from app.scan_job_store import get_history
+    all_h = get_history()
+    bd_h = [h for h in all_h if h.get("stats", {}).get("source") == "bookdepot"]
+    return {"ok": True, "history": bd_h}
 
 
 # ---- Static files: serve React panel build (production) ----

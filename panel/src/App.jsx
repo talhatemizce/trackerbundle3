@@ -4373,6 +4373,9 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
 
 // ─── Bookstores Tab ──────────────────────────────────────────────────────────
 
+const AMZN_CONDITIONS = ["acceptable", "good", "very_good", "like_new"];
+const AMZN_COND_LABELS = { acceptable: "Acceptable", good: "Good", very_good: "Very Good", like_new: "Like New" };
+
 function BookstoresTab({ C, theme, push }) {
   const [subTab, setSubTab] = useState("bookdepot");
   const [items, setItems] = useState([]);
@@ -4389,6 +4392,23 @@ function BookstoresTab({ C, theme, push }) {
   const [scanResults, setScanResults] = useState(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanSort, setScanSort] = useState("roi_desc"); // roi_desc | profit_desc | price_asc
+
+  // Scan filters
+  const [scanMinRoi, setScanMinRoi] = useState("");
+  const [scanMinProfit, setScanMinProfit] = useState("");
+  const [scanCompareWith, setScanCompareWith] = useState("used");
+  const [scanAmazonConds, setScanAmazonConds] = useState([...AMZN_CONDITIONS]);
+  const [scanConcurrency, setScanConcurrency] = useState(5);
+  const [showScanFilters, setShowScanFilters] = useState(false);
+
+  // Manuel ISBN input
+  const [useManualIsbns, setUseManualIsbns] = useState(false);
+  const [manualIsbnText, setManualIsbnText] = useState("");
+
+  // History
+  const [bdHistory, setBdHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [expandedHistory, setExpandedHistory] = useState(null);
 
   const fetchInventory = useCallback(async () => {
     setLoading(true);
@@ -4449,18 +4469,71 @@ function BookstoresTab({ C, theme, push }) {
     setImporting(false);
   };
 
+  // History fetch
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const data = await req("/bookdepot/history");
+      setBdHistory(data.history || []);
+    } catch (e) {
+      push("Geçmiş yüklenemedi: " + e.message, "error");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  // Dosyadan ISBN yükle
+  const handleIsbnFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    // ISBN'leri satır veya virgülle ayır, 10-13 haneli sayısal değerleri al
+    const isbns = text.split(/[\n\r,;\t]+/)
+      .map(s => s.replace(/[^0-9X]/gi, "").trim())
+      .filter(s => s.length >= 10 && s.length <= 13);
+    setManualIsbnText(prev => {
+      const existing = prev.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+      const combined = [...new Set([...existing, ...isbns])];
+      return combined.join("\n");
+    });
+    push(`${isbns.length} ISBN dosyadan yüklendi`, "success");
+    e.target.value = "";
+  };
+
   // Scan functions
   const startScan = async () => {
     setScanLoading(true);
     setScanResults(null);
+
+    let manualIsbns = null;
+    if (useManualIsbns) {
+      manualIsbns = manualIsbnText
+        .split(/[\n\r,;\t\s]+/)
+        .map(s => s.replace(/[^0-9X]/gi, "").trim())
+        .filter(s => s.length >= 10);
+      if (manualIsbns.length === 0) {
+        push("Manuel ISBN listesi boş", "error");
+        setScanLoading(false);
+        return;
+      }
+    }
+
+    const body = {
+      only_viable: true,
+      concurrency: scanConcurrency,
+      compare_with: scanCompareWith,
+      amazon_condition_in: scanAmazonConds.length < AMZN_CONDITIONS.length ? scanAmazonConds : null,
+      min_roi_pct: scanMinRoi ? parseFloat(scanMinRoi) : null,
+      min_profit_usd: scanMinProfit ? parseFloat(scanMinProfit) : null,
+      ...(manualIsbns ? { isbns: manualIsbns } : {}),
+    };
+
     try {
-      const res = await req("/bookdepot/scan", {
-        method: "POST",
-        body: JSON.stringify({ only_viable: true, concurrency: 5 }),
-      });
+      const res = await req("/bookdepot/scan", { method: "POST", body: JSON.stringify(body) });
       if (res.ok) {
         setScanJobId(res.job_id);
         push(`Tarama başladı — ${res.total} ISBN`, "success");
+        setSubTab("scan");
       } else {
         push(res.message || "Tarama başlatılamadı", "error");
         setScanLoading(false);
@@ -4468,6 +4541,27 @@ function BookstoresTab({ C, theme, push }) {
     } catch (e) {
       push("Tarama hatası: " + e.message, "error");
       setScanLoading(false);
+    }
+  };
+
+  const cancelScan = async () => {
+    if (!scanJobId) return;
+    try {
+      await req(`/discover/csv-arb/cancel/${scanJobId}`, { method: "POST" });
+    } catch {}
+  };
+
+  const deleteUnprofitable = async () => {
+    const lastJobId = scanResults?._job_id || scanProgress?.id;
+    if (!lastJobId) return;
+    const rejCount = scanResults?.rejected?.length || 0;
+    if (!confirm(`${rejCount} karlı olmayan ISBN envanterden silinsin mi?`)) return;
+    try {
+      const res = await req(`/bookdepot/inventory/unprofitable?job_id=${lastJobId}`, { method: "DELETE" });
+      push(`${res.deleted} ISBN envanterden silindi`, "success");
+      fetchInventory();
+    } catch (e) {
+      push("Silinemedi: " + e.message, "error");
     }
   };
 
@@ -4482,8 +4576,9 @@ function BookstoresTab({ C, theme, push }) {
         setScanProgress(p);
         if (p.status === "done" || p.status === "error" || p.status === "cancelled") {
           setScanLoading(false);
-          setScanResults({ accepted: p.accepted || [], rejected: p.rejected || [] });
+          setScanResults({ accepted: p.accepted || [], rejected: p.rejected || [], _job_id: p.id });
           setScanJobId(null);
+          fetchHistory();
         }
       } catch {}
     };
@@ -4492,7 +4587,12 @@ function BookstoresTab({ C, theme, push }) {
     return () => { alive = false; clearInterval(iv); };
   }, [scanJobId]);
 
-  const scanFiltered = (scanResults?.accepted || [])
+  // Tarama sırasında partial, bittikten sonra final sonuçları göster
+  const liveAccepted = scanLoading
+    ? (scanProgress?.accepted || [])
+    : (scanResults?.accepted || []);
+
+  const scanFiltered = liveAccepted
     .sort((a, b) => {
       if (scanSort === "profit_desc") return (b.profit || 0) - (a.profit || 0);
       if (scanSort === "price_asc") return (a.buy_price || 0) - (b.buy_price || 0);
@@ -4517,15 +4617,21 @@ function BookstoresTab({ C, theme, push }) {
 
   const SUB_TABS = [
     { id: "bookdepot", label: "📦 BookDepot", count: items.length },
-    { id: "scan", label: "🔍 Amazon Tarama", count: scanResults?.accepted?.length || 0 },
+    { id: "scan", label: "🔍 Amazon Tarama", count: scanResults?.accepted?.length || (scanLoading ? scanProgress?.accepted_count : 0) || 0 },
+    { id: "history", label: "📜 Geçmiş", count: bdHistory.length },
   ];
+
+  const handleSubTab = (id) => {
+    setSubTab(id);
+    if (id === "history" && bdHistory.length === 0) fetchHistory();
+  };
 
   return (
     <div>
       {/* Sub-tab bar */}
       <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
         {SUB_TABS.map(st => (
-          <button key={st.id} onClick={() => setSubTab(st.id)} style={{
+          <button key={st.id} onClick={() => handleSubTab(st.id)} style={{
             padding: "7px 16px", borderRadius: 6, fontSize: 12, cursor: "pointer",
             fontFamily: "var(--mono)", fontWeight: subTab === st.id ? 600 : 400,
             background: subTab === st.id ? C.accent : "transparent",
@@ -4680,19 +4786,171 @@ function BookstoresTab({ C, theme, push }) {
 
       {subTab === "scan" && (
         <div>
-          {/* Scan controls */}
+          {/* ── Kaynak Seçimi ── */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            <button onClick={() => setUseManualIsbns(false)}
+              style={{ padding: "7px 16px", borderRadius: 6, fontSize: 12, cursor: "pointer",
+                fontFamily: "var(--mono)", fontWeight: !useManualIsbns ? 600 : 400,
+                background: !useManualIsbns ? C.accent : "transparent",
+                color: !useManualIsbns ? C.accentText : C.muted,
+                border: `1px solid ${!useManualIsbns ? C.accent : C.border}` }}>
+              📦 Envanteri Tara {items.length > 0 && `(${items.length})`}
+            </button>
+            <button onClick={() => setUseManualIsbns(true)}
+              style={{ padding: "7px 16px", borderRadius: 6, fontSize: 12, cursor: "pointer",
+                fontFamily: "var(--mono)", fontWeight: useManualIsbns ? 600 : 400,
+                background: useManualIsbns ? C.accent : "transparent",
+                color: useManualIsbns ? C.accentText : C.muted,
+                border: `1px solid ${useManualIsbns ? C.accent : C.border}` }}>
+              ✏️ Manuel ISBN Listesi
+            </button>
+          </div>
+
+          {/* ── Manuel ISBN Input ── */}
+          {useManualIsbns && (
+            <div style={{ marginBottom: 14, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12 }}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: C.muted, fontFamily: "var(--mono)" }}>
+                  ISBN listesi (her satıra bir veya virgülle ayır):
+                </span>
+                <label style={{ padding: "4px 10px", borderRadius: 4, border: `1px solid ${C.border}`,
+                  fontSize: 11, color: C.muted, cursor: "pointer", fontFamily: "var(--mono)" }}>
+                  📂 Dosya Yükle
+                  <input type="file" accept=".csv,.txt" onChange={handleIsbnFile} style={{ display: "none" }} />
+                </label>
+                {manualIsbnText && (
+                  <button onClick={() => setManualIsbnText("")}
+                    style={{ padding: "4px 8px", borderRadius: 4, border: `1px solid ${C.red}44`,
+                      background: "none", color: C.red, fontSize: 10, cursor: "pointer" }}>
+                    Temizle
+                  </button>
+                )}
+              </div>
+              <textarea
+                value={manualIsbnText}
+                onChange={e => setManualIsbnText(e.target.value)}
+                placeholder={"9780134042435\n9780061965784\n..."}
+                rows={5}
+                style={{ width: "100%", boxSizing: "border-box", background: C.surface2,
+                  border: `1px solid ${C.border}`, borderRadius: 6, color: C.text,
+                  fontFamily: "var(--mono)", fontSize: 12, padding: "8px 10px", resize: "vertical" }}
+              />
+              {manualIsbnText && (
+                <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>
+                  {manualIsbnText.split(/[\n\r,;\t\s]+/).filter(s => s.replace(/[^0-9X]/gi,"").length >= 10).length} ISBN tespit edildi
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Filtreler ── */}
+          <div style={{ marginBottom: 14 }}>
+            <button onClick={() => setShowScanFilters(v => !v)}
+              style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6,
+                color: C.muted, fontSize: 11, padding: "6px 14px", cursor: "pointer",
+                fontFamily: "var(--mono)" }}>
+              {showScanFilters ? "▲" : "▼"} Filtreler
+              {(scanMinRoi || scanMinProfit || scanCompareWith !== "used" || scanAmazonConds.length < AMZN_CONDITIONS.length) && (
+                <span style={{ marginLeft: 6, padding: "1px 5px", borderRadius: 8,
+                  background: C.accent, color: C.accentText, fontSize: 9 }}>●</span>
+              )}
+            </button>
+
+            {showScanFilters && (
+              <div style={{ marginTop: 10, background: C.surface, border: `1px solid ${C.border}`,
+                borderRadius: 8, padding: "14px 16px", display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
+
+                {/* Min ROI */}
+                <div>
+                  <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Min ROI %</div>
+                  <input className="inp" type="number" placeholder="örn. 20"
+                    value={scanMinRoi} onChange={e => setScanMinRoi(e.target.value)}
+                    style={{ width: "100%" }} />
+                </div>
+
+                {/* Min Kar */}
+                <div>
+                  <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Min Kar $</div>
+                  <input className="inp" type="number" placeholder="örn. 3"
+                    value={scanMinProfit} onChange={e => setScanMinProfit(e.target.value)}
+                    style={{ width: "100%" }} />
+                </div>
+
+                {/* Amazon Fiyat Karşılaştırma */}
+                <div>
+                  <div style={{ fontSize: 10, color: C.muted, marginBottom: 6 }}>Amazon Fiyat Karşılaştırma</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {["used", "new"].map(v => (
+                      <button key={v} onClick={() => setScanCompareWith(v)}
+                        style={{ flex: 1, padding: "6px 0", borderRadius: 5, fontSize: 11,
+                          cursor: "pointer", fontFamily: "var(--mono)",
+                          background: scanCompareWith === v ? C.accent : "transparent",
+                          color: scanCompareWith === v ? C.accentText : C.muted,
+                          border: `1px solid ${scanCompareWith === v ? C.accent : C.border}`,
+                          fontWeight: scanCompareWith === v ? 600 : 400 }}>
+                        {v === "used" ? "Used" : "New"}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 9, color: C.muted3, marginTop: 4 }}>
+                    {scanCompareWith === "new" ? "Amazon NEW fiyatıyla kar hesapla" : "Amazon USED fiyatıyla kar hesapla"}
+                  </div>
+                </div>
+
+                {/* Amazon Condition */}
+                <div>
+                  <div style={{ fontSize: 10, color: C.muted, marginBottom: 6 }}>Amazon Used Buybox Condition</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {AMZN_CONDITIONS.map(cond => (
+                      <label key={cond} style={{ display: "flex", alignItems: "center", gap: 6,
+                        fontSize: 11, color: C.text, cursor: "pointer" }}>
+                        <input type="checkbox"
+                          checked={scanAmazonConds.includes(cond)}
+                          onChange={e => setScanAmazonConds(prev =>
+                            e.target.checked ? [...prev, cond] : prev.filter(c => c !== cond)
+                          )} />
+                        {AMZN_COND_LABELS[cond]}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 9, color: C.muted3, marginTop: 4 }}>
+                    Amazon'daki used buybox condition filtresi
+                  </div>
+                </div>
+
+                {/* Concurrency */}
+                <div>
+                  <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>
+                    Tarama Hızı: {scanConcurrency} eşzamanlı
+                  </div>
+                  <input type="range" min={1} max={8} value={scanConcurrency}
+                    onChange={e => setScanConcurrency(Number(e.target.value))}
+                    style={{ width: "100%" }} />
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: C.muted3 }}>
+                    <span>Yavaş</span><span>Hızlı</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Tarama Kontrolleri ── */}
           <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
             <button className="add-btn" onClick={startScan}
-              disabled={scanLoading || items.length === 0}
+              disabled={scanLoading || (!useManualIsbns && items.length === 0)}
               style={{ fontSize: 12, padding: "8px 20px" }}>
-              {scanLoading ? "⏳ Taranıyor…" : `🔍 Amazon'da Tara (${items.length} ISBN)`}
+              {scanLoading ? "⏳ Taranıyor…" : "🔍 Taramayı Başlat"}
             </button>
-            {scanResults && (
-              <span style={{ fontSize: 11, color: C.muted }}>
-                ✅ {scanResults.accepted.length} karlı · ❌ {scanResults.rejected.length} reddedildi
-              </span>
+            {scanLoading && (
+              <button onClick={cancelScan}
+                style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.red}44`,
+                  background: "none", color: C.red, fontSize: 12, cursor: "pointer",
+                  fontFamily: "var(--mono)" }}>
+                ⏹ Durdur
+              </button>
             )}
-            {scanResults && (
+            {(scanResults || scanLoading) && (
               <select className="inp" value={scanSort} onChange={e => setScanSort(e.target.value)}
                 style={{ width: 140 }}>
                 <option value="roi_desc">ROI ↓</option>
@@ -4700,9 +4958,14 @@ function BookstoresTab({ C, theme, push }) {
                 <option value="price_asc">Alış ↑</option>
               </select>
             )}
+            {scanResults && !scanLoading && (
+              <span style={{ fontSize: 11, color: C.muted }}>
+                ✅ {scanResults.accepted.length} karlı · ❌ {scanResults.rejected.length} reddedildi
+              </span>
+            )}
           </div>
 
-          {/* Progress bar */}
+          {/* ── Progress Bar ── */}
           {scanLoading && scanProgress && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
@@ -4719,23 +4982,45 @@ function BookstoresTab({ C, theme, push }) {
                   height: "100%", background: C.accent, borderRadius: 3, transition: "width .3s",
                 }} />
               </div>
-              {scanProgress.accepted_count > 0 && (
-                <div style={{ fontSize: 10, color: C.green, marginTop: 4 }}>
-                  Şu ana kadar {scanProgress.accepted_count} karlı bulundu
-                </div>
-              )}
+              <div style={{ display: "flex", gap: 16, marginTop: 4 }}>
+                {scanProgress.accepted_count > 0 && (
+                  <span style={{ fontSize: 10, color: C.green }}>
+                    ✅ {scanProgress.accepted_count} karlı bulundu
+                  </span>
+                )}
+                {scanProgress.rejected_count > 0 && (
+                  <span style={{ fontSize: 10, color: C.muted }}>
+                    ❌ {scanProgress.rejected_count} reddedildi
+                  </span>
+                )}
+              </div>
             </div>
           )}
 
-          {/* No items warning */}
-          {items.length === 0 && !scanResults && (
+          {/* ── Karlı Olmayan Sil Butonu ── */}
+          {scanResults && !scanLoading && scanResults.rejected?.length > 0 && !useManualIsbns && (
+            <div style={{ marginBottom: 14 }}>
+              <button onClick={deleteUnprofitable}
+                style={{ padding: "7px 16px", borderRadius: 6, border: `1px solid ${C.red}44`,
+                  background: "none", color: C.red, fontSize: 11, cursor: "pointer",
+                  fontFamily: "var(--mono)" }}>
+                🗑 Karlı Olmayan {scanResults.rejected.length} ISBN'i Envanterden Sil
+              </button>
+            </div>
+          )}
+
+          {/* ── Boş Durum ── */}
+          {!useManualIsbns && items.length === 0 && !scanResults && !scanLoading && (
             <div style={{ textAlign: "center", padding: 60, color: C.muted3 }}>
               <div style={{ fontSize: 32, marginBottom: 12 }}>📦</div>
               <div style={{ fontSize: 13 }}>Önce BookDepot sekmesinden kitap ekleyin</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
+                veya yukarıdan "Manuel ISBN Listesi" seçin
+              </div>
             </div>
           )}
 
-          {/* Results table */}
+          {/* ── Sonuç Tablosu (canlı + final) ── */}
           {scanFiltered.length > 0 && (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "var(--mono)" }}>
@@ -4789,14 +5074,107 @@ function BookstoresTab({ C, theme, push }) {
             </div>
           )}
 
-          {/* Scan done but no results */}
-          {scanResults && scanFiltered.length === 0 && (
+          {/* Tarama bitti ama sonuç yok */}
+          {scanResults && scanFiltered.length === 0 && !scanLoading && (
             <div style={{ textAlign: "center", padding: 40, color: C.muted3 }}>
               <div style={{ fontSize: 24, marginBottom: 8 }}>😔</div>
               <div style={{ fontSize: 12 }}>Karlı arbitrage bulunamadı</div>
               <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>
-                {scanResults.rejected.length} ISBN reddedildi (düşük ROI, fiyat bulunamadı vb.)
+                {scanResults.rejected.length} ISBN reddedildi — filtreleri gevşetmeyi dene
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === "history" && (
+        <div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>Geçmiş Taramalar</span>
+            <button className="icon-btn" onClick={fetchHistory} title="Yenile" style={{ fontSize: 16 }}>↻</button>
+          </div>
+
+          {historyLoading ? (
+            <div style={{ textAlign: "center", padding: 40, color: C.muted3 }}>Yükleniyor…</div>
+          ) : bdHistory.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 60, color: C.muted3 }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>📜</div>
+              <div style={{ fontSize: 13 }}>Henüz tarama geçmişi yok</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>İlk BookDepot taramasını yaptıktan sonra burada görünür</div>
+            </div>
+          ) : (
+            <div>
+              {bdHistory.map((entry, idx) => {
+                const date = new Date(entry.ts * 1000);
+                const dateStr = date.toLocaleDateString("tr-TR") + " " + date.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+                const acceptedCount = entry.accepted?.length || 0;
+                const rejectedCount = entry.rejected_count || 0;
+                const total = acceptedCount + rejectedCount;
+                const isExpanded = expandedHistory === idx;
+                return (
+                  <div key={entry.job_id || idx}
+                    style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
+                      marginBottom: 8, overflow: "hidden" }}>
+                    <div onClick={() => setExpandedHistory(isExpanded ? null : idx)}
+                      style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 12,
+                        cursor: "pointer", userSelect: "none" }}>
+                      <span style={{ fontSize: 11, color: C.muted, fontFamily: "var(--mono)", minWidth: 120 }}>
+                        {dateStr}
+                      </span>
+                      <span style={{ fontSize: 11, color: C.muted }}>
+                        {total} ISBN tarandı
+                      </span>
+                      <span style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>
+                        ✅ {acceptedCount} karlı
+                      </span>
+                      <span style={{ fontSize: 11, color: C.muted }}>
+                        ❌ {rejectedCount} reddedildi
+                      </span>
+                      {acceptedCount > 0 && (
+                        <span style={{ marginLeft: "auto", fontSize: 11, color: C.accent }}>
+                          En yüksek ROI: {Math.max(...(entry.accepted || []).map(r => r.roi_pct || 0)).toFixed(0)}%
+                        </span>
+                      )}
+                      <span style={{ fontSize: 12, color: C.muted3 }}>{isExpanded ? "▲" : "▼"}</span>
+                    </div>
+
+                    {isExpanded && entry.accepted?.length > 0 && (
+                      <div style={{ borderTop: `1px solid ${C.border}`, overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "var(--mono)" }}>
+                          <thead>
+                            <tr style={{ background: C.surface2 }}>
+                              <th style={{ padding: "7px 10px", color: C.muted, fontWeight: 500, textAlign: "left" }}>ISBN</th>
+                              <th style={{ padding: "7px 10px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Alış $</th>
+                              <th style={{ padding: "7px 10px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Amazon $</th>
+                              <th style={{ padding: "7px 10px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Kar $</th>
+                              <th style={{ padding: "7px 10px", color: C.muted, fontWeight: 500, textAlign: "right" }}>ROI %</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...entry.accepted].sort((a,b) => (b.roi_pct||0)-(a.roi_pct||0)).map((r, i) => {
+                              const tierColor = r.roi_tier === "fire" ? C.orange : r.roi_tier === "good" ? C.green : r.roi_tier === "low" ? C.yellow : C.red;
+                              return (
+                                <tr key={r.isbn + i} style={{ borderTop: `1px solid ${C.border}22` }}>
+                                  <td style={{ padding: "6px 10px", color: C.text }}>{r.isbn}</td>
+                                  <td style={{ padding: "6px 10px", textAlign: "right" }}>${(r.buy_price||0).toFixed(2)}</td>
+                                  <td style={{ padding: "6px 10px", color: C.blue, textAlign: "right" }}>${(r.sell_price||r.amazon_sell_price||0).toFixed(2)}</td>
+                                  <td style={{ padding: "6px 10px", color: (r.profit||0)>0?C.green:C.red, textAlign: "right", fontWeight: 600 }}>${(r.profit||0).toFixed(2)}</td>
+                                  <td style={{ padding: "6px 10px", color: tierColor, textAlign: "right", fontWeight: 600 }}>{(r.roi_pct||0).toFixed(1)}%</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {isExpanded && (!entry.accepted || entry.accepted.length === 0) && (
+                      <div style={{ padding: "12px 14px", fontSize: 11, color: C.muted, borderTop: `1px solid ${C.border}` }}>
+                        Bu taramada karlı sonuç bulunamadı
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

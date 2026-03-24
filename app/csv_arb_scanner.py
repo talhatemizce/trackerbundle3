@@ -260,6 +260,8 @@ class ScanFilters:
     # Buyback kanalı filtresi
     min_buyback_profit: Optional[float] = None  # buyback_profit >= X ($) olanları göster
     buyback_only: bool = False                  # sadece buyback kanalında kârlı olanlar
+    # Amazon used buybox condition filtresi
+    amazon_condition_in: Optional[List[str]] = None  # ["acceptable","good","very_good","like_new"]
 
 
 def _filter_result(r: ArbResult, f: ScanFilters) -> str:
@@ -727,6 +729,20 @@ async def _scan_one(
                 r.reason = "amazon_unavailable"
                 results.append(r)
             return results
+
+    # Amazon used buybox condition filtresi
+    if filters.amazon_condition_in and amazon_data:
+        used_bb = (amazon_data.get("used") or {}).get("buybox") or {}
+        used_bb_cond = used_bb.get("sub_condition", "")
+        if used_bb_cond and used_bb_cond not in filters.amazon_condition_in:
+            _rej = []
+            for o in all_offers:
+                r = ArbResult(isbn=isbn, asin=asin, source=o["source"],
+                              source_condition=o["source_condition"], buy_price=o["buy_price"],
+                              amazon_sell_price=None, buybox_type=None, match_type=None)
+                r.reason = f"amazon_condition_mismatch({used_bb_cond})"
+                _rej.append(r)
+            return _rej
 
     results = []
     for o in all_offers:
