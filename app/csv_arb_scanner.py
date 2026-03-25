@@ -673,8 +673,10 @@ async def _scan_one(
     all_offers = [o for o in (ebay_offers or []) + (bf_offers or []) + (bd_offers or []) if "_error" not in o]
 
     # Kullanıcı alım fiyatı (generic CSV) → sentetik offer ekle
+    # BookDepot envanterinden gelen offer varsa csv_input ekleme (duplicate önle)
     csv_price = isbn_buy_prices.get(isbn) or isbn_buy_prices.get(asin)
-    if csv_price and csv_price > 0:
+    has_bd_offer = any(o.get("source") == "bookdepot" for o in all_offers)
+    if csv_price and csv_price > 0 and not has_bd_offer:
         for cond in ["new", "used"]:
             all_offers.append({
                 "source": "csv_input",
