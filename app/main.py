@@ -1650,6 +1650,15 @@ async def bookdepot_history():
     return {"ok": True, "history": bd_h}
 
 
+@app.get("/bookdepot/setup")
+async def bookdepot_setup():
+    """BookDepot bookmarklet kurulum sayfası."""
+    from fastapi.responses import FileResponse as _FR
+    import pathlib as _pl
+    p = _pl.Path(__file__).parent.parent / "bookdepot_bookmarklet.html"
+    return _FR(str(p), media_type="text/html")
+
+
 # ---- Static files: serve React panel build (production) ----
 from pathlib import Path as _Path
 from fastapi.staticfiles import StaticFiles
