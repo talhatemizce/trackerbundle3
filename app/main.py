@@ -1551,7 +1551,8 @@ async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: Background
         min_profit_usd=req.min_profit_usd,
         min_amazon_price=req.min_amazon_price,
         max_amazon_price=req.max_amazon_price,
-        condition_in=req.condition_in,
+        # BookDepot her zaman used satar — csv_input "new" variant'ını filtrele
+        condition_in=req.condition_in if req.condition_in else ["used"],
         amazon_condition_in=req.amazon_condition_in,
         only_viable=req.only_viable,
         strict_mode=strict_mode,
