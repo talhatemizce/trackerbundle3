@@ -1189,7 +1189,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
   const [verifying, setVerifying] = useState(new Set()); // indices being verified
   const [bulkVerifying, setBulkVerifying] = useState(false);
   const [verifyDrawer, setVerifyDrawer] = useState(null); // {rowIdx, row} — detail panel open
-  const [discoverSubTab, setDiscoverSubTab] = useState("scan"); // "scan" | "results" | "candidates"
+  const [discoverSubTab, setDiscoverSubTab] = useState("scan"); // "scan" | "results" | "candidates" | "history"
   const [minRoi, setMinRoi] = useState("");
   const [maxRoi, setMaxRoi] = useState("");
   const [minProfit, setMinProfit] = useState("");
@@ -1603,6 +1603,9 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
       </button>
       <button style={subTabStyle("candidates")} onClick={()=>setDiscoverSubTab("candidates")}>
         ⭐ Adaylar {candidates.length>0?`(${candidates.length})`:""}
+      </button>
+      <button style={subTabStyle("history")} onClick={()=>setDiscoverSubTab("history")}>
+        📋 Geçmiş
       </button>
     </div>
 
@@ -2323,6 +2326,12 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
           isbns={watchlistIsbns}
           addIsbn={addIsbn}
         />
+      </div>
+    )}
+
+    {discoverSubTab==="history" && (
+      <div style={{paddingTop:16}}>
+        <ScanHistoryTab C={C} addCandidate={addCandidate} candidates={candidates} />
       </div>
     )}
 

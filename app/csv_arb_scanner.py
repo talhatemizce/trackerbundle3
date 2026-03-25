@@ -303,15 +303,48 @@ def _filter_result(r: ArbResult, f: ScanFilters) -> str:
 
 # ── Amazon fiyat çekimi (cache'li) ───────────────────────────────────────────
 
+import json as _json_mod
+from pathlib import Path as _Path
+
 _amz_cache: Dict[str, Tuple[float, Dict]] = {}  # asin → (ts, data)
-_AMZ_TTL = 20 * 60  # 20 dakika
+_AMZ_TTL = 7 * 24 * 3600  # 1 hafta
+_AMZ_DISK_CACHE = _Path(__file__).resolve().parent / "data" / "amazon_price_cache.json"
+_amz_disk_loaded = False
+
+def _load_amz_disk_cache() -> None:
+    """Uygulama başlarken disk cache'i belleğe yükle."""
+    global _amz_disk_loaded
+    if _amz_disk_loaded:
+        return
+    _amz_disk_loaded = True
+    if not _AMZ_DISK_CACHE.exists():
+        return
+    try:
+        raw = _json_mod.loads(_AMZ_DISK_CACHE.read_text())
+        now = time.time()
+        for asin, (ts, data) in raw.items():
+            if now - ts < _AMZ_TTL:
+                _amz_cache[asin] = (ts, data)
+    except Exception as e:
+        logger.warning("amazon_price_cache load failed: %s", e)
+
+def _save_amz_disk_cache() -> None:
+    """Bellek cache'ini diske yaz (atomik)."""
+    try:
+        _AMZ_DISK_CACHE.parent.mkdir(exist_ok=True)
+        tmp = _AMZ_DISK_CACHE.with_suffix(".tmp")
+        tmp.write_text(_json_mod.dumps(_amz_cache))
+        tmp.replace(_AMZ_DISK_CACHE)
+    except Exception as e:
+        logger.warning("amazon_price_cache save failed: %s", e)
 
 
 _catalog_cache_sc: Dict[str, tuple] = {}
 _CATALOG_TTL_SC = 3600 * 2
 
 async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
-    """get_top2_prices + getCatalogItem (BSR) paralel çek, 20dk cache'le."""
+    """get_top2_prices + getCatalogItem (BSR) paralel çek, 1 hafta cache'le (disk kalıcı)."""
+    _load_amz_disk_cache()
     now = time.time()
     if asin in _amz_cache:
         ts, data = _amz_cache[asin]
@@ -342,6 +375,7 @@ async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
 
         data = prices if isinstance(prices, dict) else {}
         _amz_cache[asin] = (now, data)
+        _save_amz_disk_cache()
         return data
     except Exception as e:
         logger.warning("Amazon prices failed asin=%s: %s", asin, e)
