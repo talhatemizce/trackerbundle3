@@ -5027,25 +5027,39 @@ function BookstoresTab({ C, theme, push }) {
                 <thead>
                   <tr style={{ borderBottom: `2px solid ${C.border}`, textAlign: "left" }}>
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}>ISBN</th>
-                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}>Kaynak</th>
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Alış $</th>
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Amazon $</th>
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Kar $</th>
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>ROI %</th>
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}>Tier</th>
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>BSR</th>
-                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}></th>
+                    <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}>Linkler</th>
                   </tr>
                 </thead>
                 <tbody>
                   {scanFiltered.map((r, idx) => {
                     const tierColor = r.roi_tier === "fire" ? C.orange : r.roi_tier === "good" ? C.green : r.roi_tier === "low" ? C.yellow : C.red;
                     const tierIcon = r.roi_tier === "fire" ? "🔥" : r.roi_tier === "good" ? "✅" : r.roi_tier === "low" ? "⚠️" : "❌";
+                    const asin = r.asin || r.isbn;
+                    const amzUrl = r.asin
+                      ? `https://www.amazon.com/dp/${r.asin}`
+                      : `https://www.amazon.com/s?k=${r.isbn}`;
+                    const keepaUrl = r.asin
+                      ? `https://keepa.com/#!product/1-${r.asin}`
+                      : `https://keepa.com/#!search/1/${r.isbn}`;
+                    const ebayUrl = r.ebay_url || `https://www.ebay.com/sch/i.html?_nkw=${r.isbn}&LH_BIN=1`;
+                    const bdItem = items.find(i => i.isbn === r.isbn);
+                    const bdUrl = bdItem?.url || `https://www.bookdepot.com/Store/List?q=${r.isbn}`;
+                    const linkStyle = {
+                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      width: 22, height: 22, borderRadius: 4, border: `1px solid ${C.border}`,
+                      background: C.surface2, textDecoration: "none", overflow: "hidden",
+                      flexShrink: 0,
+                    };
                     return (
                       <tr key={r.isbn + r.source + idx}
                         style={{ borderBottom: `1px solid ${C.border}22`, background: idx % 2 === 0 ? "transparent" : C.surface }}>
                         <td style={{ padding: "7px 6px", color: C.text }}>{r.isbn}</td>
-                        <td style={{ padding: "7px 6px", color: C.muted }}>{r.source}</td>
                         <td style={{ padding: "7px 6px", color: C.text, textAlign: "right" }}>${(r.buy_price || 0).toFixed(2)}</td>
                         <td style={{ padding: "7px 6px", color: C.blue, textAlign: "right" }}>${(r.sell_price || r.amazon_sell_price || 0).toFixed(2)}</td>
                         <td style={{ padding: "7px 6px", color: (r.profit || 0) > 0 ? C.green : C.red, textAlign: "right", fontWeight: 600 }}>
@@ -5059,12 +5073,35 @@ function BookstoresTab({ C, theme, push }) {
                           {r.bsr ? r.bsr.toLocaleString() : "-"}
                         </td>
                         <td style={{ padding: "7px 6px" }}>
-                          <button onClick={() => importToWatchlist(r.isbn)}
-                            style={{ padding: "2px 6px", borderRadius: 3, border: `1px solid ${C.accent}44`,
-                              background: "transparent", color: C.accent, fontSize: 10,
-                              cursor: "pointer", fontFamily: "var(--mono)" }}>
-                            +WL
-                          </button>
+                          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                            {/* Amazon */}
+                            <a href={amzUrl} target="_blank" rel="noopener" style={linkStyle} title="Amazon">
+                              <img src="https://www.amazon.com/favicon.ico" width={14} height={14} alt="AMZ"
+                                onError={e => { e.target.replaceWith(Object.assign(document.createElement("span"), {textContent:"A", style:"font-size:10px;color:#ff9900;font-weight:bold"})); }} />
+                            </a>
+                            {/* BookDepot */}
+                            <a href={bdUrl} target="_blank" rel="noopener" style={linkStyle} title="BookDepot">
+                              <img src="https://www.bookdepot.com/favicon.ico" width={14} height={14} alt="BD"
+                                onError={e => { e.target.replaceWith(Object.assign(document.createElement("span"), {textContent:"B", style:"font-size:10px;color:#4caf50;font-weight:bold"})); }} />
+                            </a>
+                            {/* Keepa */}
+                            <a href={keepaUrl} target="_blank" rel="noopener" style={linkStyle} title="Keepa">
+                              <img src="https://keepa.com/favicon.ico" width={14} height={14} alt="K"
+                                onError={e => { e.target.replaceWith(Object.assign(document.createElement("span"), {textContent:"K", style:"font-size:10px;color:#e91e63;font-weight:bold"})); }} />
+                            </a>
+                            {/* eBay */}
+                            <a href={ebayUrl} target="_blank" rel="noopener" style={linkStyle} title="eBay">
+                              <img src="https://www.ebay.com/favicon.ico" width={14} height={14} alt="eBay"
+                                onError={e => { e.target.replaceWith(Object.assign(document.createElement("span"), {textContent:"e", style:"font-size:10px;color:#e53238;font-weight:bold"})); }} />
+                            </a>
+                            {/* +WL */}
+                            <button onClick={() => importToWatchlist(r.isbn)}
+                              style={{ padding: "2px 6px", borderRadius: 3, border: `1px solid ${C.accent}44`,
+                                background: "transparent", color: C.accent, fontSize: 10,
+                                cursor: "pointer", fontFamily: "var(--mono)" }}>
+                              +WL
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
