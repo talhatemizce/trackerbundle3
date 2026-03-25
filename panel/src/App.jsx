@@ -4401,15 +4401,11 @@ function BookLinks({ r, bdUrl, C }) {
     width:22, height:22, borderRadius:4, border:`1px solid ${C.border}`,
     background:C.surface2, textDecoration:"none", overflow:"hidden", flexShrink:0,
   };
-  const FavImg = ({ src, fallback, color }) => (
-    <img src={src} width={14} height={14} alt={fallback}
-      onError={e => {
-        const s = document.createElement("span");
-        s.textContent = fallback;
-        s.style.cssText = `font-size:10px;color:${color};font-weight:bold`;
-        e.target.replaceWith(s);
-      }} />
-  );
+  const FavImg = ({ src, fallback, color }) => {
+    const [err, setErr] = React.useState(false);
+    if (err) return <span style={{fontSize:10,color,fontWeight:"bold"}}>{fallback}</span>;
+    return <img src={src} width={14} height={14} alt={fallback} onError={()=>setErr(true)} />;
+  };
   return (
     <div style={{ display:"flex", gap:4, alignItems:"center" }}>
       <a href={amzUrl}  target="_blank" rel="noopener" style={ls} title="Amazon">
