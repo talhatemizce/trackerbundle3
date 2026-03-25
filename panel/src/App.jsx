@@ -4402,7 +4402,7 @@ function BookLinks({ r, bdUrl, C }) {
     background:C.surface2, textDecoration:"none", overflow:"hidden", flexShrink:0,
   };
   const FavImg = ({ src, fallback, color }) => {
-    const [err, setErr] = React.useState(false);
+    const [err, setErr] = useState(false);
     if (err) return <span style={{fontSize:10,color,fontWeight:"bold"}}>{fallback}</span>;
     return <img src={src} width={14} height={14} alt={fallback} onError={()=>setErr(true)} />;
   };
