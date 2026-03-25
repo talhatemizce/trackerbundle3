@@ -4376,6 +4376,49 @@ function CandidatesTab({ C, candidates, removeCandidate, saveCandidates, push, i
 const AMZN_CONDITIONS = ["acceptable", "good", "very_good", "like_new"];
 const AMZN_COND_LABELS = { acceptable: "Acceptable", good: "Good", very_good: "Very Good", like_new: "Like New" };
 
+// Logo linkleri — Amazon, BookDepot, Keepa, eBay
+function BookLinks({ r, bdUrl, C }) {
+  const amzUrl = r.asin
+    ? `https://www.amazon.com/dp/${r.asin}`
+    : `https://www.amazon.com/s?k=${r.isbn}`;
+  const keepaUrl = r.asin
+    ? `https://keepa.com/#!product/1-${r.asin}`
+    : `https://keepa.com/#!search/1/${r.isbn}`;
+  const ebayUrl = r.ebay_url || `https://www.ebay.com/sch/i.html?_nkw=${r.isbn}&LH_BIN=1`;
+  const bdLink  = bdUrl || `https://www.bookdepot.com/Store/List?q=${r.isbn}`;
+
+  const ls = {
+    display:"inline-flex", alignItems:"center", justifyContent:"center",
+    width:22, height:22, borderRadius:4, border:`1px solid ${C.border}`,
+    background:C.surface2, textDecoration:"none", overflow:"hidden", flexShrink:0,
+  };
+  const FavImg = ({ src, fallback, color }) => (
+    <img src={src} width={14} height={14} alt={fallback}
+      onError={e => {
+        const s = document.createElement("span");
+        s.textContent = fallback;
+        s.style.cssText = `font-size:10px;color:${color};font-weight:bold`;
+        e.target.replaceWith(s);
+      }} />
+  );
+  return (
+    <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+      <a href={amzUrl}  target="_blank" rel="noopener" style={ls} title="Amazon">
+        <FavImg src="https://www.amazon.com/favicon.ico"      fallback="A" color="#ff9900" />
+      </a>
+      <a href={bdLink}  target="_blank" rel="noopener" style={ls} title="BookDepot">
+        <FavImg src="https://www.bookdepot.com/favicon.ico"   fallback="B" color="#4caf50" />
+      </a>
+      <a href={keepaUrl} target="_blank" rel="noopener" style={ls} title="Keepa">
+        <FavImg src="https://keepa.com/favicon.ico"           fallback="K" color="#e91e63" />
+      </a>
+      <a href={ebayUrl} target="_blank" rel="noopener" style={ls} title="eBay">
+        <FavImg src="https://www.ebay.com/favicon.ico"        fallback="e" color="#e53238" />
+      </a>
+    </div>
+  );
+}
+
 function BookstoresTab({ C, theme, push }) {
   const [subTab, setSubTab] = useState("bookdepot");
   const [items, setItems] = useState([]);
@@ -4409,6 +4452,51 @@ function BookstoresTab({ C, theme, push }) {
   const [bdHistory, setBdHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [expandedHistory, setExpandedHistory] = useState(null);
+
+  // BookDepot Watchlist
+  const [bdWatchlist, setBdWatchlist] = useState([]);
+  const [wlLoading, setWlLoading] = useState(false);
+  const [wlSort, setWlSort] = useState("date"); // date | roi_desc | profit_desc
+
+  const fetchWatchlist = useCallback(async () => {
+    setWlLoading(true);
+    try {
+      const data = await req("/bookdepot/watchlist");
+      setBdWatchlist(data.items || []);
+    } catch (e) {
+      push("Watchlist yüklenemedi: " + e.message, "error");
+    } finally {
+      setWlLoading(false);
+    }
+  }, [push]);
+
+  const addToWatchlist = async (r) => {
+    try {
+      const res = await req("/bookdepot/watchlist", {
+        method: "POST",
+        body: JSON.stringify({
+          isbn: r.isbn, asin: r.asin || null, title: r.ebay_title || r.title || "",
+          buy_price: r.buy_price, amazon_price: r.sell_price || r.amazon_sell_price,
+          profit: r.profit, roi_pct: r.roi_pct, roi_tier: r.roi_tier,
+          bsr: r.bsr || null, ebay_url: r.ebay_url || "", source: r.source || "",
+        }),
+      });
+      if (res.added) push(`${r.isbn} BD Watchlist'e eklendi`, "success");
+      else push("Zaten BD Watchlist'te", "info");
+      setBdWatchlist(prev => {
+        const filtered = prev.filter(i => i.isbn !== r.isbn);
+        return [{ ...r, added_at: Date.now() / 1000 }, ...filtered];
+      });
+    } catch (e) { push("Eklenemedi: " + e.message, "error"); }
+  };
+
+  const removeFromWatchlist = async (isbn) => {
+    try {
+      await req(`/bookdepot/watchlist/${isbn}`, { method: "DELETE" });
+      setBdWatchlist(prev => prev.filter(i => i.isbn !== isbn));
+      push(`${isbn} çıkarıldı`, "info");
+    } catch (e) { push("Silinemedi: " + e.message, "error"); }
+  };
 
   const fetchInventory = useCallback(async () => {
     setLoading(true);
@@ -4618,12 +4706,14 @@ function BookstoresTab({ C, theme, push }) {
   const SUB_TABS = [
     { id: "bookdepot", label: "📦 BookDepot", count: items.length },
     { id: "scan", label: "🔍 Amazon Tarama", count: scanResults?.accepted?.length || (scanLoading ? scanProgress?.accepted_count : 0) || 0 },
+    { id: "watchlist", label: "⭐ Watchlist", count: bdWatchlist.length },
     { id: "history", label: "📜 Geçmiş", count: bdHistory.length },
   ];
 
   const handleSubTab = (id) => {
     setSubTab(id);
     if (id === "history" && bdHistory.length === 0) fetchHistory();
+    if (id === "watchlist" && bdWatchlist.length === 0) fetchWatchlist();
   };
 
   return (
@@ -5040,22 +5130,9 @@ function BookstoresTab({ C, theme, push }) {
                   {scanFiltered.map((r, idx) => {
                     const tierColor = r.roi_tier === "fire" ? C.orange : r.roi_tier === "good" ? C.green : r.roi_tier === "low" ? C.yellow : C.red;
                     const tierIcon = r.roi_tier === "fire" ? "🔥" : r.roi_tier === "good" ? "✅" : r.roi_tier === "low" ? "⚠️" : "❌";
-                    const asin = r.asin || r.isbn;
-                    const amzUrl = r.asin
-                      ? `https://www.amazon.com/dp/${r.asin}`
-                      : `https://www.amazon.com/s?k=${r.isbn}`;
-                    const keepaUrl = r.asin
-                      ? `https://keepa.com/#!product/1-${r.asin}`
-                      : `https://keepa.com/#!search/1/${r.isbn}`;
-                    const ebayUrl = r.ebay_url || `https://www.ebay.com/sch/i.html?_nkw=${r.isbn}&LH_BIN=1`;
                     const bdItem = items.find(i => i.isbn === r.isbn);
-                    const bdUrl = bdItem?.url || `https://www.bookdepot.com/Store/List?q=${r.isbn}`;
-                    const linkStyle = {
-                      display: "inline-flex", alignItems: "center", justifyContent: "center",
-                      width: 22, height: 22, borderRadius: 4, border: `1px solid ${C.border}`,
-                      background: C.surface2, textDecoration: "none", overflow: "hidden",
-                      flexShrink: 0,
-                    };
+                    const bdUrl = bdItem?.url;
+                    const inWl = bdWatchlist.some(w => w.isbn === r.isbn);
                     return (
                       <tr key={r.isbn + r.source + idx}
                         style={{ borderBottom: `1px solid ${C.border}22`, background: idx % 2 === 0 ? "transparent" : C.surface }}>
@@ -5074,32 +5151,14 @@ function BookstoresTab({ C, theme, push }) {
                         </td>
                         <td style={{ padding: "7px 6px" }}>
                           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                            {/* Amazon */}
-                            <a href={amzUrl} target="_blank" rel="noopener" style={linkStyle} title="Amazon">
-                              <img src="https://www.amazon.com/favicon.ico" width={14} height={14} alt="AMZ"
-                                onError={e => { e.target.replaceWith(Object.assign(document.createElement("span"), {textContent:"A", style:"font-size:10px;color:#ff9900;font-weight:bold"})); }} />
-                            </a>
-                            {/* BookDepot */}
-                            <a href={bdUrl} target="_blank" rel="noopener" style={linkStyle} title="BookDepot">
-                              <img src="https://www.bookdepot.com/favicon.ico" width={14} height={14} alt="BD"
-                                onError={e => { e.target.replaceWith(Object.assign(document.createElement("span"), {textContent:"B", style:"font-size:10px;color:#4caf50;font-weight:bold"})); }} />
-                            </a>
-                            {/* Keepa */}
-                            <a href={keepaUrl} target="_blank" rel="noopener" style={linkStyle} title="Keepa">
-                              <img src="https://keepa.com/favicon.ico" width={14} height={14} alt="K"
-                                onError={e => { e.target.replaceWith(Object.assign(document.createElement("span"), {textContent:"K", style:"font-size:10px;color:#e91e63;font-weight:bold"})); }} />
-                            </a>
-                            {/* eBay */}
-                            <a href={ebayUrl} target="_blank" rel="noopener" style={linkStyle} title="eBay">
-                              <img src="https://www.ebay.com/favicon.ico" width={14} height={14} alt="eBay"
-                                onError={e => { e.target.replaceWith(Object.assign(document.createElement("span"), {textContent:"e", style:"font-size:10px;color:#e53238;font-weight:bold"})); }} />
-                            </a>
-                            {/* +WL */}
-                            <button onClick={() => importToWatchlist(r.isbn)}
-                              style={{ padding: "2px 6px", borderRadius: 3, border: `1px solid ${C.accent}44`,
-                                background: "transparent", color: C.accent, fontSize: 10,
+                            <BookLinks r={r} bdUrl={bdUrl} C={C} />
+                            <button onClick={() => addToWatchlist(r)}
+                              style={{ padding: "2px 6px", borderRadius: 3,
+                                border: `1px solid ${inWl ? C.accent : C.accent}44`,
+                                background: inWl ? C.accent+"22" : "transparent",
+                                color: C.accent, fontSize: 10,
                                 cursor: "pointer", fontFamily: "var(--mono)" }}>
-                              +WL
+                              {inWl ? "★" : "+★"}
                             </button>
                           </div>
                         </td>
@@ -5119,6 +5178,104 @@ function BookstoresTab({ C, theme, push }) {
               <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>
                 {scanResults.rejected.length} ISBN reddedildi — filtreleri gevşetmeyi dene
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === "watchlist" && (
+        <div>
+          {/* Toolbar */}
+          <div style={{ display:"flex", gap:8, marginBottom:14, alignItems:"center", flexWrap:"wrap" }}>
+            <span style={{ fontSize:13, color:C.text, fontWeight:600 }}>⭐ BD Watchlist</span>
+            <select className="inp" value={wlSort} onChange={e => setWlSort(e.target.value)} style={{ width:140 }}>
+              <option value="date">Yeni eklenen</option>
+              <option value="roi_desc">ROI ↓</option>
+              <option value="profit_desc">Kar ↓</option>
+            </select>
+            <button className="icon-btn" onClick={fetchWatchlist} title="Yenile" style={{ fontSize:16 }}>↻</button>
+            {bdWatchlist.length > 0 && (
+              <button onClick={async () => {
+                if (!confirm(`${bdWatchlist.length} item silinsin mi?`)) return;
+                await req("/bookdepot/watchlist", { method:"DELETE" });
+                setBdWatchlist([]);
+              }} style={{ marginLeft:"auto", padding:"5px 12px", borderRadius:6,
+                border:`1px solid ${C.red}44`, background:"none", color:C.red,
+                fontSize:11, cursor:"pointer", fontFamily:"var(--mono)" }}>
+                🗑 Tümünü Sil
+              </button>
+            )}
+          </div>
+
+          {wlLoading ? (
+            <div style={{ textAlign:"center", padding:40, color:C.muted3 }}>Yükleniyor…</div>
+          ) : bdWatchlist.length === 0 ? (
+            <div style={{ textAlign:"center", padding:60, color:C.muted3 }}>
+              <div style={{ fontSize:32, marginBottom:12 }}>⭐</div>
+              <div style={{ fontSize:13 }}>BD Watchlist boş</div>
+              <div style={{ fontSize:11, color:C.muted, marginTop:4 }}>
+                Amazon Tarama sonuçlarından +★ ile ekle
+              </div>
+            </div>
+          ) : (
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:"var(--mono)" }}>
+                <thead>
+                  <tr style={{ borderBottom:`2px solid ${C.border}`, textAlign:"left" }}>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500 }}>ISBN</th>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500 }}>Başlık</th>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500, textAlign:"right" }}>Alış $</th>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500, textAlign:"right" }}>Amazon $</th>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500, textAlign:"right" }}>Kar $</th>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500, textAlign:"right" }}>ROI %</th>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500, textAlign:"right" }}>BSR</th>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500 }}>Linkler</th>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500 }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...bdWatchlist]
+                    .sort((a,b) => {
+                      if (wlSort === "roi_desc") return (b.roi_pct||0)-(a.roi_pct||0);
+                      if (wlSort === "profit_desc") return (b.profit||0)-(a.profit||0);
+                      return (b.added_at||0)-(a.added_at||0);
+                    })
+                    .map((r, idx) => {
+                      const tierColor = r.roi_tier === "fire" ? C.orange : r.roi_tier === "good" ? C.green : r.roi_tier === "low" ? C.yellow : C.red;
+                      const tierIcon  = r.roi_tier === "fire" ? "🔥" : r.roi_tier === "good" ? "✅" : r.roi_tier === "low" ? "⚠️" : "❌";
+                      const bdItem = items.find(i => i.isbn === r.isbn);
+                      return (
+                        <tr key={r.isbn + idx}
+                          style={{ borderBottom:`1px solid ${C.border}22`, background: idx%2===0?"transparent":C.surface }}>
+                          <td style={{ padding:"7px 6px", color:C.text }}>{r.isbn}</td>
+                          <td style={{ padding:"7px 6px", color:C.muted, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            {r.title || "-"}
+                          </td>
+                          <td style={{ padding:"7px 6px", textAlign:"right" }}>${(r.buy_price||0).toFixed(2)}</td>
+                          <td style={{ padding:"7px 6px", color:C.blue, textAlign:"right" }}>${(r.amazon_price||0).toFixed(2)}</td>
+                          <td style={{ padding:"7px 6px", color:(r.profit||0)>0?C.green:C.red, textAlign:"right", fontWeight:600 }}>
+                            ${(r.profit||0).toFixed(2)}
+                          </td>
+                          <td style={{ padding:"7px 6px", color:tierColor, textAlign:"right", fontWeight:600 }}>
+                            {tierIcon} {(r.roi_pct||0).toFixed(1)}%
+                          </td>
+                          <td style={{ padding:"7px 6px", color:C.muted, textAlign:"right" }}>
+                            {r.bsr ? r.bsr.toLocaleString() : "-"}
+                          </td>
+                          <td style={{ padding:"7px 6px" }}>
+                            <BookLinks r={r} bdUrl={bdItem?.url || r.ebay_url} C={C} />
+                          </td>
+                          <td style={{ padding:"7px 6px" }}>
+                            <button onClick={() => removeFromWatchlist(r.isbn)}
+                              style={{ padding:"2px 6px", borderRadius:3, border:`1px solid ${C.red}44`,
+                                background:"transparent", color:C.red, fontSize:10,
+                                cursor:"pointer", fontFamily:"var(--mono)" }}>✕</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
@@ -5185,11 +5342,13 @@ function BookstoresTab({ C, theme, push }) {
                               <th style={{ padding: "7px 10px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Amazon $</th>
                               <th style={{ padding: "7px 10px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Kar $</th>
                               <th style={{ padding: "7px 10px", color: C.muted, fontWeight: 500, textAlign: "right" }}>ROI %</th>
+                              <th style={{ padding: "7px 10px", color: C.muted, fontWeight: 500 }}>Linkler</th>
                             </tr>
                           </thead>
                           <tbody>
                             {[...entry.accepted].sort((a,b) => (b.roi_pct||0)-(a.roi_pct||0)).map((r, i) => {
                               const tierColor = r.roi_tier === "fire" ? C.orange : r.roi_tier === "good" ? C.green : r.roi_tier === "low" ? C.yellow : C.red;
+                              const bdItem = items.find(it => it.isbn === r.isbn);
                               return (
                                 <tr key={r.isbn + i} style={{ borderTop: `1px solid ${C.border}22` }}>
                                   <td style={{ padding: "6px 10px", color: C.text }}>{r.isbn}</td>
@@ -5197,6 +5356,15 @@ function BookstoresTab({ C, theme, push }) {
                                   <td style={{ padding: "6px 10px", color: C.blue, textAlign: "right" }}>${(r.sell_price||r.amazon_sell_price||0).toFixed(2)}</td>
                                   <td style={{ padding: "6px 10px", color: (r.profit||0)>0?C.green:C.red, textAlign: "right", fontWeight: 600 }}>${(r.profit||0).toFixed(2)}</td>
                                   <td style={{ padding: "6px 10px", color: tierColor, textAlign: "right", fontWeight: 600 }}>{(r.roi_pct||0).toFixed(1)}%</td>
+                                  <td style={{ padding: "6px 10px" }}>
+                                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                                      <BookLinks r={r} bdUrl={bdItem?.url} C={C} />
+                                      <button onClick={() => addToWatchlist(r)}
+                                        style={{ padding: "2px 5px", borderRadius: 3, border: `1px solid ${C.accent}44`,
+                                          background: "transparent", color: C.accent, fontSize: 10,
+                                          cursor: "pointer", fontFamily: "var(--mono)" }}>+★</button>
+                                    </div>
+                                  </td>
                                 </tr>
                               );
                             })}

@@ -1618,7 +1618,85 @@ async def bookdepot_clear():
     return {"ok": True, "message": "Envanter temizlendi"}
 
 
-@app.delete("/bookdepot/inventory/unprofitable")
+# ── BookDepot Watchlist ───────────────────────────────────────────────────────
+
+def _bd_wl_path():
+    from app.core.config import get_settings
+    return get_settings().resolved_data_dir() / "bookdepot_watchlist.json"
+
+@app.get("/bookdepot/watchlist")
+async def bookdepot_watchlist_get():
+    """BookDepot watchlist'ini döndür."""
+    from app.core.json_store import _read_unsafe
+    data = _read_unsafe(_bd_wl_path(), default={"items": {}})
+    items = list(data.get("items", {}).values())
+    items.sort(key=lambda x: x.get("added_at", 0), reverse=True)
+    return {"ok": True, "count": len(items), "items": items}
+
+class BdWatchlistAddRequest(BaseModel):
+    isbn: str
+    asin: Optional[str] = None
+    title: str = ""
+    buy_price: Optional[float] = None
+    amazon_price: Optional[float] = None
+    profit: Optional[float] = None
+    roi_pct: Optional[float] = None
+    roi_tier: Optional[str] = None
+    bsr: Optional[int] = None
+    ebay_url: str = ""
+    source: str = ""
+
+@app.post("/bookdepot/watchlist")
+async def bookdepot_watchlist_add(req: BdWatchlistAddRequest):
+    """BookDepot watchlist'ine ISBN ekle."""
+    from app.core.json_store import file_lock, _read_unsafe, _write_unsafe
+    isbn = req.isbn.strip()
+    if not isbn:
+        raise HTTPException(status_code=422, detail="ISBN gerekli")
+    p = _bd_wl_path()
+    with file_lock(p):
+        data = _read_unsafe(p, default={"items": {}})
+        already = isbn in data["items"]
+        data["items"][isbn] = {
+            "isbn": isbn,
+            "asin": req.asin,
+            "title": req.title,
+            "buy_price": req.buy_price,
+            "amazon_price": req.amazon_price,
+            "profit": req.profit,
+            "roi_pct": req.roi_pct,
+            "roi_tier": req.roi_tier,
+            "bsr": req.bsr,
+            "ebay_url": req.ebay_url,
+            "source": req.source,
+            "added_at": int(_time.time()),
+        }
+        _write_unsafe(p, data)
+    return {"ok": True, "added": not already, "total": len(data["items"])}
+
+@app.delete("/bookdepot/watchlist/{isbn}")
+async def bookdepot_watchlist_remove(isbn: str):
+    """BookDepot watchlist'inden ISBN sil."""
+    from app.core.json_store import file_lock, _read_unsafe, _write_unsafe
+    p = _bd_wl_path()
+    with file_lock(p):
+        data = _read_unsafe(p, default={"items": {}})
+        removed = isbn in data["items"]
+        data["items"].pop(isbn, None)
+        _write_unsafe(p, data)
+    return {"ok": True, "removed": removed}
+
+@app.delete("/bookdepot/watchlist")
+async def bookdepot_watchlist_clear():
+    """BookDepot watchlist'ini tamamen temizle."""
+    from app.core.json_store import file_lock, _write_unsafe
+    p = _bd_wl_path()
+    with file_lock(p):
+        _write_unsafe(p, {"items": {}, "updated_at": int(_time.time())})
+    return {"ok": True}
+
+
+
 async def bookdepot_delete_unprofitable(job_id: str):
     """Verilen tarama job'undaki reddedilen ISBN'leri envanterden sil."""
     from app.scan_job_store import _jobs
