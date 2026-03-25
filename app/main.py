@@ -1543,7 +1543,14 @@ async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: Background
         }
 
     # compare_with: "new" → strict_mode=False (USED kitap → NEW Amazon fiyatıyla karşılaştır)
+    # compare_with: "used" → strict_mode=True (USED → USED Amazon fiyatıyla karşılaştır)
     strict_mode = req.compare_with != "new"
+
+    # csv_input her ISBN için hem "new" hem "used" offer ekler.
+    # compare_with="used" → sadece "used" condition offer'ı tara (new variant'ı filtrele)
+    # compare_with="new"  → sadece "new" condition offer'ı tara (used variant'ı filtrele)
+    # Kullanıcı condition_in açıkça gönderdiyse onu kullan.
+    effective_condition_in = req.condition_in if req.condition_in else [req.compare_with]
 
     filters = ScanFilters(
         min_roi_pct=req.min_roi_pct,
@@ -1551,8 +1558,7 @@ async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: Background
         min_profit_usd=req.min_profit_usd,
         min_amazon_price=req.min_amazon_price,
         max_amazon_price=req.max_amazon_price,
-        # BookDepot her zaman used satar — csv_input "new" variant'ını filtrele
-        condition_in=req.condition_in if req.condition_in else ["used"],
+        condition_in=effective_condition_in,
         amazon_condition_in=req.amazon_condition_in,
         only_viable=req.only_viable,
         strict_mode=strict_mode,
