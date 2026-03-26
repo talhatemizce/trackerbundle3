@@ -262,6 +262,8 @@ class ScanFilters:
     buyback_only: bool = False                  # sadece buyback kanalında kârlı olanlar
     # Amazon used buybox condition filtresi
     amazon_condition_in: Optional[List[str]] = None  # ["acceptable","good","very_good","like_new"]
+    # BookDepot-only mod: eBay/BookFinder/buyback/metadata atla (sadece BD vs Amazon)
+    bookdepot_only: bool = False
 
 
 def _filter_result(r: ArbResult, f: ScanFilters) -> str:
@@ -641,16 +643,26 @@ async def _scan_one(
         except Exception:
             return {}
 
-    amazon_data, ebay_offers, bf_offers, bd_offers, buyback_data, buyback_trend_data, book_meta = await asyncio.gather(
-        _get_amazon_prices(asin),
-        _get_ebay_offers(isbn, filters=filters),
-        _get_bookfinder_offers(isbn),
-        _get_bookdepot_offers(isbn),
-        _get_buyback_prices(isbn),
-        _get_buyback_trend_safe(isbn),
-        _get_book_meta_safe(isbn),
-        return_exceptions=True,
-    )
+    if filters.bookdepot_only:
+        # BD taraması: sadece Amazon fiyatı + BD envanteri çek, gerisi boş
+        amazon_data, bd_offers = await asyncio.gather(
+            _get_amazon_prices(asin),
+            _get_bookdepot_offers(isbn),
+            return_exceptions=True,
+        )
+        ebay_offers = bf_offers = []
+        buyback_data = buyback_trend_data = book_meta = {}
+    else:
+        amazon_data, ebay_offers, bf_offers, bd_offers, buyback_data, buyback_trend_data, book_meta = await asyncio.gather(
+            _get_amazon_prices(asin),
+            _get_ebay_offers(isbn, filters=filters),
+            _get_bookfinder_offers(isbn),
+            _get_bookdepot_offers(isbn),
+            _get_buyback_prices(isbn),
+            _get_buyback_trend_safe(isbn),
+            _get_book_meta_safe(isbn),
+            return_exceptions=True,
+        )
 
     if isinstance(amazon_data, Exception):
         amazon_data = {}

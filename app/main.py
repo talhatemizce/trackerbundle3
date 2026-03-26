@@ -1564,6 +1564,7 @@ async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: Background
         strict_mode=strict_mode,
         isbn_match_policy=IsbnMatchPolicy.BALANCED,
         invalid_isbn_policy=InvalidIsbnPolicy.BEST_EFFORT,
+        bookdepot_only=True,  # eBay/BookFinder/buyback/metadata atla
     )
 
     job_id = create_job(len(isbns))
