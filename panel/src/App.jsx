@@ -1321,7 +1321,7 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
       setError("");
     } else if (ext === "xlsx" || ext === "xls") {
       try {
-        const XLSX = await import("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+        const XLSX = await import("xlsx");
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
@@ -1809,17 +1809,11 @@ function DiscoverTab({ C, theme, scanJob, setScanJob, scanPollRef, candidates=[]
                 <option value="campusbooks">CampusBooks</option>
                 <option value="chegg">Chegg</option>
               </optgroup>
-              <optgroup label="— Resale">
-                <option value="mercari">Mercari</option>
-                <option value="depop">Depop</option>
-                <option value="poshmark">Poshmark</option>
-                <option value="etsy">Etsy</option>
-              </optgroup>
             </select>
           </div>
           <div>
             <span style={labelStyle}>Paralel tarama (1-8)</span>
-            <input style={inpStyle} type="number" min={1} max={5} value={concurrency} onChange={e=>setConcurrency(Math.min(5,Math.max(1,parseInt(e.target.value)||1)))}/>
+            <input style={inpStyle} type="number" min={1} max={8} value={concurrency} onChange={e=>setConcurrency(Math.min(8,Math.max(1,parseInt(e.target.value)||1)))}/>
           </div>
         </div>
 
