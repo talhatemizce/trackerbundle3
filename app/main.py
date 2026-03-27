@@ -1754,6 +1754,26 @@ from pathlib import Path as _Path
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+_repo_root = _Path(__file__).resolve().parent.parent
+
+@app.get("/bookmarklets/maayan")
+def serve_maayan_bookmarklet():
+    """Maayan Judaica bookmarklet kurulum sayfası."""
+    f = _repo_root / "maayan_bookmarklet.html"
+    if not f.exists():
+        from fastapi.responses import Response
+        return Response("Not found", status_code=404)
+    return FileResponse(str(f), media_type="text/html")
+
+@app.get("/bookmarklets/bookdepot")
+def serve_bookdepot_bookmarklet():
+    """BookDepot bookmarklet kurulum sayfası."""
+    f = _repo_root / "bookdepot_bookmarklet.html"
+    if not f.exists():
+        from fastapi.responses import Response
+        return Response("Not found", status_code=404)
+    return FileResponse(str(f), media_type="text/html")
+
 _panel_dist = _Path(__file__).resolve().parent.parent / "panel" / "dist"
 if _panel_dist.exists():
     app.mount("/assets", StaticFiles(directory=str(_panel_dist / "assets")), name="panel-assets")
