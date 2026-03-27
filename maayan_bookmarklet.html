@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Maayan Judaica → TB3 Bookmarklet Kurulumu</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f1a; color: #e0e0e0; min-height: 100vh; padding: 40px 20px; }
+  .container { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 26px; color: #7c5cbf; margin-bottom: 6px; }
+  .subtitle { color: #888; font-size: 14px; margin-bottom: 28px; }
+  .step { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 22px; margin-bottom: 16px; }
+  .step-header { display: flex; align-items: center; font-weight: 600; font-size: 15px; margin-bottom: 14px; }
+  .num { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: #7c5cbf; border-radius: 50%; font-weight: bold; font-size: 13px; margin-right: 10px; flex-shrink: 0; }
+  .info { background: #0d2a1a; border: 1px solid #1a5a2a; border-radius: 8px; padding: 14px; margin-bottom: 16px; color: #66bb6a; font-size: 13px; line-height: 1.7; }
+  .warn { background: #2a1a00; border: 1px solid #5a3a00; border-radius: 8px; padding: 14px; margin-bottom: 16px; color: #ffa726; font-size: 13px; line-height: 1.7; }
+  .code-wrap { position: relative; margin: 10px 0; }
+  .code { background: #0a0a15; border: 1px solid #2a2a4a; border-radius: 6px; padding: 12px 14px; padding-right: 70px; font-family: 'Courier New', monospace; font-size: 12px; color: #a0cfff; white-space: pre; overflow-x: auto; }
+  .cp { position: absolute; top: 8px; right: 8px; padding: 4px 10px; background: #2a2a4a; border: 1px solid #3a3a6a; border-radius: 4px; color: #ccc; cursor: pointer; font-size: 11px; user-select: none; }
+  .cp:hover { background: #3a3a6a; color: #fff; }
+  .bm-btn { display: inline-block; padding: 13px 24px; background: linear-gradient(135deg, #7c5cbf, #5a3f9e); color: white; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 15px; cursor: grab; user-select: none; box-shadow: 0 4px 15px rgba(124,92,191,0.4); transition: transform .1s; }
+  .bm-btn:active { cursor: grabbing; transform: scale(0.97); }
+  .drag-hint { color: #888; font-size: 12px; margin-top: 12px; }
+  .drag-hint b { color: #7c5cbf; }
+  .url-row { display: flex; gap: 8px; margin-top: 8px; }
+  .url-in { flex: 1; padding: 10px 13px; background: #0a0a15; border: 1px solid #2a2a4a; border-radius: 6px; color: #e0e0e0; font-size: 13px; }
+  .url-in:focus { outline: none; border-color: #7c5cbf; }
+  .gen-btn { padding: 10px 16px; background: #7c5cbf; border: none; border-radius: 6px; color: white; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .gen-btn:hover { background: #9370db; }
+  #bm-area { display: none; margin-top: 16px; padding: 16px; background: #0d0d20; border: 2px dashed #7c5cbf; border-radius: 8px; text-align: center; }
+  ol { padding-left: 20px; line-height: 2.4; color: #aaa; font-size: 14px; }
+  li b { color: #e0e0e0; }
+  .tag { display: inline-block; background: #1a2a1a; color: #4caf50; border: 1px solid #2a4a2a; border-radius: 4px; padding: 1px 7px; font-size: 11px; margin-left: 4px; }
+  .status-box { margin-top: 10px; padding: 10px; background: #0a0a15; border-radius: 6px; font-family: monospace; font-size: 12px; color: #66bb6a; min-height: 30px; }
+  .check-btn { padding: 8px 16px; background: #1a3a1a; border: 1px solid #2a5a2a; border-radius: 6px; color: #66bb6a; cursor: pointer; font-size: 12px; margin-top: 8px; }
+  .check-btn:hover { background: #2a4a2a; }
+  h3 { color: #aaa; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .radio-row { display: flex; gap: 16px; margin: 8px 0; }
+  .radio-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #ccc; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>✡️ Maayan Judaica → TrackerBundle3</h1>
+  <p class="subtitle">maayanjudaica.com Shopify kataloğundaki kitapları TB3 envanterine toplu aktar</p>
+
+  <div class="info">
+    <b>✅ Nasıl çalışır?</b><br>
+    Bookmarklet, maayanjudaica.com'un Shopify API'sini (<code>/collections/.../products.json</code>) doğrudan tarayıcıdan çağırır.<br>
+    Her ürünün SKU alanındaki <b>ISBN-13</b> ve fiyat bilgisi çekilip TB3'e gönderilir.<br>
+    Bot engellemesi yok — tüm veri sayfa bağlamında erişilebilir.
+  </div>
+
+  <div class="warn">
+    <b>⚠️ HTTPS Gereksinimi:</b><br>
+    maayanjudaica.com HTTPS kullandığından VPS'in de HTTPS URL'si olmalı.<br>
+    HTTP URL (ör. <code>http://1.2.3.4:8000</code>) tarayıcı tarafından mixed-content olarak bloke edilir.<br>
+    Cloudflare Tunnel HTTPS URL kullan (aşağıdaki 3. adıma bak).
+  </div>
+
+  <!-- ADIM 1: URL -->
+  <div class="step">
+    <div class="step-header"><span class="num">1</span> VPS API URL'ini Gir</div>
+    <p style="font-size:13px;color:#aaa;margin-bottom:10px;">
+      VPS'in HTTPS URL'si (Cloudflare tunnel önerilir):
+    </p>
+    <div class="url-row">
+      <input type="text" class="url-in" id="apiUrl" placeholder="https://abc.trycloudflare.com">
+      <button class="gen-btn" onclick="gen()">🔄 Bookmarklet Oluştur</button>
+    </div>
+  </div>
+
+  <!-- ADIM 2: KOLEKSİYON -->
+  <div class="step">
+    <div class="step-header"><span class="num">2</span> Koleksiyon Seç</div>
+    <p style="font-size:13px;color:#aaa;margin-bottom:10px;">
+      Hangi Shopify koleksiyonunu taramak istiyorsun?
+    </p>
+    <div class="radio-row">
+      <label><input type="radio" name="coll" value="all" checked> Tüm Ürünler (<code>/collections/all</code>)</label>
+      <label><input type="radio" name="coll" value="books"> Kitaplar (<code>/collections/books</code>)</label>
+      <label><input type="radio" name="coll" value="custom"> Özel</label>
+    </div>
+    <div id="custom-coll" style="display:none;margin-top:8px;">
+      <input type="text" class="url-in" id="customColl" placeholder="collection-handle (ör. judaica-books)">
+    </div>
+  </div>
+
+  <!-- ADIM 3: BOOKMARKLET -->
+  <div class="step">
+    <div class="step-header"><span class="num">3</span> Bookmarklet'i Sürükle</div>
+    <div id="bm-area">
+      <a id="bmLink" href="#" class="bm-btn">✡️ Maayan → TB3</a>
+      <p class="drag-hint">👆 Bu butonu <b>tarayıcının yer imi/bookmark çubuğuna</b> sürükle<br>
+      (Yer imi çubuğu yoksa: Chrome → <b>Ctrl+Shift+B</b>)</p>
+    </div>
+    <div id="no-bm-area" style="color:#888;font-size:13px;">
+      ← Önce URL gir ve "Bookmarklet Oluştur"a tıkla
+    </div>
+  </div>
+
+  <!-- ADIM 4: CLOUDFLARE -->
+  <div class="step">
+    <div class="step-header"><span class="num">4</span> Cloudflare Tunnel (HTTPS için)</div>
+    <p style="font-size:13px;color:#aaa;margin-bottom:8px;">
+      maayanjudaica.com HTTPS kullandığı için VPS'te de HTTPS gerekir. Aşağıdaki komutla anında HTTPS tünel aç:
+    </p>
+    <div class="code-wrap">
+      <div class="code" id="cf-cmd">curl -L -o ~/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x ~/cloudflared
+nohup ~/cloudflared tunnel --url http://localhost:8000 > /tmp/cf.log 2>&1 &
+sleep 5 && grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/cf.log | head -1</div>
+      <button class="cp" onclick="doCopy('cf-cmd',this)">Kopyala</button>
+    </div>
+    <p style="font-size:12px;color:#888;">Son satırda çıkan <code>https://xxx.trycloudflare.com</code> URL'ini 1. adıma yapıştır.</p>
+  </div>
+
+  <!-- ADIM 5: KULLANIM -->
+  <div class="step">
+    <div class="step-header"><span class="num">5</span> Nasıl Kullanılır</div>
+    <ol>
+      <li><b>maayanjudaica.com</b>'a git (herhangi bir sayfada olabilirsin)</li>
+      <li>Yer imi çubuğundaki <b>✡️ Maayan → TB3</b>'e tıkla</li>
+      <li>Bookmarklet tüm koleksiyonu otomatik çeker (sayfalama dahil)</li>
+      <li>Sağ üstte <b>yeşil ✅ bildirim</b> kaç kitap eklendiğini gösterir</li>
+      <li>TB3 → Bookstores → BookDepot sekmesinde kitaplar görünür</li>
+    </ol>
+    <div class="warn" style="margin-top:14px;margin-bottom:0;">
+      <b>Not:</b> Koleksiyonda ISBN olmayan ürünler (aksesuar, vb.) otomatik atlanır.<br>
+      ISBN, Shopify SKU alanından (<code>variants[0].sku</code>) okunur — en az 10 karakter olmalı.
+    </div>
+  </div>
+
+  <!-- ADIM 6: TEST -->
+  <div class="step">
+    <div class="step-header"><span class="num">6</span> Bağlantıyı Test Et</div>
+    <button class="check-btn" onclick="testConn()">🔌 Bağlantıyı Test Et</button>
+    <div class="status-box" id="statusBox">API URL'i gir ve test et...</div>
+  </div>
+
+</div>
+
+<script>
+var BASE_URL = "";
+
+document.querySelectorAll('input[name="coll"]').forEach(function(r) {
+  r.addEventListener('change', function() {
+    document.getElementById('custom-coll').style.display = this.value === 'custom' ? 'block' : 'none';
+  });
+});
+
+function getCollection() {
+  var v = document.querySelector('input[name="coll"]:checked').value;
+  if (v === 'custom') {
+    var c = document.getElementById('customColl').value.trim();
+    return c || 'all';
+  }
+  return v;
+}
+
+function gen() {
+  var url = document.getElementById('apiUrl').value.trim().replace(/\/+$/, '');
+  if (!url) { alert('URL gir!'); return; }
+  if (url.startsWith('http://') && !url.includes('localhost') && !url.includes('127.0.0.1')) {
+    if (!confirm('HTTP URL girdin. maayanjudaica.com HTTPS kullandığı için tarayıcı bu isteği bloke edebilir.\nCloudflare tunnel HTTPS URL\'i kullanmanı öneririm.\n\nYine de devam et?')) return;
+  }
+  BASE_URL = url;
+  var coll = getCollection();
+
+  // Bookmarklet: Shopify collection API'den ISBN ve fiyat çeker
+  // ISBN → variants[0].sku (min 10 karakter)
+  // Fiyat → variants[0].price / 100 (Shopify fiyatı sent cinsinden saklar)
+  var code = '(function(){' +
+    'var API="' + url + '";' +
+    'var COLL="' + coll + '";' +
+    'var all=[];' +
+    'var n=document.createElement("div");' +
+    'n.style.cssText="position:fixed;top:20px;right:20px;background:#1a1a2e;border:2px solid #7c5cbf;color:#e0e0e0;padding:14px 18px;border-radius:10px;z-index:99999;font-family:sans-serif;font-size:14px;box-shadow:0 4px 20px rgba(0,0,0,.5);min-width:240px;";' +
+    'n.textContent="⏳ Maayan Judaica kataloğu çekiliyor...";' +
+    'document.body.appendChild(n);' +
+    'function fetchPage(page){' +
+      'fetch("https://maayanjudaica.com/collections/"+COLL+"/products.json?limit=250&page="+page)' +
+      '.then(function(r){return r.json();})' +
+      '.then(function(d){' +
+        'var prods=d.products||[];' +
+        'prods.forEach(function(p){' +
+          'var v=p.variants&&p.variants[0];' +
+          'if(!v)return;' +
+          'var isbn=(v.sku||"").replace(/[^0-9X]/gi,"").trim();' +
+          'if(isbn.length<10)return;' +
+          'var price=v.price?parseFloat(v.price):null;' +
+          'if(!price||price<=0)return;' +
+          'var url="https://maayanjudaica.com/products/"+p.handle;' +
+          'all.push({isbn:isbn,title:p.title||"",price:price,qty:null,url:url});' +
+        '});' +
+        'n.textContent="⏳ "+all.length+" kitap bulundu, devam ediyor...";' +
+        'if(prods.length===250){' +
+          'fetchPage(page+1);' +
+        '}else{' +
+          'send();' +
+        '}' +
+      '}).catch(function(e){' +
+        'n.style.borderColor="#f44336";' +
+        'n.textContent="❌ Shopify API hatası: "+e.message;' +
+        'setTimeout(function(){n.remove();},6000);' +
+      '});' +
+    '}' +
+    'function send(){' +
+      'if(!all.length){' +
+        'n.style.borderColor="#ffa726";' +
+        'n.textContent="⚠️ ISBN bulunan ürün yok (SKU alanı boş olabilir)";' +
+        'setTimeout(function(){n.remove();},5000);' +
+        'return;' +
+      '}' +
+      'n.textContent="⏳ "+all.length+" kitap TB3\'e gönderiliyor...";' +
+      'fetch(API+"/bookdepot/import",{' +
+        'method:"POST",' +
+        'headers:{"Content-Type":"application/json"},' +
+        'body:JSON.stringify({items:all,page_url:location.href})' +
+      '}).then(function(r){return r.json();}).then(function(d){' +
+        'n.style.borderColor=d.ok?"#4caf50":"#f44336";' +
+        'n.textContent=d.ok?"✅ "+d.inserted+" kitap eklendi (TB3 toplam: "+d.total+")":"❌ Hata: "+(d.error||"bilinmiyor");' +
+        'setTimeout(function(){n.remove();},5000);' +
+      '}).catch(function(e){' +
+        'n.style.borderColor="#f44336";' +
+        'n.style.color="#ff6b6b";' +
+        'n.textContent="❌ TB3 bağlantı hatası: "+e.message;' +
+        'setTimeout(function(){n.remove();},6000);' +
+      '});' +
+    '}' +
+    'fetchPage(1);' +
+  '})();';
+
+  document.getElementById('bmLink').href = 'javascript:' + encodeURIComponent(code);
+  document.getElementById('bm-area').style.display = 'block';
+  document.getElementById('no-bm-area').style.display = 'none';
+}
+
+function testConn() {
+  var url = document.getElementById('apiUrl').value.trim().replace(/\/+$/, '') || BASE_URL;
+  var box = document.getElementById('statusBox');
+  box.style.color = '#888';
+  box.textContent = '⏳ Bağlantı test ediliyor: ' + url + '/bookdepot/inventory ...';
+  fetch(url + '/bookdepot/inventory')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      box.style.color = '#4caf50';
+      box.textContent = '✅ Bağlantı başarılı! Envanterde ' + d.count + ' kitap var.';
+    })
+    .catch(function(e) {
+      box.style.color = '#f44336';
+      box.textContent = '❌ Bağlantı hatası: ' + e.message + '\nCORS veya mixed-content sorunu — Cloudflare tunnel dene.';
+    });
+}
+
+function doCopy(id, btn) {
+  var text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    var old = btn.textContent;
+    btn.textContent = '✓ Kopyalandı';
+    btn.style.color = '#4caf50';
+    setTimeout(function() { btn.textContent = old; btn.style.color = ''; }, 1800);
+  }).catch(function() {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = '✓';
+    setTimeout(function() { btn.textContent = 'Kopyala'; }, 1500);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('apiUrl').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') gen();
+  });
+});
+</script>
+</body>
+</html>
