@@ -4442,6 +4442,13 @@ function BookstoresTab({ C, theme, push }) {
   const [scanAmazonConds, setScanAmazonConds] = useState([...AMZN_CONDITIONS]);
   const [scanConcurrency, setScanConcurrency] = useState(5);
   const [showScanFilters, setShowScanFilters] = useState(false);
+  // BSR puan kademeleri: [{maxBsr, score}]
+  const [bsrTiers, setBsrTiers] = useState([
+    { maxBsr: "100000", score: "100" },
+    { maxBsr: "500000", score: "70" },
+    { maxBsr: "1000000", score: "40" },
+  ]);
+  const [minBsrScore, setMinBsrScore] = useState("");
 
   // Manuel ISBN input
   const [useManualIsbns, setUseManualIsbns] = useState(false);
@@ -4612,6 +4619,8 @@ function BookstoresTab({ C, theme, push }) {
       amazon_condition_in: scanAmazonConds.length < AMZN_CONDITIONS.length ? scanAmazonConds : null,
       min_roi_pct: scanMinRoi ? parseFloat(scanMinRoi) : null,
       min_profit_usd: scanMinProfit ? parseFloat(scanMinProfit) : null,
+      bsr_score_tiers: bsrTiers.filter(t => t.maxBsr && t.score).map(t => [parseInt(t.maxBsr), parseInt(t.score)]),
+      min_bsr_score: minBsrScore ? parseInt(minBsrScore) : null,
       ...(manualIsbns ? { isbns: manualIsbns } : {}),
     };
 
@@ -5020,6 +5029,44 @@ function BookstoresTab({ C, theme, push }) {
                     <span>Yavaş</span><span>Hızlı</span>
                   </div>
                 </div>
+
+                {/* BSR Puan Kademeleri */}
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ fontSize: 10, color: C.muted, marginBottom: 6 }}>BSR Puan Kademeleri</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {bsrTiers.map((tier, i) => (
+                      <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <span style={{ fontSize: 10, color: C.muted3, width: 60, flexShrink: 0 }}>BSR ≤</span>
+                        <input className="inp" type="number" placeholder="500000"
+                          value={tier.maxBsr}
+                          onChange={e => setBsrTiers(prev => prev.map((t, j) => j === i ? { ...t, maxBsr: e.target.value } : t))}
+                          style={{ width: 100 }} />
+                        <span style={{ fontSize: 10, color: C.muted3 }}>→</span>
+                        <input className="inp" type="number" placeholder="70" min={0} max={100}
+                          value={tier.score}
+                          onChange={e => setBsrTiers(prev => prev.map((t, j) => j === i ? { ...t, score: e.target.value } : t))}
+                          style={{ width: 60 }} />
+                        <span style={{ fontSize: 10, color: C.muted3 }}>puan</span>
+                        <button onClick={() => setBsrTiers(prev => prev.filter((_, j) => j !== i))}
+                          style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 14, padding: "0 4px" }}>✕</button>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
+                      <button onClick={() => setBsrTiers(prev => [...prev, { maxBsr: "", score: "" }])}
+                        style={{ fontSize: 10, color: C.accent, background: "none", border: `1px solid ${C.accent}44`,
+                          borderRadius: 4, padding: "3px 10px", cursor: "pointer" }}>+ Kademe ekle</button>
+                      <span style={{ fontSize: 9, color: C.muted3 }}>Üzeri → 0 puan</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+                      <span style={{ fontSize: 10, color: C.muted3 }}>Min puan:</span>
+                      <input className="inp" type="number" placeholder="yok" min={0} max={100}
+                        value={minBsrScore}
+                        onChange={e => setMinBsrScore(e.target.value)}
+                        style={{ width: 70 }} />
+                      <span style={{ fontSize: 9, color: C.muted3 }}>altını ele</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -5122,6 +5169,7 @@ function BookstoresTab({ C, theme, push }) {
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>ROI %</th>
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}>Tier</th>
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>BSR</th>
+                    {bsrTiers.length > 0 && <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500, textAlign: "right" }}>Puan</th>}
                     <th style={{ padding: "8px 6px", color: C.muted, fontWeight: 500 }}>Linkler</th>
                   </tr>
                 </thead>
@@ -5148,6 +5196,15 @@ function BookstoresTab({ C, theme, push }) {
                         <td style={{ padding: "7px 6px", color: C.muted, textAlign: "right" }}>
                           {r.bsr ? r.bsr.toLocaleString() : "-"}
                         </td>
+                        {bsrTiers.length > 0 && (
+                          <td style={{ padding: "7px 6px", textAlign: "right" }}>
+                            {r.bsr_score != null ? (
+                              <span style={{ fontWeight: 700, color: r.bsr_score >= 70 ? C.green : r.bsr_score >= 40 ? C.accent : C.muted }}>
+                                {r.bsr_score}
+                              </span>
+                            ) : "-"}
+                          </td>
+                        )}
                         <td style={{ padding: "7px 6px" }}>
                           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                             <BookLinks r={r} bdUrl={bdUrl} C={C} />
@@ -5228,6 +5285,7 @@ function BookstoresTab({ C, theme, push }) {
                     <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500, textAlign:"right" }}>Kar $</th>
                     <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500, textAlign:"right" }}>ROI %</th>
                     <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500, textAlign:"right" }}>BSR</th>
+                    <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500, textAlign:"right" }}>Puan</th>
                     <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500 }}>Linkler</th>
                     <th style={{ padding:"8px 6px", color:C.muted, fontWeight:500 }}></th>
                   </tr>
@@ -5260,6 +5318,13 @@ function BookstoresTab({ C, theme, push }) {
                           </td>
                           <td style={{ padding:"7px 6px", color:C.muted, textAlign:"right" }}>
                             {r.bsr ? r.bsr.toLocaleString() : "-"}
+                          </td>
+                          <td style={{ padding:"7px 6px", textAlign:"right" }}>
+                            {r.bsr_score != null ? (
+                              <span style={{ fontWeight:700, color: r.bsr_score>=70?C.green:r.bsr_score>=40?C.accent:C.muted }}>
+                                {r.bsr_score}
+                              </span>
+                            ) : "-"}
                           </td>
                           <td style={{ padding:"7px 6px" }}>
                             <BookLinks r={r} bdUrl={bdItem?.url || r.ebay_url} C={C} />

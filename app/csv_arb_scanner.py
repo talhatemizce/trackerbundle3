@@ -50,6 +50,17 @@ except Exception as _analytics_err:
     def dewey_to_category(d): return {}
     def subjects_to_textbook_score(s): return 0.0
 
+
+def _calc_bsr_score(bsr: int, tiers: List[Tuple[int, int]]) -> int:
+    """Kullanıcı tanımlı BSR kademelerine göre 0-100 puan hesapla.
+    tiers = [(max_bsr, score), ...] — sıralama önemsiz, küçük BSR'dan büyüğe işlenir.
+    BSR tüm max_bsr değerlerini aşarsa 0 döner.
+    """
+    for max_bsr, score in sorted(tiers, key=lambda x: x[0]):
+        if bsr <= max_bsr:
+            return max(0, min(100, score))
+    return 0
+
 logger = logging.getLogger("trackerbundle.csv_arb_scanner")
 
 # ── ISBN dönüşüm ──────────────────────────────────────────────────────────────
@@ -159,6 +170,8 @@ class ArbResult:
     buyback_url: str = ""                       # vendor URL
     buyback_profit: Optional[float] = None      # buyback_cash - buy_price - $3.99 nakliye
     buyback_roi: Optional[float] = None         # % ROI buyback kanalında
+    # BSR puanı (kullanıcı tanımlı kademeler)
+    bsr_score: Optional[int] = None             # 0-100, None = BSR yok
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -264,6 +277,10 @@ class ScanFilters:
     amazon_condition_in: Optional[List[str]] = None  # ["acceptable","good","very_good","like_new"]
     # BookDepot-only mod: eBay/BookFinder/buyback/metadata atla (sadece BD vs Amazon)
     bookdepot_only: bool = False
+    # BSR puan kademeleri: [(max_bsr, score), ...] azalan BSR sırasında
+    # Örn: [(100000, 100), (500000, 70), (1000000, 40)] → üzeri 0
+    bsr_score_tiers: Optional[List[Tuple[int, int]]] = None
+    min_bsr_score: Optional[int] = None  # bu puanın altındakileri ele
 
 
 def _filter_result(r: ArbResult, f: ScanFilters) -> str:
@@ -300,6 +317,8 @@ def _filter_result(r: ArbResult, f: ScanFilters) -> str:
         return "buyback_not_profitable"
     if f.min_buyback_profit is not None and (r.buyback_profit is None or r.buyback_profit < f.min_buyback_profit):
         return f"buyback_profit_below_min(${f.min_buyback_profit})"
+    if f.min_bsr_score is not None and (r.bsr_score is None or r.bsr_score < f.min_bsr_score):
+        return f"bsr_score_below_min({r.bsr_score}/{f.min_bsr_score})"
     return ""
 
 
@@ -829,6 +848,8 @@ async def _scan_one(
                 r.bsr = int(_bsr)
                 r.velocity = bsr_to_velocity(r.bsr)
                 r.days_to_sell = bsr_to_days_to_sell(r.bsr)
+                if filters.bsr_score_tiers:
+                    r.bsr_score = _calc_bsr_score(r.bsr, filters.bsr_score_tiers)
 
             # Book metadata (textbook classification, newer edition)
             if book_meta and isinstance(book_meta, dict):

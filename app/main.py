@@ -1496,6 +1496,8 @@ class BookDepotScanRequest(BaseModel):
     condition_in: Optional[List[str]] = None
     only_viable: bool = True
     concurrency: int = Field(default=5, ge=1, le=8)
+    bsr_score_tiers: Optional[List[tuple]] = None  # [(max_bsr, score), ...]
+    min_bsr_score: Optional[int] = None
 
 @app.post("/bookdepot/scan")
 async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: BackgroundTasks):
@@ -1565,6 +1567,8 @@ async def bookdepot_scan(req: BookDepotScanRequest, background_tasks: Background
         isbn_match_policy=IsbnMatchPolicy.BALANCED,
         invalid_isbn_policy=InvalidIsbnPolicy.BEST_EFFORT,
         bookdepot_only=True,  # eBay/BookFinder/buyback/metadata atla
+        bsr_score_tiers=[(int(t[0]), int(t[1])) for t in req.bsr_score_tiers] if req.bsr_score_tiers else None,
+        min_bsr_score=req.min_bsr_score,
     )
 
     job_id = create_job(len(isbns))
