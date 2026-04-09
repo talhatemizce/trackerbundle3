@@ -385,7 +385,7 @@ async def _get_amazon_prices(asin: str) -> Dict[str, Any]:
 
         # BSR'ı fiyat verisine ekle — scanner ve UI bunu kullanır
         if isinstance(prices, dict) and isinstance(catalog, dict):
-            bsr = catalog.get("bsr") or catalog.get("bsr_all")
+            bsr = catalog.get("bsr")  # sadece Books kategorisi overall BSR (bsr_all subcategory içerebilir)
             if bsr:
                 # BSR'ı hem used hem new bloğuna ekle (hangisi varsa)
                 for cond in ("used", "new"):
