@@ -605,7 +605,7 @@ async def _get_bookdepot_offers(isbn: str) -> List[Dict]:
             return []
         return [{
             "source": "bookdepot",
-            "source_condition": "used",
+            "source_condition": "new",
             "buy_price": round(float(item["price"]) + 0.60, 2),  # +$0.60 kitap başı kargo
             "item_id": f"bd_{isbn}",
             "title": item.get("title", "")[:120],
