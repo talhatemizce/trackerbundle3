@@ -317,7 +317,7 @@ def _filter_result(r: ArbResult, f: ScanFilters) -> str:
         return "buyback_not_profitable"
     if f.min_buyback_profit is not None and (r.buyback_profit is None or r.buyback_profit < f.min_buyback_profit):
         return f"buyback_profit_below_min(${f.min_buyback_profit})"
-    if f.min_bsr_score is not None and (r.bsr_score is None or r.bsr_score < f.min_bsr_score):
+    if f.min_bsr_score is not None and r.bsr_score is not None and r.bsr_score < f.min_bsr_score:
         return f"bsr_score_below_min({r.bsr_score}/{f.min_bsr_score})"
     return ""
 
