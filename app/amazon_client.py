@@ -332,8 +332,8 @@ async def get_catalog_item(asin: str) -> Dict[str, Any]:
                     if rk is None:
                         continue
                     rk = int(rk)
-                    # Ana "Books" kategorisi (tam eşleşme ya da başlıkta sadece "books")
-                    if title_lower in ("books", "kindle store"):
+                    # Sadece ana "Books" kategorisi (Kindle Store hariç — fiziksel kitapla alakasız)
+                    if title_lower == "books":
                         if bsr_books is None or rk < bsr_books:
                             bsr_books = rk
                     if bsr_all is None or rk < bsr_all:
