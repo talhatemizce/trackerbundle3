@@ -324,7 +324,18 @@ async def get_catalog_item(asin: str) -> Dict[str, Any]:
             # ── Sales Ranks ──────────────────────────────────────────────────
             bsr_books = None  # Ana "Books" displayGroup BSR (en geniş kategori)
             bsr_all   = None  # Tüm kategorilerdeki en iyi (minimum) rank
+            classification_ranks = set()  # alt kategori rank değerleri
+
             for rank_obj in (data.get("salesRanks") or []):
+                # classificationRanks: alt kategoriler — önce bunları topla
+                for rank in (rank_obj.get("classificationRanks") or []):
+                    rk = rank.get("rank")
+                    if rk is not None:
+                        classification_ranks.add(int(rk))
+                        rk = int(rk)
+                        if bsr_all is None or rk < bsr_all:
+                            bsr_all = rk
+
                 # displayGroupRanks: ana kategori (örn. "Books" → #12,560,721)
                 for rank in (rank_obj.get("displayGroupRanks") or []):
                     title_lower = (rank.get("title") or "").lower()
@@ -332,19 +343,11 @@ async def get_catalog_item(asin: str) -> Dict[str, Any]:
                     if rk is None:
                         continue
                     rk = int(rk)
-                    # Sadece ana "Books" kategorisi (Kindle Store hariç — fiziksel kitapla alakasız)
-                    if title_lower == "books":
+                    # Sadece ana "Books" kategorisi (Kindle Store hariç)
+                    # Ama alt kategori rank'ıyla aynıysa overall rank değil → atla
+                    if title_lower == "books" and rk not in classification_ranks:
                         if bsr_books is None or rk < bsr_books:
                             bsr_books = rk
-                    if bsr_all is None or rk < bsr_all:
-                        bsr_all = rk
-                # classificationRanks: alt kategoriler (örn. "Children's Programming Books" → #569)
-                # bsr_books için kullanma — sadece bsr_all'a yansıt
-                for rank in (rank_obj.get("classificationRanks") or []):
-                    rk = rank.get("rank")
-                    if rk is None:
-                        continue
-                    rk = int(rk)
                     if bsr_all is None or rk < bsr_all:
                         bsr_all = rk
 
